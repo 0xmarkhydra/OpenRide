@@ -36,9 +36,39 @@ flashx/
 
 Start as a modular monolith in Go. Keep business domains isolated so Dispatch, Location, Payment and Notification can later be extracted into services without rewriting the whole product.
 
+## Docker layout
+
+Local Docker is intentionally kept as one Compose project named `flashx`.
+
+```text
+flashx
+├── api
+├── admin
+├── postgres
+└── redis
+```
+
+Backend test containers use the Compose `test` profile and always run with `--rm`, so they disappear immediately after the test finishes instead of accumulating in Docker Desktop.
+
 ## Local development
 
 1. Copy `.env.example` to `.env`.
-2. Start PostGIS and Redis with `docker compose up -d`.
-3. Run the API with `make api-run`.
-4. Health check: `GET http://localhost:8080/health`.
+2. Start the full stack with `make stack-up`.
+3. API health: `GET http://localhost:8080/health`.
+4. Admin: `http://localhost:3000`.
+
+Useful commands:
+
+```bash
+make stack-ps                 # show only FlashX Compose services
+make stack-logs               # follow FlashX logs
+make stack-down               # stop/remove FlashX containers, preserve DB volumes
+make infra-up                 # only PostGIS + Redis
+make api-run                  # run API directly on the host
+make api-test                 # run Go tests directly on the host
+make docker-test              # ephemeral backend test container
+make docker-integration-test  # ephemeral integration test container
+make stack-reset              # remove FlashX containers AND local DB/Redis volumes
+```
+
+Do not create manually named `flashx-test-*` containers for routine testing. Use the Make targets above so test containers are automatically removed.

@@ -1,34 +1,110 @@
+name: flashx
+
+x-api-environment: &api-environment
+  APP_ENV: ${APP_ENV:-development}
+  HTTP_ADDR: :8080
+  PERSISTENCE: postgres
+  DATABASE_URL: postgres://${POSTGRES_USER:-flashx}:${POSTGRES_PASSWORD:-flashx}@postgres:5432/${POSTGRES_DB:-flashx}?sslmode=disable
+  REDIS_ADDR: redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  JWT_SECRET: ${JWT_SECRET:-dev-change-me-please}
+  ALLOW_DEV_IDENTITY: ${ALLOW_DEV_IDENTITY:-true}
+  ADMIN_PHONE: ${ADMIN_PHONE:-+84900000000}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@flashx.local}
+  ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-FlashX Admin}
+  MAPS_PROVIDER: ${MAPS_PROVIDER:-mock}
+  GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+  SMS_PROVIDER: ${SMS_PROVIDER:-development}
+  SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+  SMS_API_KEY: ${SMS_API_KEY:-}
+
 services:
   postgres:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_DB: flashx
-      POSTGRES_USER: flashx
-      POSTGRES_PASSWORD: flashx
+      POSTGRES_DB: ${POSTGRES_DB:-flashx}
+      POSTGRES_USER: ${POSTGRES_USER:-flashx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flashx}
     ports:
       - "${POSTGRES_PORT:-55432}:5432"
     volumes:
-      - flashx_postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flashx -d flashx"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flashx} -d ${POSTGRES_DB:-flashx}"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - flashx_redis:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+    environment: *api-environment
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ./apps/admin
+    environment:
+      FLASHX_API_BASE_URL: http://api:8080
+      NEXT_PUBLIC_ADMIN_PHONE: ${NEXT_PUBLIC_ADMIN_PHONE:-+84900000000}
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api-test:
+    profiles: ["test"]
+    build:
+      context: ./services/api
+      target: test
+    command: ["go", "test", "./..."]
+
+  api-integration:
+    profiles: ["test"]
+    build:
+      context: ./services/api
+      target: test
+    environment:
+      <<: *api-environment
+      FLASHX_INTEGRATION: "1"
+    command: ["go", "test", "./internal/platform/persistence", "-v"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
-  flashx_postgres:
-  flashx_redis:
+  postgres_data:
+  redis_data:

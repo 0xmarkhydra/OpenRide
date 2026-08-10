@@ -35,6 +35,17 @@ Mobile/Admin:
 - Rider sees completion/history;
 - Admin sees trip timeline.
 
+### Docker test hygiene
+
+Routine Docker tests phải chạy qua Compose profile `test`:
+
+```bash
+make docker-test
+make docker-integration-test
+```
+
+Các target này dùng `docker compose run --rm`, vì vậy test container là ephemeral và tự bị xóa sau khi chạy xong. Không tạo container test có tên tăng dần hoặc giữ lại container đã Exited chỉ để lưu lịch sử test; lịch sử thuộc CI/logs, không thuộc Docker Desktop.
+
 ## 3. Critical concurrency tests
 
 - Hai driver accept cùng offer/trip gần đồng thời: chỉ một người thắng.

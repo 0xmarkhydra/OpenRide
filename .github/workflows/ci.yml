@@ -30,8 +30,10 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: services/api/go.sum
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
       - name: Start PostGIS and Redis
-        run: docker compose up -d --wait
+        run: docker compose up -d --wait postgres redis
       - name: Run persistent ride lifecycle
         working-directory: services/api
         env:

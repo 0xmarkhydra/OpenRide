@@ -9,16 +9,37 @@ Tối thiểu:
 
 Dev team có thể dùng preview environment nếu CI/CD hỗ trợ nhưng không bắt buộc MVP.
 
-## 2. Local stack hiện tại
+## 2. Local Docker stack
 
-`docker-compose.yml` cung cấp:
-- PostGIS `postgis/postgis:16-3.4`
-- Redis 7 Alpine
+Toàn bộ local container thuộc **một Docker Compose project duy nhất tên `flashx`** để Docker Desktop gom thành một group thay vì sinh nhiều container rời rạc.
+
+Default stack:
+- `api`: Go API;
+- `admin`: Next.js Operations portal;
+- `postgres`: PostGIS `postgis/postgis:16-3.4`;
+- `redis`: Redis 7 Alpine.
 
 Database local:
-- db: `flashx`
-- user: `flashx`
-- password local-only: `flashx`
+- db: `flashx`;
+- user: `flashx`;
+- password local-only: `flashx`.
+
+Test services `api-test` và `api-integration` nằm trong Compose profile `test` và **luôn phải chạy bằng `docker compose run --rm`**. Vì vậy container test bị xóa ngay khi command kết thúc và không được tích tụ trong Docker Desktop.
+
+Các command chuẩn:
+
+```bash
+make stack-up
+make stack-ps
+make stack-logs
+make stack-down
+make docker-test
+make docker-integration-test
+```
+
+Không tạo thủ công các container kiểu `flashx-go-test-1`, `flashx-integration-2`, ... cho routine test.
+
+`make stack-down` giữ lại DB/Redis volumes. Chỉ dùng `make stack-reset` khi chủ động muốn xóa toàn bộ local data của FlashX.
 
 Production không dùng credential local mặc định.
 

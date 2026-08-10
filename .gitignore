@@ -1,0 +1,26 @@
+.DS_Store
+.env
+.idea/
+.vscode/
+
+# Go
+bin/
+coverage.out
+
+# Node
+node_modules/
+.next/
+out/
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+
+# Mobile release secrets/signing
+**/android/key.properties
+**/*.jks
+**/*.keystore
+**/ios/Flutter/Secrets.xcconfig

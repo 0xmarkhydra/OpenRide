@@ -1,0 +1,94 @@
+name: FlashX CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: services/api/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+
+  persistence-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: services/api/go.sum
+      - name: Start PostGIS and Redis
+        run: docker compose up -d --wait
+      - name: Run persistent ride lifecycle
+        working-directory: services/api
+        env:
+          FLASHX_INTEGRATION: '1'
+          PERSISTENCE: postgres
+          DATABASE_URL: postgres://flashx:flashx@127.0.0.1:55432/flashx?sslmode=disable
+          REDIS_ADDR: 127.0.0.1:6379
+        run: go test ./internal/platform/persistence -v
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down -v
+
+  admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/admin/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  rider:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/rider
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart analyze
+      - run: flutter test
+      - run: flutter build apk --debug --dart-define=API_BASE_URL=https://staging.example.invalid
+
+  driver:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/driver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart analyze
+      - run: flutter test
+      - run: flutter build apk --debug --dart-define=API_BASE_URL=https://staging.example.invalid

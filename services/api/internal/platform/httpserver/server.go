@@ -15,6 +15,7 @@ import (
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/dispatch"
+	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/idempotency"
@@ -31,6 +32,7 @@ type Dependencies struct {
 	Persistence      string
 	Trips            *trips.Service
 	Drivers          *drivers.Service
+	DriverDocuments  *driverdocs.Service
 	Dispatch         *dispatch.Engine
 	Ride             *ride.Service
 	Pricing          *pricing.Service
@@ -91,6 +93,10 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("POST /v1/dev/drivers", s.registerDevDriver)
 	mux.HandleFunc("GET /v1/driver/me", s.driverMe)
 	mux.HandleFunc("PATCH /v1/driver/me", s.updateDriverMe)
+	mux.HandleFunc("POST /v1/driver/documents/upload-url", s.prepareDriverDocumentUpload)
+	mux.HandleFunc("POST /v1/driver/documents/complete", s.completeDriverDocumentUpload)
+	mux.HandleFunc("GET /v1/driver/documents", s.listDriverDocuments)
+	mux.HandleFunc("GET /v1/driver/documents/{id}/view-url", s.viewDriverDocument)
 	mux.HandleFunc("POST /v1/driver/availability", s.driverAvailability)
 	mux.HandleFunc("POST /v1/driver/location", s.driverLocation)
 	mux.HandleFunc("GET /v1/driver/offers/current", s.currentDriverOffer)
@@ -105,6 +111,8 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/admin/me", s.adminMe)
 	mux.HandleFunc("GET /v1/admin/drivers", s.adminDrivers)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/approval", s.adminDriverApproval)
+	mux.HandleFunc("GET /v1/admin/drivers/{id}/documents", s.adminDriverDocuments)
+	mux.HandleFunc("POST /v1/admin/drivers/{id}/documents/{documentID}/review", s.adminReviewDriverDocument)
 	mux.HandleFunc("GET /v1/admin/trips", s.adminTrips)
 	mux.HandleFunc("GET /v1/admin/dashboard", s.adminDashboard)
 

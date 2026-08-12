@@ -37,10 +37,13 @@ Nếu sau này có password, hash bằng thuật toán hiện đại như Argon2
 
 ## 7. KYC documents
 
-- Lưu ở private object storage.
-- Truy cập qua signed URL ngắn hạn.
+- Lưu ở private S3-compatible object storage.
+- File bytes upload trực tiếp từ client tới object storage bằng presigned request; FlashX backend không nhận/proxy multipart hoặc raw file.
+- Backend chỉ giữ S3 credential để ký request và lưu metadata/object key trong PostgreSQL.
+- Truy cập qua signed GET URL ngắn hạn sau khi kiểm tra authorization.
 - Chỉ role được phép xem.
 - Không public bucket.
+- Không log presigned URL đầy đủ vì URL chứa chữ ký tạm thời.
 - Có retention/delete policy.
 - Audit document access nếu yêu cầu compliance.
 

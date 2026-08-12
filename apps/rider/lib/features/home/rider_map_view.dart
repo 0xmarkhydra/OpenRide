@@ -42,7 +42,7 @@ class RiderMapView extends StatelessWidget {
           markerId: const MarkerId('driver'),
           position: driver,
           icon:
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
           infoWindow: const InfoWindow(title: 'Tài xế'),
         ),
     };
@@ -71,7 +71,7 @@ class _MapFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ColoredBox(
-        color: const Color(0xFFE7ECE8),
+        color: const Color(0xFFE9EBF0),
         child: CustomPaint(
           painter: _MapGridPainter(),
           child: const Center(
@@ -79,7 +79,7 @@ class _MapFallback extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.location_on_rounded,
-                    size: 48, color: Color(0xFF0A7A55)),
+                    size: 48, color: Color(0xFF0B132B)),
                 SizedBox(height: 8),
                 Text('Maps sẽ bật khi cấu hình API key production'),
               ],

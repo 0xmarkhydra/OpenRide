@@ -29,7 +29,7 @@ class DriverMapView extends StatelessWidget {
       Marker(
         markerId: const MarkerId('driver'),
         position: driver,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
         infoWindow: const InfoWindow(title: 'Vị trí của bạn'),
       ),
       if (pickup != null)
@@ -71,7 +71,7 @@ class _MapFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ColoredBox(
-        color: const Color(0xFFE4EAE6),
+        color: const Color(0xFFE9EBF0),
         child: Center(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 250),
@@ -81,7 +81,7 @@ class _MapFallback extends StatelessWidget {
             child: Icon(
               online ? Icons.navigation_rounded : Icons.location_off_outlined,
               size: 48,
-              color: online ? const Color(0xFF0A7A55) : Colors.grey,
+              color: online ? const Color(0xFF0B132B) : Colors.grey,
             ),
           ),
         ),

@@ -12,7 +12,9 @@ import (
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/dispatch"
+	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/objectstorage"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/config"
 	"flashx/services/api/internal/platform/httpserver"
@@ -43,6 +45,7 @@ func main() {
 		adminStore       admin.Store
 		paymentStore     payments.Store
 		ratingStore      ratings.Store
+		documentStore    driverdocs.Store
 		dispatchOffers   dispatch.OfferStore
 		dispatchLocker   dispatch.Locker
 		resources        *persistence.Resources
@@ -60,6 +63,7 @@ func main() {
 		adminStore = admin.NewMemoryStore()
 		paymentStore = payments.NewMemoryStore()
 		ratingStore = ratings.NewMemoryStore()
+		documentStore = driverdocs.NewMemoryStore()
 		dispatchOffers = dispatch.NewMemoryOfferStore()
 		dispatchLocker = dispatch.NewMemoryLocker()
 	case "postgres", "persistent":
@@ -80,6 +84,7 @@ func main() {
 		adminStore = admin.NewPostgresStore(resources.Postgres)
 		paymentStore = payments.NewPostgresStore(resources.Postgres)
 		ratingStore = ratings.NewPostgresStore(resources.Postgres)
+		documentStore = driverdocs.NewPostgresStore(resources.Postgres)
 		dispatchOffers = dispatch.NewRedisOfferStore(resources.Redis, "flashx")
 		dispatchLocker = dispatch.NewRedisLocker(resources.Redis, "flashx")
 		readyCheck = resources.Ready
@@ -106,6 +111,32 @@ func main() {
 	authService, err := auth.NewService(authStore, otpSender, cfg.JWTSecret, cfg.AppEnv, cfg.SMSProvider)
 	if err != nil {
 		log.Fatalf("configure auth: %v", err)
+	}
+
+	var storageSigner objectstorage.Signer
+	switch cfg.ObjectStorageProvider {
+	case "disabled", "":
+		if cfg.AppEnv == "production" {
+			log.Fatal("production requires object storage; OBJECT_STORAGE_PROVIDER=disabled is forbidden")
+		}
+	case "s3":
+		storageCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		signer, err := objectstorage.NewS3Signer(storageCtx, objectstorage.S3Config{
+			Endpoint:        cfg.S3Endpoint,
+			Region:          cfg.S3Region,
+			Bucket:          cfg.S3Bucket,
+			AccessKeyID:     cfg.S3AccessKeyID,
+			SecretAccessKey: cfg.S3SecretAccessKey,
+			ForcePathStyle:  cfg.S3ForcePathStyle,
+			TTL:             time.Duration(cfg.S3PresignTTLSeconds) * time.Second,
+		})
+		cancel()
+		if err != nil {
+			log.Fatalf("configure object storage signer: %v", err)
+		}
+		storageSigner = signer
+	default:
+		log.Fatalf("unsupported OBJECT_STORAGE_PROVIDER %q", cfg.ObjectStorageProvider)
 	}
 
 	tripService := trips.NewService(tripStore)
@@ -136,6 +167,7 @@ func main() {
 	pricingService := pricing.NewServiceWithRouting(routeProvider)
 	paymentService := payments.NewService(paymentStore)
 	ratingService := ratings.NewService(ratingStore, tripService)
+	driverDocumentService := driverdocs.NewService(documentStore, storageSigner)
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
@@ -145,6 +177,7 @@ func main() {
 		Persistence:      cfg.Persistence,
 		Trips:            tripService,
 		Drivers:          driverService,
+		DriverDocuments:  driverDocumentService,
 		Users:            userService,
 		Admin:            adminService,
 		Dispatch:         dispatchEngine,

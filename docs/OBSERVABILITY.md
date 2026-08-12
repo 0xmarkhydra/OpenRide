@@ -40,29 +40,37 @@ Mỗi REST request có `request_id`. Nếu client gửi hợp lệ có thể pro
 - DB connection pool usage
 - Redis operation latency/error
 
-## 6. Metrics ride-hailing
+## 6. Metrics marketplace / job
+
+> Trong implementation hiện tại một số metric vẫn mang prefix `trip` để giữ compatibility. Dashboard/business mới phải group theo 3 service: Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ.
 
 ### Dispatch
-- trips_searching
+- jobs_searching (compat: `trips_searching`)
 - candidates_found
 - no_candidate_rate
 - offer_accept/reject/expire
 - time_to_match
 - assignment_conflicts
+- match rate theo service type
 
-### Location
+### Location / realtime tracking
 - location_ingest_rate
 - location_invalid_rate
 - location_stale_rate
 - location_freshness
 - websocket_connections
 - reconnect_rate
+- driver_to_pickup_eta_error/refresh nếu triển khai
+- active_job_location_fanout_failure
 
-### Trips
-- created/completed/cancelled
+### Jobs
+- created/completed/cancelled theo service type
 - transition_failure
-- active trips
+- active jobs
 - completion rate
+- scheduled jobs / late dispatch
+- handover failure/dispute event
+- inspection workflow duration theo bước
 
 ### Third-party
 - maps latency/error/cost proxy counts

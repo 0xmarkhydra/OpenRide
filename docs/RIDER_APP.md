@@ -1,5 +1,7 @@
 # Rider App
 
+> **Current product direction:** đây là Customer App cho **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**, không còn là app gọi xe Grab-like. Flow chi tiết mới nhất nằm ở [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và `PRD_MVP.md`; các từ `trip/booking` trong tài liệu này cần được hiểu/migrate theo service/job mới.
+
 ## 1. Stack
 
 Flutter, tách feature theo domain. Shared package chỉ chứa core/networking/design system/common models cần thiết.

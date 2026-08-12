@@ -1,5 +1,7 @@
 # Project Plan
 
+> **Rebaseline note 12/08/2026:** timeline bên dưới là kế hoạch delivery foundation ban đầu và còn dùng từ Rider/Trip/vehicle theo mô hình cũ. Thứ tự triển khai hiện tại phải ưu tiên theo `PRODUCT_BACKLOG.md` và `IMPLEMENTATION_GAP_REVIEW_2026-08-12.md`: service semantics → CustomerVehicle → scheduling/pricing v2 → 3 flow mới → realtime route/ETA → Admin/UAT. Không dùng timeline cũ để cam kết tiến độ production trước khi re-estimate.
+
 ## 1. Delivery model
 
 MVP dự kiến triển khai theo milestone, ưu tiên tạo vertical slice chạy end-to-end sớm thay vì hoàn thiện từng app riêng rẽ rồi mới ghép cuối.

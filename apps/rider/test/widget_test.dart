@@ -12,7 +12,7 @@ void main() {
     await tester.pumpWidget(const FlashXRiderApp());
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('Chào mừng đến FlashX'), findsOneWidget);
+    expect(find.text('Đi đâu cũng nhanh hơn.'), findsOneWidget);
     expect(find.text('Số điện thoại'), findsOneWidget);
     expect(find.text('Tiếp tục'), findsOneWidget);
   });

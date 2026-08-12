@@ -1,5 +1,7 @@
 # Driver App
 
+> **Current product direction:** Driver App phục vụ tài xế/người thực hiện cho **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**. Không coi xe của tài xế là phương tiện chở khách như Grab. KYC tập trung vào năng lực tài xế; workflow nhận/bàn giao **xe của khách** phải được bổ sung theo [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md).
+
 ## 1. Stack
 
 Flutter. Driver App có yêu cầu background location và realtime cao hơn Rider nên phải test trên thiết bị thật sớm.
@@ -86,7 +88,7 @@ Nếu mất mạng:
 
 ## 10. Security/KYC
 
-- Upload qua signed URL/object storage khi có thể.
+- Upload KYC bắt buộc direct-to-object-storage bằng presigned URL; backend chỉ cấp chữ ký và lưu metadata, không nhận file binary/multipart.
 - Không cache ảnh KYC lâu hơn cần thiết.
 - Không log PII/document identifiers nhạy cảm.
 

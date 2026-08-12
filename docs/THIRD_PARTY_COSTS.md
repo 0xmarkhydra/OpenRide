@@ -115,11 +115,13 @@ Sentry, Datadog, Grafana Cloud hoặc provider khác có thể miễn phí ở m
 - signed direct upload;
 - query/index optimization.
 
-## 12. Báo giá MVP hiện tại
+## 12. Ngân sách phát triển phần mềm hiện tại
 
-Tài liệu thương mại đã thống nhất sơ bộ tổng development budget khoảng `650.000.000 VNĐ` cho scope MVP đầy đủ. Đây là planning figure, không thay thế hợp đồng/quotation ký chính thức.
+Mốc ngân sách đang dùng thống nhất cho **FlashX Full Marketplace là `600.000.000 VNĐ`**. Đây là mức dự kiến cho toàn bộ phần mềm gồm ứng dụng khách hàng, ứng dụng tài xế, hệ thống quản trị và phần hệ thống phía sau; **chưa phải giá chốt cứng theo hợp đồng**.
 
-Chi phí third-party không nằm trong con số trên trừ khi phụ lục/hợp đồng ghi rõ.
+Khi khóa phạm vi cuối cùng, chi phí chính thức sẽ được bóc lại theo hạng mục và tận dụng tối đa những phần đã có sẵn để tránh làm lại từ đầu.
+
+Chi phí dịch vụ bên thứ ba không nằm trong con số 600 triệu trên trừ khi phụ lục/hợp đồng ghi rõ.
 
 ## 13. Nguyên tắc khi báo khách
 

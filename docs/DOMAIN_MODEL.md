@@ -1,5 +1,7 @@
 # Domain Model
 
+> **Business rebaseline 12/08/2026:** domain trong file này đang được migrate từ ride-hailing semantics cũ sang designated-driver/vehicle-assistance. Source of truth hiện tại là [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và `PRD_MVP.md`. Đặc biệt, vehicle trung tâm của booking mới là **phương tiện của khách hàng**, và service MVP là Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ.
+
 ## 1. Core domains
 
 FlashX chia domain theo business capability, không chia theo database table.
@@ -47,18 +49,25 @@ offline -> online -> busy -> online -> offline
 
 Chỉ driver `approved` mới được `online`.
 
-## 4. Vehicle
+## 4. Customer Vehicle
+
+> Bảng `vehicles` gắn `driver_id` trong schema hiện tại là compatibility/legacy của mô hình ride-hailing và **không phải domain vehicle mục tiêu**.
+
+Target Full Marketplace: phương tiện thuộc khách hàng và được chọn khi tạo yêu cầu.
 
 Thuộc tính chính:
-- id
-- driver_id
-- service_type
-- plate_number
-- brand
-- model
-- active status (sẽ bổ sung khi implement)
+- id;
+- owner/customer_id;
+- type: car/motorbike;
+- license_plate;
+- brand/model;
+- color;
+- transmission: automatic/manual/n/a;
+- seats nếu áp dụng;
+- notes;
+- photo_object_key optional.
 
-Một driver có thể có nhiều vehicle trong tương lai, nhưng MVP nên có một active vehicle tại một thời điểm.
+Driver không cần sở hữu phương tiện để nhận chuyến. Thay vào đó Driver có **capability** cho loại dịch vụ, hạng bằng và khả năng lái số sàn/số tự động.
 
 ## 5. Trip aggregate
 

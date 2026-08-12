@@ -1,5 +1,7 @@
 # API Contract
 
+> **Compatibility note 12/08/2026:** API đang chạy vẫn dùng nhiều endpoint/field `rider`, `trip`, `car/bike` từ MVP ride-hailing cũ. Đây là **implementation compatibility contract**, không phải business semantics cuối cùng. API mới phải migrate theo `CUSTOMER_REQUIREMENTS.md` / `PRD_MVP.md`: 3 service mới, `CustomerVehicle`, scheduled booking, handover và workflow Đăng kiểm hộ. Không mở rộng semantics `car/bike` cũ cho feature mới.
+
 ## 1. Nguyên tắc
 
 - Base path: `/v1`.
@@ -123,8 +125,17 @@ Driver profile/KYC/availability.
 ### PATCH `/v1/driver/me`
 Update profile.
 
-### POST `/v1/driver/documents`
-Create upload intent hoặc register object sau upload.
+### POST `/v1/driver/documents/upload-url`
+Xin presigned PUT request cho một file KYC. Backend chỉ ký request; file bytes không đi qua FlashX API.
+
+### POST `/v1/driver/documents/complete`
+Sau khi client PUT trực tiếp lên object storage, ghi metadata/object key vào PostgreSQL.
+
+### GET `/v1/driver/documents`
+Danh sách metadata KYC của tài xế hiện tại.
+
+### GET `/v1/driver/documents/{id}/view-url`
+Cấp presigned GET URL ngắn hạn sau khi kiểm tra ownership.
 
 ### POST `/v1/driver/availability`
 ```json
@@ -172,8 +183,9 @@ Prefix: `/v1/admin`
 Các endpoint nhóm:
 - `/riders`
 - `/drivers`
-- `/drivers/{id}/approve`
-- `/drivers/{id}/reject`
+- `/drivers/{id}/approval`
+- `/drivers/{id}/documents`
+- `/drivers/{id}/documents/{documentID}/review`
 - `/trips`
 - `/trips/{id}`
 - `/pricing-rules`

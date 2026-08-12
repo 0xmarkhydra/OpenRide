@@ -1,5 +1,7 @@
 # Admin Portal
 
+> **Current product direction:** Operations quản lý job theo 3 dịch vụ **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**. Dashboard/live jobs/KYC/pricing/support phải ưu tiên ba service này; xem [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) để tránh tiếp tục triển khai theo ride-hailing semantics cũ.
+
 ## 1. Mục tiêu
 
 Admin Portal phục vụ Operations, Support và quản trị hệ thống; không phải dashboard chỉ để xem số liệu.

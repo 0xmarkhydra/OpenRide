@@ -1,10 +1,12 @@
 # ĐỊNH HƯỚNG PHÁP LÝ & GIẤY PHÉP VẬN HÀNH FLASHX TẠI VIỆT NAM
 
-**Phiên bản:** 1.0  
-**Ngày cập nhật:** 10/08/2026  
-**Phạm vi:** Nền tảng công nghệ kết nối vận tải hành khách tương tự mô hình ride-hailing.
+**Phiên bản:** 1.0 — **LEGACY / CẦN RÀ SOÁT LẠI**  
+**Ngày cập nhật gốc:** 10/08/2026  
+**Phạm vi gốc:** Nền tảng công nghệ kết nối vận tải hành khách tương tự mô hình ride-hailing.
 
-> Tài liệu này dùng cho mục đích lập kế hoạch sản phẩm, triển khai dự án và trao đổi thương mại với khách hàng. Đây không phải là ý kiến pháp lý thay thế tư vấn của luật sư/cơ quan có thẩm quyền. Trước thời điểm vận hành chính thức, doanh nghiệp cần rà soát lại mô hình kinh doanh, hợp đồng, luồng thanh toán và địa bàn triển khai để xác định nghĩa vụ pháp lý cuối cùng.
+> **CẢNH BÁO 12/08/2026:** FlashX đã đổi mô hình sang **tài xế lái hộ phương tiện của khách + đăng kiểm hộ**. Vì vậy các phần bên dưới nói về taxi, FlashXCar/FlashXBike hoặc đơn vị vận tải **không được dùng làm kết luận pháp lý cho mô hình hiện tại**. Trước Go-Live phải có một vòng rà soát pháp lý riêng theo `CUSTOMER_REQUIREMENTS.md`, đặc biệt về trách nhiệm khi tài xế lái xe của khách, bàn giao tài sản, bảo hiểm, ủy quyền/giấy tờ đăng kiểm hộ, hợp đồng với tài xế và nghĩa vụ của nền tảng.
+
+> Tài liệu này chỉ dùng làm lịch sử/tham khảo cho kế hoạch sản phẩm. Đây không phải là ý kiến pháp lý thay thế tư vấn của luật sư/cơ quan có thẩm quyền.
 
 ---
 

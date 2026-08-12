@@ -29,6 +29,22 @@ function money(value?: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(value || 0);
 }
 
+function tripStatusLabel(status: string) {
+  return ({
+    searching: 'Đang tìm tài xế',
+    accepted: 'Đã nhận chuyến',
+    arriving: 'Đang đến đón',
+    arrived: 'Đã tới điểm đón',
+    in_progress: 'Đang di chuyển',
+    completed: 'Hoàn thành',
+    cancelled: 'Đã hủy',
+  } as Record<string, string>)[status] || status;
+}
+
+function serviceLabel(service: string) {
+  return service === 'car' ? 'FlashX Car' : service === 'bike' ? 'FlashX Bike' : service;
+}
+
 export default function AdminClient() {
   const [token, setToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
@@ -153,15 +169,15 @@ export default function AdminClient() {
   }
 
   const cards = useMemo(() => [
-    ['Tổng chuyến', metrics.trips_total || 0, `${metrics.trips_completed || 0} hoàn thành`],
-    ['Tài xế online', metrics.drivers_online || 0, `${metrics.drivers_total || 0} tổng tài xế`],
-    ['Đang tìm tài xế', metrics.trips_searching || 0, `${metrics.trips_active || 0} chuyến active`],
-    ['Chờ duyệt', metrics.drivers_pending || 0, `${metrics.trips_cancelled || 0} chuyến đã hủy`],
+    ['Tổng chuyến', metrics.trips_total || 0, `${metrics.trips_completed || 0} hoàn thành`, '↗'],
+    ['Tài xế online', metrics.drivers_online || 0, `${metrics.drivers_total || 0} tổng tài xế`, '●'],
+    ['Đang tìm tài xế', metrics.trips_searching || 0, `${metrics.trips_active || 0} chuyến đang chạy`, '⌖'],
+    ['Chờ duyệt', metrics.drivers_pending || 0, `${metrics.trips_cancelled || 0} chuyến đã hủy`, '✓'],
   ], [metrics]);
 
   if (!token) {
     return <main className="loginShell"><section className="loginCard">
-      <div className="brand loginBrand"><div className="brandMark">G</div><div className="brandText"><strong>FlashX</strong><span>Operations</span></div></div>
+      <div className="brand loginBrand"><div className="brandMark">⚡</div><div className="brandText"><strong>FlashX</strong><span>Operations</span></div></div>
       <h1>Đăng nhập quản trị</h1><p className="muted">OTP chỉ được gửi tới số điện thoại Admin đã bootstrap trên backend.</p>
       <form onSubmit={challenge ? verifyOtp : requestOtp} className="loginForm">
         <label>Số điện thoại<input value={phone} onChange={e => setPhone(e.target.value)} disabled={!!challenge || busy} placeholder="+84..." /></label>
@@ -175,7 +191,7 @@ export default function AdminClient() {
 
   return <div className="shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brandMark">G</div><div className="brandText"><strong>FlashX</strong><span>Operations</span></div></div>
+      <div className="brand"><div className="brandMark">⚡</div><div className="brandText"><strong>FlashX</strong><span>Operations</span></div></div>
       <nav className="nav" aria-label="Điều hướng quản trị">
         {['▦ Tổng quan','⇄ Chuyến đi','◉ Tài xế','◎ Khách hàng','₫ Giá cước','% Khuyến mại','⌕ Audit log','⚙ Cài đặt'].map((item,i)=><div className={`navItem${i===0?' active':''}`} key={item}>{item}</div>)}
       </nav>
@@ -183,15 +199,16 @@ export default function AdminClient() {
     </aside>
     <main className="main">
       <header className="topbar"><h1>Trung tâm vận hành</h1><div className="topbarRight"><button className="linkButton" onClick={()=>void load()} disabled={busy}>Làm mới</button><span className="env">LIVE</span><button className="avatar" onClick={()=>void logout()}>AD</button></div></header>
-      <div className="content">
-        <section className="pageHeading"><div><h2>Tổng quan hoạt động</h2><p>Giám sát chuyến đi và duyệt tài xế trước khi vận hành.</p></div><div className="liveBadge"><span className="liveDot"/> Backend connected</div></section>
-        {error && <div className="errorBox">{error}</div>}
-        <section className="metrics">{cards.map(([label,value,foot])=><article className="metricCard" key={label}><div className="metricTop"><span>{label}</span></div><div className="metricValue">{value}</div><div className="metricFoot good">{foot}</div></article>)}</section>
+      <div className="content" aria-busy={busy}>
+        {busy && <div className="loadingBar" aria-label="Đang đồng bộ dữ liệu"><span /></div>}
+        <section className="pageHeading"><div><div className="eyebrow">FLASHX OPERATIONS</div><h2>Tổng quan hoạt động</h2><p>Giám sát chuyến đi và duyệt tài xế trước khi vận hành.</p></div><div className="liveBadge"><span className="liveDot"/> Backend connected</div></section>
+        {error && <div className="errorBox" role="alert">{error}</div>}
+        <section className="metrics">{cards.map(([label,value,foot,icon])=><article className="metricCard" key={label}><div className="metricTop"><span>{label}</span><span className="metricIcon">{icon}</span></div><div className="metricValue">{value}</div><div className="metricFoot good">{foot}</div></article>)}</section>
         <section className="grid">
           <article className="card"><div className="cardHeader"><h3>Bản đồ vận hành</h3><span className="muted">Map adapter chờ API key khách hàng</span></div><div className="opsMap"><div className="mapRoad r1"/><div className="mapRoad r2"/><div className="mapRoad r3"/><div className="mapRoad r4"/><div className="mapLabel">{metrics.drivers_online || 0} tài xế online · {metrics.trips_active || 0} chuyến active</div></div></article>
-          <article className="card"><div className="cardHeader"><h3>Chờ duyệt tài xế</h3><span className="muted">{drivers.length} hồ sơ</span></div><div className="queue">{drivers.length===0?<div className="emptyState">Không có hồ sơ chờ duyệt.</div>:drivers.map(d=><div className="queueItem" key={d.id}><div className="queueAvatar">{(d.full_name||d.phone||'TX').slice(0,2).toUpperCase()}</div><div><div className="queueTitle">{d.full_name||d.phone||d.id}</div><div className="queueSub">{d.service_type} · {d.id}</div></div><div className="queueActions"><button className="rejectButton" onClick={()=>void approve(d,'rejected')}>Từ chối</button><button className="approveButton" onClick={()=>void approve(d,'approved')}>Duyệt</button></div></div>)}</div></article>
+          <article className="card"><div className="cardHeader"><div><h3>Chờ duyệt tài xế</h3><span className="cardHint">Hồ sơ cần Operations xử lý</span></div><span className="countBadge">{drivers.length}</span></div><div className="queue">{drivers.length===0?<div className="emptyState"><span className="emptyIcon">✓</span><strong>Đã xử lý hết hồ sơ</strong><span>Hiện không có tài xế nào đang chờ duyệt.</span></div>:drivers.map(d=><div className="queueItem" key={d.id}><div className="queueAvatar">{(d.full_name||d.phone||'TX').slice(0,2).toUpperCase()}</div><div className="queueIdentity"><div className="queueTitle">{d.full_name||d.phone||d.id}</div><div className="queueSub">{serviceLabel(d.service_type)} · {d.phone||d.id}</div></div><div className="queueActions"><button className="rejectButton" disabled={busy} onClick={()=>void approve(d,'rejected')}>Từ chối</button><button className="approveButton" disabled={busy} onClick={()=>void approve(d,'approved')}>Duyệt</button></div></div>)}</div></article>
         </section>
-        <section className="card tableCard"><div className="cardHeader"><h3>Chuyến gần đây</h3><span className="muted">{trips.length} chuyến</span></div><div className="tableWrap"><table><thead><tr><th>Mã chuyến</th><th>Rider</th><th>Driver</th><th>Dịch vụ</th><th>Giá</th><th>Trạng thái</th></tr></thead><tbody>{trips.map(t=><tr key={t.id}><td className="tripId">{t.id}</td><td>{t.rider_id}</td><td>{t.driver_id||'—'}</td><td>{t.service_type}</td><td><strong>{money(t.final_fare_minor||t.estimated_fare_minor)}</strong></td><td><span className={`status ${t.status==='cancelled'?'cancelled':t.status==='completed'?'active':'pending'}`}>{t.status}</span></td></tr>)}</tbody></table></div></section>
+        <section className="card tableCard"><div className="cardHeader"><div><h3>Chuyến gần đây</h3><span className="cardHint">Dòng hoạt động mới nhất của hệ thống</span></div><span className="countBadge">{trips.length}</span></div><div className="tableWrap">{trips.length===0?<div className="emptyState tableEmpty"><span className="emptyIcon">⇄</span><strong>Chưa có chuyến đi</strong><span>Dữ liệu chuyến sẽ xuất hiện tại đây khi Rider bắt đầu đặt xe.</span></div>:<table><thead><tr><th>Mã chuyến</th><th>Rider</th><th>Driver</th><th>Dịch vụ</th><th>Giá</th><th>Trạng thái</th></tr></thead><tbody>{trips.map(t=><tr key={t.id}><td className="tripId">{t.id}</td><td>{t.rider_id}</td><td>{t.driver_id||'—'}</td><td>{serviceLabel(t.service_type)}</td><td><strong>{money(t.final_fare_minor||t.estimated_fare_minor)}</strong></td><td><span className={`status ${t.status==='cancelled'?'cancelled':t.status==='completed'?'active':'pending'}`}>{tripStatusLabel(t.status)}</span></td></tr>)}</tbody></table>}</div></section>
       </div>
     </main>
   </div>;

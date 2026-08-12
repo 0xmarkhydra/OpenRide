@@ -1,5 +1,7 @@
 # Data Model
 
+> **Compatibility note 12/08/2026:** schema hiện tại phản ánh foundation ride-hailing cũ (`vehicles.driver_id`, `trips`, `car/bike`). Không được coi bảng `vehicles` hiện tại là “Xe của tôi”. Target Full Marketplace cần migration mới cho **phương tiện của khách**, 3 service mới, lịch hẹn, handover và workflow Đăng kiểm hộ; xem `IMPLEMENTATION_GAP_REVIEW_2026-08-12.md`.
+
 ## 1. Mục tiêu
 
 PostgreSQL + PostGIS là source of truth cho dữ liệu nghiệp vụ. Redis giữ hot state và spatial index realtime. Thiết kế phải tránh ghi GPS tần suất cao trực tiếp vào bảng transactional chính.
@@ -112,16 +114,24 @@ Nên bổ sung trong migration sau:
 - metadata JSONB
 - sequence/version.
 
-## 8. Tables dự kiến tiếp theo
+## 8. Driver documents / object storage metadata
 
 ### driver_documents
 - id
 - driver_id
 - document_type
-- object_key
+- object_key — private S3-compatible object key, không phải public URL
+- filename
+- content_type
+- size_bytes
 - review_status
-- reviewed_by
+- review_note
 - created_at/updated_at
+- reviewed_at
+
+File bytes không nằm trong PostgreSQL và không đi qua backend. Client upload trực tiếp tới object storage bằng presigned PUT; bảng này chỉ là business metadata/KYC review state.
+
+## 9. Tables dự kiến tiếp theo
 
 ### pricing_rules
 - id

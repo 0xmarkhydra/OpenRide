@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 var (
@@ -18,6 +19,7 @@ type Store interface {
 	ListByRider(riderID string, limit int) ([]Trip, error)
 	ListByDriver(driverID string, limit int) ([]Trip, error)
 	ListSearching(limit int) ([]Trip, error)
+	ListScheduledDue(before time.Time, limit int) ([]Trip, error)
 	ListAll(limit int) ([]Trip, error)
 	FindActiveByDriver(driverID string) (Trip, error)
 }
@@ -119,14 +121,39 @@ func (s *MemoryStore) ListSearching(limit int) ([]Trip, error) {
 	return result, nil
 }
 
+func (s *MemoryStore) ListScheduledDue(before time.Time, limit int) ([]Trip, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	result := make([]Trip, 0)
+	for _, trip := range s.trips {
+		if trip.Status == StatusScheduled && trip.ScheduledAt != nil && !trip.ScheduledAt.After(before) {
+			result = append(result, trip)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ScheduledAt.Before(*result[j].ScheduledAt) })
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (s *MemoryStore) ListAll(limit int) ([]Trip, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if limit <= 0 || limit > 500 { limit = 100 }
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
 	result := make([]Trip, 0, len(s.trips))
-	for _, trip := range s.trips { result = append(result, trip) }
+	for _, trip := range s.trips {
+		result = append(result, trip)
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
-	if len(result) > limit { result = result[:limit] }
+	if len(result) > limit {
+		result = result[:limit]
+	}
 	return result, nil
 }
 
@@ -134,7 +161,7 @@ func (s *MemoryStore) FindActiveByDriver(driverID string) (Trip, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, trip := range s.trips {
-		if trip.DriverID == driverID && (trip.Status == StatusAccepted || trip.Status == StatusArriving || trip.Status == StatusArrived || trip.Status == StatusInProgress) {
+		if trip.DriverID == driverID && IsDriverOccupiedStatus(trip.Status) {
 			return trip, nil
 		}
 	}

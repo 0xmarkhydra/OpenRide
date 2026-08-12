@@ -14,6 +14,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
@@ -32,6 +33,7 @@ type Dependencies struct {
 	Persistence      string
 	Trips            *trips.Service
 	Drivers          *drivers.Service
+	CustomerVehicles *customervehicles.Service
 	DriverDocuments  *driverdocs.Service
 	Dispatch         *dispatch.Engine
 	Ride             *ride.Service
@@ -81,6 +83,9 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/realtime", s.realtimeSocket)
 	mux.HandleFunc("GET /v1/rider/me", s.riderMe)
 	mux.HandleFunc("PATCH /v1/rider/me", s.updateRiderMe)
+	mux.HandleFunc("GET /v1/rider/vehicles", s.riderVehicles)
+	mux.HandleFunc("POST /v1/rider/vehicles", s.createRiderVehicle)
+	mux.HandleFunc("GET /v1/rider/vehicles/{id}", s.getRiderVehicle)
 	mux.HandleFunc("POST /v1/trips/estimate", s.estimateTrip)
 	mux.HandleFunc("POST /v1/trips", s.createTrip)
 	mux.HandleFunc("GET /v1/trips", s.listTrips)
@@ -101,11 +106,20 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("POST /v1/driver/location", s.driverLocation)
 	mux.HandleFunc("GET /v1/driver/offers/current", s.currentDriverOffer)
 	mux.HandleFunc("GET /v1/driver/trips", s.driverTrips)
+	mux.HandleFunc("GET /v1/driver/trips/{id}", s.driverTripDetail)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/accept", s.acceptDriverOffer)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/reject", s.rejectDriverOffer)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arriving", s.driverTripArriving)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arrived", s.driverTripArrived)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/vehicle-received", s.driverTripVehicleReceived)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/start", s.driverTripStart)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/arrive-inspection", s.driverTripArriveInspection)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/start-inspection", s.driverTripStartInspection)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/complete-inspection", s.driverTripCompleteInspection)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/returning", s.driverTripReturning)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/arrived-return", s.driverTripArrivedReturn)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/handover", s.driverTripHandover)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/incident", s.driverTripIncident)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/complete", s.driverTripComplete)
 
 	mux.HandleFunc("GET /v1/admin/me", s.adminMe)
@@ -156,9 +170,12 @@ func (s *Server) apiInfo(w http.ResponseWriter, _ *http.Request) {
 }
 
 type estimateTripRequest struct {
-	Pickup      trips.Point `json:"pickup"`
-	Destination trips.Point `json:"destination"`
-	ServiceType string      `json:"service_type"`
+	Pickup            trips.Point `json:"pickup"`
+	Destination       trips.Point `json:"destination"`
+	ServiceType       string      `json:"service_type"`
+	CustomerVehicleID string      `json:"customer_vehicle_id,omitempty"`
+	BookingMode       string      `json:"booking_mode,omitempty"`
+	ScheduledAt       *time.Time  `json:"scheduled_at,omitempty"`
 }
 
 func (s *Server) estimateTrip(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +215,16 @@ func (s *Server) createTrip(w http.ResponseWriter, r *http.Request) {
 	var req estimateTripRequest
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	req.ServiceType = trips.NormalizeServiceType(req.ServiceType)
+	if req.BookingMode == "" {
+		req.BookingMode = trips.BookingImmediate
+	}
+	if req.CustomerVehicleID != "" && s.deps.CustomerVehicles != nil {
+		if _, err := s.deps.CustomerVehicles.ValidateForService(req.CustomerVehicleID, riderID, req.ServiceType); err != nil {
+			s.writeVehicleError(w, err)
+			return
+		}
 	}
 	fingerprint := requestFingerprint(riderID, req)
 	scope := "create-trip:" + riderID
@@ -241,7 +268,10 @@ func (s *Server) createTrip(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := s.deps.Trips.Create(trips.CreateInput{
 		RiderID:            riderID,
+		CustomerVehicleID:  req.CustomerVehicleID,
 		ServiceType:        req.ServiceType,
+		BookingMode:        req.BookingMode,
+		ScheduledAt:        req.ScheduledAt,
 		Pickup:             req.Pickup,
 		Destination:        req.Destination,
 		EstimatedDistanceM: estimate.DistanceM,
@@ -263,8 +293,9 @@ func (s *Server) createTrip(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Payments != nil {
 		_, _ = s.deps.Payments.EnsureCash(trip)
 	}
-	s.publishActor(trip.RiderID, "trip.searching", trip.ID, trip)
-	if s.deps.Dispatch != nil {
+	eventType := "trip." + string(trip.Status)
+	s.publishActor(trip.RiderID, eventType, trip.ID, trip)
+	if s.deps.Dispatch != nil && trip.Status == trips.StatusSearching {
 		if offer, offerErr := s.deps.Dispatch.CreateOffer(trip.ID); offerErr == nil {
 			s.publishOffers([]dispatch.Offer{offer})
 		}

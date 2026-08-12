@@ -19,7 +19,7 @@ class RiderMapView extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!AppConfig.mapsEnabled) return const _MapFallback();
 
-    final pickupPoint = _point(pickup) ?? const LatLng(21.0285, 105.8542);
+    final pickupPoint = _point(pickup) ?? const LatLng(19.8067, 105.7852);
     final tripPickup = _point(activeTrip?['pickup']) ?? pickupPoint;
     final destination = _point(activeTrip?['destination']);
     final driverPayload = driverLocation?['location'] ?? driverLocation;
@@ -29,7 +29,7 @@ class RiderMapView extends StatelessWidget {
       Marker(
         markerId: const MarkerId('pickup'),
         position: tripPickup,
-        infoWindow: const InfoWindow(title: 'Điểm đón'),
+        infoWindow: const InfoWindow(title: 'Điểm nhận xe'),
       ),
       if (destination != null)
         Marker(
@@ -81,7 +81,7 @@ class _MapFallback extends StatelessWidget {
                 Icon(Icons.location_on_rounded,
                     size: 48, color: Color(0xFF0B132B)),
                 SizedBox(height: 8),
-                Text('Maps sẽ bật khi cấu hình API key production'),
+                Text('Bản đồ theo dõi dịch vụ FlashX'),
               ],
             ),
           ),

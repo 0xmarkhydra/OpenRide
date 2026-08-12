@@ -3,6 +3,8 @@
 > **Source of truth nghiệp vụ — cập nhật 12/08/2026**
 >
 > Tài liệu này ghi nhận yêu cầu mới nhất của khách hàng và **thay thế giả định cũ rằng FlashX là một Grab/Uber clone thuần túy**. Nếu tài liệu cũ còn dùng từ `ride-hailing`, `bike/car` theo nghĩa xe của tài xế chở khách, phải diễn giải lại theo tài liệu này và cập nhật dần trong cùng đợt refactor domain.
+>
+> **Cách vận hành chi tiết của 3 dịch vụ MVP** được khóa tại [`BA_MVP_OPERATING_RULES_2026-08-12.md`](./BA_MVP_OPERATING_RULES_2026-08-12.md). Khi thiết kế UI/API/state/test, tài liệu BA này được dùng cùng với file hiện tại.
 
 ## 1. Kết luận nghiệp vụ đã chốt
 
@@ -378,16 +380,19 @@ Nên triển khai theo mức ưu tiên:
 - rating;
 - support;
 - audit Admin;
-- xác nhận nhận/bàn giao xe ở mức cơ bản.
+- xác nhận nhận/bàn giao xe;
+- **evidence tối thiểu trước/sau bàn giao**: ảnh tổng quan xe, dashboard/odometer khi phù hợp, ghi chú bất thường, thời gian/vị trí và người xác nhận;
+- **incident workflow tối thiểu** để tài xế/Operations xử lý tai nạn, xe hỏng, mất giấy tờ, mất liên lạc hoặc tranh chấp mà không biến thành normal cancellation;
+- sau `VEHICLE_RECEIVED` không cho hủy/reassign theo flow bình thường nếu chưa qua return/support/handover có kiểm soát.
 
 ### P1
-- ảnh hiện trạng xe trước/sau;
-- odometer/fuel;
-- ghi nhận vết xước;
-- OTP/PIN bàn giao;
-- incident workflow;
+- bộ ảnh/evidence chi tiết hơn theo loại xe;
+- fuel/battery/odometer structured fields nâng cao;
+- damage annotation;
+- OTP/PIN/signature bàn giao nâng cao;
+- claim workflow hoàn chỉnh;
 - share trip/job;
-- SOS;
+- SOS nâng cao;
 - bảo hiểm/quy trình claim theo đối tác kinh doanh.
 
 ## 10. UX/UI direction đã chốt

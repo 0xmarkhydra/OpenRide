@@ -15,9 +15,11 @@ class RiderHomeScreen extends StatefulWidget {
 
 class _RiderHomeScreenState extends State<RiderHomeScreen> {
   late final RiderTripController trips;
-  final _destinationSearch = TextEditingController();
   var _index = 0;
-  var _serviceType = 'bike';
+  var _serviceType = 'designated_driver_car';
+  var _bookingMode = 'immediate';
+  DateTime? _scheduledAt;
+  String _destinationName = 'Vincom Plaza Thanh Hóa';
 
   @override
   void initState() {
@@ -25,8 +27,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     trips = RiderTripController(
         api: widget.auth.api, realtime: widget.auth.realtime)
       ..addListener(_refresh);
-    trips.loadHistory();
-    trips.refreshPickupLocation();
+    trips.initialize();
   }
 
   void _refresh() {
@@ -35,7 +36,6 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
 
   @override
   void dispose() {
-    _destinationSearch.dispose();
     trips.removeListener(_refresh);
     trips.dispose();
     super.dispose();
@@ -45,23 +45,26 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
-          index: _index, children: [_home(), _history(), _account()]),
+          index: _index, children: [_home(), _activity(), _account()]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: const [
           NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: 'Trang chủ'),
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'Trang chủ',
+          ),
           NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined),
-              selectedIcon: Icon(Icons.receipt_long_rounded),
-              label: 'Chuyến đi'),
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long_rounded),
+            label: 'Hoạt động',
+          ),
           NavigationDestination(
-              icon: Icon(Icons.person_outline_rounded),
-              selectedIcon: Icon(Icons.person_rounded),
-              label: 'Tài khoản'),
+            icon: Icon(Icons.person_outline_rounded),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: 'Tài khoản',
+          ),
         ],
       ),
     );
@@ -73,9 +76,10 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       children: [
         Positioned.fill(
           child: RiderMapView(
-              pickup: trips.pickup,
-              activeTrip: active,
-              driverLocation: trips.driverLocation),
+            pickup: trips.pickup,
+            activeTrip: active,
+            driverLocation: trips.driverLocation,
+          ),
         ),
         Positioned(
           top: 0,
@@ -87,33 +91,30 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Row(
                 children: [
-                  const _FlashXMiniBrand(),
+                  const _BrandPill(),
                   const Spacer(),
-                  _MapAction(
+                  _MapButton(
                     icon: Icons.my_location_rounded,
-                    semanticLabel: 'Lấy lại vị trí hiện tại',
-                    onTap: trips.busy ? null : trips.refreshPickupLocation,
-                  ),
-                  const SizedBox(width: 10),
-                  _MapAction(
-                    icon: Icons.person_rounded,
-                    semanticLabel: 'Mở tài khoản',
-                    onTap: () => setState(() => _index = 2),
+                    tooltip: 'Vị trí hiện tại',
+                    onPressed: trips.refreshPickupLocation,
                   ),
                 ],
               ),
             ),
           ),
         ),
-        if (active != null && trips.hasActiveTrip)
+        if (trips.hasActiveTrip)
           Positioned(
-            top: 82,
+            top: 72,
             left: 16,
             right: 16,
             child: SafeArea(
               bottom: false,
-              child:
-                  _TripStatusPill(status: active['status']?.toString() ?? ''),
+              child: _ActivePill(
+                label: _statusLabel(trips.status),
+                service:
+                    _serviceLabel(active?['service_type']?.toString() ?? ''),
+              ),
             ),
           ),
         Align(
@@ -122,29 +123,27 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             top: false,
             minimum: const EdgeInsets.fromLTRB(12, 12, 12, 10),
             child: Container(
-              constraints: const BoxConstraints(maxWidth: 620),
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              constraints: BoxConstraints(
+                maxWidth: 650,
+                maxHeight: MediaQuery.sizeOf(context).height * .68,
+              ),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(30),
                 border: Border.all(color: FlashXTheme.border),
                 boxShadow: const [
                   BoxShadow(
-                      color: Color(0x260B132B),
-                      blurRadius: 34,
-                      offset: Offset(0, 16)),
+                    color: Color(0x260B132B),
+                    blurRadius: 34,
+                    offset: Offset(0, 16),
+                  ),
                 ],
               ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * .62,
-                ),
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: active == null || !trips.hasActiveTrip
-                      ? _bookingPanel()
-                      : _activeTripPanel(active),
-                ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+                child: trips.hasActiveTrip
+                    ? _activePanel(trips.activeTrip!)
+                    : _bookingPanel(),
               ),
             ),
           ),
@@ -155,136 +154,248 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
 
   Widget _bookingPanel() {
     final theme = Theme.of(context);
-    final query = _destinationSearch.text.trim().toLowerCase();
-    final suggestions = RiderTripController.destinations.entries
-        .where(
-            (entry) => query.isEmpty || entry.key.toLowerCase().contains(query))
+    final compatible = trips.vehiclesForService(_serviceType);
+    final selectedID = compatible.any((v) => v['id'] == trips.selectedVehicleID)
+        ? trips.selectedVehicleID
+        : null;
+    if (selectedID == null && compatible.isNotEmpty && !trips.busy) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && trips.selectedVehicleID != compatible.first['id']) {
+          trips.selectVehicle(compatible.first['id']?.toString());
+        }
+      });
+    }
+
+    final destinationEntries = RiderTripController.destinations.entries
+        .where((entry) => _serviceType == 'vehicle_inspection_assist'
+            ? entry.key.contains('đăng kiểm')
+            : !entry.key.contains('đăng kiểm'))
         .toList();
+    if (!destinationEntries.any((e) => e.key == _destinationName) &&
+        destinationEntries.isNotEmpty) {
+      _destinationName = destinationEntries.first.key;
+    }
+
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Center(
-          child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: const Color(0xFFD7DAE0),
-                  borderRadius: BorderRadius.circular(99))),
-        ),
-        const SizedBox(height: 16),
-        Text('Bạn muốn đi đâu?', style: theme.textTheme.headlineSmall),
-        const SizedBox(height: 6),
-        Text('Chọn điểm đến để xem giá và thời gian dự kiến.',
+        Center(child: _handle()),
+        const SizedBox(height: 14),
+        Text('Bạn cần tài xế làm gì?', style: theme.textTheme.headlineSmall),
+        const SizedBox(height: 5),
+        Text('Chọn dịch vụ, xe của bạn và thời gian thực hiện.',
             style: theme.textTheme.bodyMedium),
         const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-              color: const Color(0xFFF7F8FA),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: FlashXTheme.border)),
-          child: const _LocationRow(
-            icon: Icons.radio_button_checked_rounded,
-            iconColor: FlashXTheme.lime,
-            title: 'Vị trí hiện tại',
-            subtitle: 'Điểm đón của bạn',
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _destinationSearch,
-          onChanged: (_) => setState(() {}),
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: 'Tìm điểm đến...',
-            prefixIcon: const Icon(Icons.search_rounded),
-            suffixIcon: query.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'Xóa tìm kiếm',
-                    onPressed: () {
-                      _destinationSearch.clear();
-                      setState(() {});
-                    },
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Text('Dịch vụ', style: theme.textTheme.titleMedium),
-            const Spacer(),
-            Text('Giá hiển thị trước',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: FlashXTheme.textSecondary)),
-          ],
-        ),
-        const SizedBox(height: 10),
         Row(
           children: [
             Expanded(
-                child: _ServiceCard(
-                    selected: _serviceType == 'bike',
-                    icon: Icons.two_wheeler_rounded,
-                    title: 'FlashX Bike',
-                    subtitle: 'Nhanh & tiết kiệm',
-                    onTap: () => setState(() => _serviceType = 'bike'))),
-            const SizedBox(width: 10),
+              child: _ServiceCard(
+                selected: _serviceType == 'designated_driver_car',
+                icon: Icons.directions_car_filled_rounded,
+                title: 'Lái hộ ô tô',
+                onTap: () => _selectService('designated_driver_car'),
+              ),
+            ),
+            const SizedBox(width: 8),
             Expanded(
-                child: _ServiceCard(
-                    selected: _serviceType == 'car',
-                    icon: Icons.directions_car_filled_rounded,
-                    title: 'FlashX Car',
-                    subtitle: 'Thoải mái hơn',
-                    onTap: () => setState(() => _serviceType = 'car'))),
+              child: _ServiceCard(
+                selected: _serviceType == 'designated_driver_bike',
+                icon: Icons.two_wheeler_rounded,
+                title: 'Lái hộ xe máy',
+                onTap: () => _selectService('designated_driver_bike'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ServiceCard(
+                selected: _serviceType == 'vehicle_inspection_assist',
+                icon: Icons.fact_check_rounded,
+                title: 'Đăng kiểm hộ',
+                onTap: () => _selectService('vehicle_inspection_assist'),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 16),
         Row(
           children: [
-            Text(query.isEmpty ? 'Điểm đến gần đây' : 'Kết quả tìm kiếm',
-                style: theme.textTheme.titleMedium),
-            const Spacer(),
-            Text('${suggestions.length} địa điểm',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: FlashXTheme.textSecondary)),
+            Expanded(
+                child: Text('Xe của tôi', style: theme.textTheme.titleMedium)),
+            TextButton.icon(
+              onPressed: trips.busy ? null : _showAddVehicle,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Thêm xe'),
+            ),
           ],
         ),
-        const SizedBox(height: 8),
-        if (suggestions.isEmpty)
-          const _EmptySearchResult()
+        if (compatible.isEmpty)
+          _InfoBox(
+            icon: Icons.directions_car_outlined,
+            text: _serviceType == 'designated_driver_bike'
+                ? 'Bạn chưa lưu xe máy. Thêm xe để tiếp tục đặt dịch vụ.'
+                : 'Bạn chưa lưu ô tô. Thêm xe để tiếp tục đặt dịch vụ.',
+          )
         else
-          ...suggestions.map((entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _DestinationTile(
-                  name: entry.key,
-                  onTap: trips.busy
-                      ? null
-                      : () => _selectDestination(entry.key, entry.value),
-                ),
-              )),
-        if (trips.error != null) ...[
-          const SizedBox(height: 4),
-          _ErrorBanner(message: trips.error!),
+          DropdownButtonFormField<String>(
+            value: selectedID,
+            decoration:
+                const InputDecoration(prefixIcon: Icon(Icons.key_rounded)),
+            hint: const Text('Chọn phương tiện'),
+            items: compatible
+                .map((vehicle) => DropdownMenuItem<String>(
+                      value: vehicle['id']?.toString(),
+                      child: Text(_vehicleLabel(vehicle)),
+                    ))
+                .toList(),
+            onChanged: trips.busy ? null : trips.selectVehicle,
+          ),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          value: _destinationName,
+          decoration: InputDecoration(
+            labelText: _serviceType == 'vehicle_inspection_assist'
+                ? 'Nơi đăng kiểm'
+                : 'Điểm đến',
+            prefixIcon: Icon(_serviceType == 'vehicle_inspection_assist'
+                ? Icons.fact_check_outlined
+                : Icons.location_on_outlined),
+          ),
+          items: destinationEntries
+              .map((entry) =>
+                  DropdownMenuItem(value: entry.key, child: Text(entry.key)))
+              .toList(),
+          onChanged: trips.busy
+              ? null
+              : (value) => setState(() {
+                    if (value != null) _destinationName = value;
+                    trips.estimate = null;
+                  }),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: ChoiceChip(
+                label: const SizedBox(
+                    width: double.infinity,
+                    child: Text('Ngay bây giờ', textAlign: TextAlign.center)),
+                selected: _bookingMode == 'immediate',
+                onSelected: (_) => setState(() {
+                  _bookingMode = 'immediate';
+                  _scheduledAt = null;
+                }),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ChoiceChip(
+                label: const SizedBox(
+                    width: double.infinity,
+                    child: Text('Hẹn giờ', textAlign: TextAlign.center)),
+                selected: _bookingMode == 'scheduled',
+                onSelected: (_) async {
+                  setState(() => _bookingMode = 'scheduled');
+                  await _pickSchedule();
+                },
+              ),
+            ),
+          ],
+        ),
+        if (_bookingMode == 'scheduled') ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _pickSchedule,
+            icon: const Icon(Icons.schedule_rounded),
+            label: Text(_scheduledAt == null
+                ? 'Chọn thời gian'
+                : _dateTimeLabel(_scheduledAt!)),
+          ),
         ],
+        if (_serviceType == 'vehicle_inspection_assist') ...[
+          const SizedBox(height: 10),
+          const _InfoBox(
+            icon: Icons.description_outlined,
+            text:
+                'Khi nhận xe, FlashX sẽ xác nhận xe và giấy tờ bàn giao trước khi mang đi đăng kiểm.',
+          ),
+        ],
+        if (trips.error != null) ...[
+          const SizedBox(height: 10),
+          _ErrorBox(message: trips.error!),
+        ],
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: trips.busy || compatible.isEmpty
+              ? null
+              : () => _showEstimateAndBook(destinationEntries),
+          icon: trips.busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.bolt_rounded),
+          label: Text(trips.busy ? 'Đang xử lý...' : 'Xem giá trước'),
+        ),
       ],
     );
   }
 
-  Future<void> _selectDestination(
-      String name, Map<String, double> destination) async {
+  void _selectService(String service) {
+    setState(() {
+      _serviceType = service;
+      trips.estimate = null;
+      final compatible = trips.vehiclesForService(service);
+      trips.selectVehicle(
+          compatible.isEmpty ? null : compatible.first['id']?.toString());
+      if (service == 'vehicle_inspection_assist') {
+        _destinationName = 'Trung tâm đăng kiểm Thanh Hóa';
+      } else if (_destinationName.contains('đăng kiểm')) {
+        _destinationName = 'Vincom Plaza Thanh Hóa';
+      }
+    });
+  }
+
+  Future<void> _pickSchedule() async {
+    final initial =
+        _scheduledAt ?? DateTime.now().add(const Duration(hours: 1));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 30)),
+    );
+    if (!mounted || date == null) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (!mounted || time == null) return;
+    setState(() {
+      _bookingMode = 'scheduled';
+      _scheduledAt =
+          DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    });
+  }
+
+  Future<void> _showEstimateAndBook(
+      List<MapEntry<String, Map<String, double>>> destinations) async {
+    final destination = destinations
+        .firstWhere((entry) => entry.key == _destinationName,
+            orElse: () => destinations.first)
+        .value;
     final ok = await trips.estimateTo(destination, serviceType: _serviceType);
     if (!mounted || !ok || trips.estimate == null) return;
+    final estimate = trips.estimate!;
     final fare =
-        (trips.estimate!['fare'] as Map<String, dynamic>?)?['total_minor'] ?? 0;
-    final distance = trips.estimate!['distance_m'] ?? 0;
-    final duration = trips.estimate!['duration_s'] ?? 0;
+        (estimate['fare'] as Map<String, dynamic>?)?['total_minor'] ?? 0;
+    final distance = (estimate['distance_m'] as num?)?.toDouble() ?? 0;
+    final duration = (estimate['duration_s'] as num?)?.toDouble() ?? 0;
+    final vehicle = trips.vehicles
+        .where((e) => e['id']?.toString() == trips.selectedVehicleID)
+        .firstOrNull;
+
     final accepted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: false,
       builder: (context) => SafeArea(
         top: false,
         child: Padding(
@@ -293,48 +404,13 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                  child: Container(
-                      width: 42,
-                      height: 4,
-                      decoration: BoxDecoration(
-                          color: const Color(0xFFD7DAE0),
-                          borderRadius: BorderRadius.circular(99)))),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                          color: FlashXTheme.yellow,
-                          borderRadius: BorderRadius.circular(16)),
-                      child: Icon(
-                          _serviceType == 'car'
-                              ? Icons.directions_car_filled_rounded
-                              : Icons.two_wheeler_rounded,
-                          color: FlashXTheme.navy)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        Text(
-                            _serviceType == 'car'
-                                ? 'FlashX Car'
-                                : 'FlashX Bike',
-                            style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 2),
-                        Text(name,
-                            style: Theme.of(context).textTheme.bodyMedium)
-                      ])),
-                  Text(_money(fare),
-                      style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: FlashXTheme.navy)),
-                ],
-              ),
+              Center(child: _handle()),
+              const SizedBox(height: 18),
+              Text(_serviceLabel(_serviceType),
+                  style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 6),
+              Text(
+                  '${vehicle == null ? 'Xe của bạn' : _vehicleLabel(vehicle)} · $_destinationName'),
               const SizedBox(height: 18),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -344,28 +420,44 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                        child: _EstimateStat(
-                            label: 'Quãng đường',
-                            value:
-                                '${((distance as num).toDouble() / 1000).toStringAsFixed(1)} km')),
-                    Container(width: 1, height: 34, color: FlashXTheme.border),
+                        child: _Stat('Quãng đường',
+                            '${(distance / 1000).toStringAsFixed(1)} km')),
                     Expanded(
-                        child: _EstimateStat(
-                            label: 'Thời gian',
-                            value:
-                                '${((duration as num).toDouble() / 60).ceil()} phút')),
-                    Container(width: 1, height: 34, color: FlashXTheme.border),
-                    const Expanded(
-                        child: _EstimateStat(
-                            label: 'Thanh toán', value: 'Tiền mặt')),
+                        child:
+                            _Stat('Dự kiến', '${(duration / 60).ceil()} phút')),
+                    Expanded(child: _Stat('Thanh toán', 'Tiền mặt')),
                   ],
                 ),
               ),
+              if (_bookingMode == 'scheduled') ...[
+                const SizedBox(height: 10),
+                _InfoBox(
+                  icon: Icons.schedule_rounded,
+                  text: _scheduledAt == null
+                      ? 'Bạn chưa chọn giờ hẹn.'
+                      : 'Thực hiện lúc ${_dateTimeLabel(_scheduledAt!)}',
+                ),
+              ],
               const SizedBox(height: 18),
+              Row(
+                children: [
+                  const Text('Giá dự kiến',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  Text(_money(fare),
+                      style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: FlashXTheme.navy)),
+                ],
+              ),
+              const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: () => Navigator.pop(context, true),
-                icon: const Icon(Icons.bolt_rounded),
-                label: const Text('Đặt chuyến ngay'),
+                onPressed: _bookingMode == 'scheduled' && _scheduledAt == null
+                    ? null
+                    : () => Navigator.pop(context, true),
+                icon: const Icon(Icons.check_circle_outline_rounded),
+                label: const Text('Xác nhận đặt dịch vụ'),
               ),
             ],
           ),
@@ -373,56 +465,128 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       ),
     );
     if (accepted == true) {
-      await trips.createTrip(destination, serviceType: _serviceType);
+      await trips.createTrip(
+        destination,
+        serviceType: _serviceType,
+        bookingMode: _bookingMode,
+        scheduledAt: _scheduledAt,
+      );
     }
   }
 
-  Widget _activeTripPanel(Map<String, dynamic> trip) {
-    final status = trip['status']?.toString() ?? '';
-    final theme = Theme.of(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Center(
-            child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: const Color(0xFFD7DAE0),
-                    borderRadius: BorderRadius.circular(99)))),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                    color: FlashXTheme.yellow,
-                    borderRadius: BorderRadius.circular(16)),
-                child: const Icon(Icons.bolt_rounded,
-                    color: FlashXTheme.navy, size: 28)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(_statusLabel(status),
-                      style: theme.textTheme.headlineSmall),
-                  const SizedBox(height: 3),
-                  Text(_statusHint(status), style: theme.textTheme.bodyMedium)
-                ])),
+  Future<void> _showAddVehicle() async {
+    final isBike = _serviceType == 'designated_driver_bike';
+    final plate = TextEditingController();
+    final brand = TextEditingController();
+    final model = TextEditingController();
+    final color = TextEditingController();
+    var transmission = isBike ? 'n/a' : 'automatic';
+    final submit = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isBike ? 'Thêm xe máy' : 'Thêm ô tô'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: plate,
+                    decoration: const InputDecoration(labelText: 'Biển số *')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: brand,
+                    decoration: const InputDecoration(labelText: 'Hãng xe')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: model,
+                    decoration: const InputDecoration(labelText: 'Dòng xe')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: color,
+                    decoration: const InputDecoration(labelText: 'Màu xe')),
+                if (!isBike) ...[
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: transmission,
+                    decoration: const InputDecoration(labelText: 'Hộp số'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'automatic', child: Text('Số tự động')),
+                      DropdownMenuItem(value: 'manual', child: Text('Số sàn')),
+                    ],
+                    onChanged: (value) => setDialogState(
+                        () => transmission = value ?? transmission),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Đóng')),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Lưu xe'),
+            ),
           ],
         ),
-        const SizedBox(height: 18),
-        _TripTimeline(status: status),
-        const SizedBox(height: 16),
-        if (trip['driver_id']?.toString().isNotEmpty == true)
+      ),
+    );
+    if (submit == true && plate.text.trim().isNotEmpty) {
+      await trips.createVehicle(
+        type: isBike ? 'motorbike' : 'car',
+        licensePlate: plate.text,
+        brand: brand.text,
+        model: model.text,
+        color: color.text,
+        transmission: transmission,
+      );
+    }
+    plate.dispose();
+    brand.dispose();
+    model.dispose();
+    color.dispose();
+  }
+
+  Widget _activePanel(Map<String, dynamic> trip) {
+    final status = trip['status']?.toString() ?? '';
+    final service = trip['service_type']?.toString() ?? '';
+    final incidentOpen = trip['incident_open'] == true;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(child: _handle()),
+        const SizedBox(height: 14),
+        Text(_serviceLabel(service),
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 4),
+        Text(_statusLabel(status),
+            style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 5),
+        Text(_statusHint(status, service),
+            style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(height: 14),
+        _ProgressLine(
+            status: status, inspection: service == 'vehicle_inspection_assist'),
+        if (incidentOpen) ...[
+          const SizedBox(height: 12),
+          const _InfoBox(
+            icon: Icons.support_agent_rounded,
+            text:
+                'FlashX Operations đang tiếp nhận sự cố và sẽ hỗ trợ tài xế/khách hàng.',
+            warning: true,
+          ),
+        ],
+        if (trip['driver_id']?.toString().isNotEmpty == true) ...[
+          const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-                color: const Color(0xFFF7F8FA),
-                borderRadius: BorderRadius.circular(18)),
+              color: const Color(0xFFF7F8FA),
+              borderRadius: BorderRadius.circular(18),
+            ),
             child: Row(
               children: [
                 const CircleAvatar(
@@ -431,84 +595,93 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
                     child: Icon(Icons.person_rounded)),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      const Text('Tài xế FlashX',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Tài xế/đối tác FlashX',
                           style: TextStyle(fontWeight: FontWeight.w800)),
                       Text(
-                          'Mã ${_shortId(trip['driver_id']?.toString() ?? '')}',
-                          style: theme.textTheme.bodySmall)
-                    ])),
-                IconButton(
-                    onPressed: () {},
-                    tooltip: 'Gọi tài xế',
-                    icon: const Icon(Icons.call_rounded)),
-                IconButton(
-                    onPressed: () {},
-                    tooltip: 'Nhắn tin',
-                    icon: const Icon(Icons.chat_bubble_outline_rounded)),
+                          'Mã ${_shortId(trip['driver_id']?.toString() ?? '')}'),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.verified_rounded, color: FlashXTheme.success),
               ],
             ),
           ),
+        ],
         if (trips.driverLocation != null) ...[
           const SizedBox(height: 10),
-          const Row(children: [
-            Icon(Icons.radar_rounded, size: 18, color: FlashXTheme.success),
-            SizedBox(width: 8),
-            Text('Vị trí tài xế đang cập nhật trực tiếp',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: FlashXTheme.success))
-          ]),
+          const Text('● Vị trí đang cập nhật trực tiếp',
+              style: TextStyle(
+                  color: FlashXTheme.success, fontWeight: FontWeight.w700)),
         ],
-        const SizedBox(height: 14),
-        if (!['in_progress', 'completed', 'cancelled'].contains(status))
+        if (trips.canCancel) ...[
+          const SizedBox(height: 14),
           OutlinedButton.icon(
-              onPressed: trips.busy ? null : trips.cancel,
-              icon: const Icon(Icons.close_rounded),
-              label: const Text('Hủy chuyến')),
-        if (status == 'completed')
-          FilledButton(
-              onPressed: trips.loadHistory,
-              child: const Text('Xem lịch sử chuyến')),
+            onPressed: trips.busy ? null : trips.cancel,
+            icon: const Icon(Icons.close_rounded),
+            label: const Text('Hủy yêu cầu'),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _history() {
-    final theme = Theme.of(context);
+  Widget _activity() {
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: trips.loadHistory,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
           children: [
-            const _PageBrand(),
-            const SizedBox(height: 24),
-            Text('Chuyến đi của bạn', style: theme.textTheme.headlineMedium),
-            const SizedBox(height: 6),
-            Text('Theo dõi các chuyến gần đây và đánh giá tài xế.',
-                style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 20),
+            const _PageHeader(
+                title: 'Hoạt động', subtitle: 'Lịch sử dịch vụ của bạn'),
+            const SizedBox(height: 18),
             if (trips.history.isEmpty)
-              const _EmptyCard(
-                  icon: Icons.route_outlined,
-                  title: 'Chưa có chuyến đi',
-                  subtitle: 'Chuyến đầu tiên của bạn sẽ xuất hiện ở đây.'),
-            ...trips.history.map((trip) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _TripHistoryCard(
-                    trip: trip,
-                    statusLabel: _statusLabel(trip['status']?.toString() ?? ''),
-                    money: _money(trip['final_fare_minor'] ??
-                        trip['estimated_fare_minor'] ??
-                        0),
-                    canRate: trip['status'] == 'completed' &&
-                        !trips.ratedTripIds
-                            .contains(trip['id']?.toString() ?? ''),
-                    onRate: () => _rateTrip(trip),
+              const _InfoBox(
+                  icon: Icons.history_rounded,
+                  text: 'Chưa có dịch vụ nào được đặt.'),
+            ...trips.history.map((trip) => Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        _ServiceIcon(
+                            service: trip['service_type']?.toString() ?? ''),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                  _serviceLabel(
+                                      trip['service_type']?.toString() ?? ''),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800)),
+                              const SizedBox(height: 3),
+                              Text(
+                                  _statusLabel(
+                                      trip['status']?.toString() ?? ''),
+                                  style: Theme.of(context).textTheme.bodySmall),
+                              if ((trip['inspection_result']?.toString() ?? '')
+                                  .isNotEmpty)
+                                Text(
+                                    'Kết quả đăng kiểm: ${_inspectionResult(trip['inspection_result'].toString())}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                        ),
+                        Text(
+                            _money(trip['final_fare_minor'] ??
+                                trip['estimated_fare_minor'] ??
+                                0),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w900)),
+                      ],
+                    ),
                   ),
                 )),
           ],
@@ -517,78 +690,13 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     );
   }
 
-  Future<void> _rateTrip(Map<String, dynamic> trip) async {
-    var stars = 5;
-    final comment = TextEditingController();
-    final submit = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Chuyến đi thế nào?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Đánh giá trải nghiệm với tài xế FlashX.',
-                  style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                    5,
-                    (index) => IconButton(
-                        onPressed: () =>
-                            setDialogState(() => stars = index + 1),
-                        icon: Icon(
-                            index < stars
-                                ? Icons.star_rounded
-                                : Icons.star_border_rounded,
-                            color: FlashXTheme.warning,
-                            size: 30))),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                  controller: comment,
-                  maxLength: 500,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                      labelText: 'Nhận xét (không bắt buộc)',
-                      hintText: 'Tài xế thân thiện, chuyến đi an toàn...')),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Để sau')),
-            FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Gửi đánh giá')),
-          ],
-        ),
-      ),
-    );
-    if (submit == true) {
-      final ok =
-          await trips.rateTrip(trip['id'].toString(), stars, comment.text);
-      if (mounted && !ok && trips.error != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(trips.error!)));
-      }
-    }
-    comment.dispose();
-  }
-
   Widget _account() {
-    final theme = Theme.of(context);
     final phone = widget.auth.phone ?? '';
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
         children: [
-          const _PageBrand(),
-          const SizedBox(height: 24),
-          Text('Tài khoản', style: theme.textTheme.headlineMedium),
+          const _PageHeader(title: 'Tài khoản', subtitle: 'Khách hàng FlashX'),
           const SizedBox(height: 18),
           Container(
             padding: const EdgeInsets.all(18),
@@ -597,47 +705,75 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
                 borderRadius: BorderRadius.circular(24)),
             child: Row(
               children: [
-                Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                        color: FlashXTheme.yellow,
-                        borderRadius: BorderRadius.circular(18)),
-                    child: const Icon(Icons.person_rounded,
-                        color: FlashXTheme.navy, size: 30)),
+                const CircleAvatar(
+                    radius: 26,
+                    backgroundColor: FlashXTheme.yellow,
+                    foregroundColor: FlashXTheme.navy,
+                    child: Icon(Icons.person_rounded)),
                 const SizedBox(width: 14),
                 Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      const Text('Rider FlashX',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 4),
-                      Text(phone,
-                          style: const TextStyle(color: Color(0xFFB9C1D5)))
-                    ])),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Khách hàng FlashX',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 18)),
+                        const SizedBox(height: 3),
+                        Text(phone,
+                            style: const TextStyle(color: Color(0xFFB9C1D5))),
+                      ]),
+                ),
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          Row(children: [
+            Expanded(
+                child: Text('Xe của tôi',
+                    style: Theme.of(context).textTheme.titleLarge)),
+            TextButton.icon(
+                onPressed: _showAddVehicle,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Thêm')),
+          ]),
+          if (trips.vehicles.isEmpty)
+            const _InfoBox(
+                icon: Icons.directions_car_outlined,
+                text: 'Chưa lưu phương tiện.')
+          else
+            ...trips.vehicles.map((vehicle) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFFF1F3F7),
+                    child: Icon(vehicle['type'] == 'motorbike'
+                        ? Icons.two_wheeler_rounded
+                        : Icons.directions_car_rounded),
+                  ),
+                  title: Text(_vehicleLabel(vehicle)),
+                  subtitle: Text(vehicle['transmission'] == 'manual'
+                      ? 'Số sàn'
+                      : vehicle['transmission'] == 'automatic'
+                          ? 'Số tự động'
+                          : 'Xe máy'),
+                  trailing: const Icon(Icons.verified_outlined,
+                      color: FlashXTheme.success),
+                )),
+          const Divider(height: 30),
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.payments_outlined),
+            title: Text('Thanh toán'),
+            subtitle: Text('Tiền mặt trong bản demo'),
+          ),
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.shield_outlined),
+            title: Text('An toàn & hỗ trợ'),
+            subtitle: Text('Theo dõi vị trí, giao nhận xe và hỗ trợ sự cố'),
+          ),
           const SizedBox(height: 16),
-          const _AccountItem(
-              icon: Icons.credit_card_rounded,
-              title: 'Thanh toán',
-              subtitle: 'Tiền mặt · phương thức mặc định'),
-          const SizedBox(height: 10),
-          const _AccountItem(
-              icon: Icons.shield_outlined,
-              title: 'An toàn & quyền riêng tư',
-              subtitle: 'Quản lý dữ liệu và quyền truy cập'),
-          const SizedBox(height: 10),
-          const _AccountItem(
-              icon: Icons.help_outline_rounded,
-              title: 'Trợ giúp',
-              subtitle: 'Hỗ trợ chuyến đi và tài khoản'),
-          const SizedBox(height: 24),
           OutlinedButton.icon(
               onPressed: widget.auth.logout,
               icon: const Icon(Icons.logout_rounded),
@@ -645,6 +781,66 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
         ],
       ),
     );
+  }
+
+  static String _serviceLabel(String service) => switch (service) {
+        'car' || 'designated_driver_car' => 'Lái hộ ô tô',
+        'bike' || 'designated_driver_bike' => 'Lái hộ xe máy',
+        'vehicle_inspection_assist' => 'Đăng kiểm hộ',
+        _ => 'Dịch vụ FlashX',
+      };
+
+  static String _statusLabel(String status) => switch (status) {
+        'scheduled' => 'Đã hẹn lịch',
+        'searching' => 'Đang tìm tài xế phù hợp',
+        'accepted' => 'Tài xế đã nhận yêu cầu',
+        'arriving' || 'arriving_for_pickup' => 'Tài xế đang đến nhận xe',
+        'arrived' || 'arrived_for_pickup' => 'Tài xế đã đến điểm nhận',
+        'vehicle_received' => 'FlashX đã nhận xe',
+        'in_progress' => 'Đang thực hiện hành trình',
+        'en_route_to_inspection' => 'Đang đưa xe tới nơi đăng kiểm',
+        'arrived_at_inspection_center' => 'Đã tới nơi đăng kiểm',
+        'inspection_in_progress' => 'Đang thực hiện đăng kiểm',
+        'inspection_completed' => 'Đã có kết quả đăng kiểm',
+        'returning_vehicle' => 'Đang đưa xe về cho bạn',
+        'arrived_for_return' => 'Đã tới điểm trả xe',
+        'handover' => 'Đang bàn giao xe',
+        'completed' => 'Dịch vụ đã hoàn thành',
+        'cancelled' => 'Yêu cầu đã hủy',
+        _ => 'Đang cập nhật',
+      };
+
+  static String _statusHint(String status, String service) {
+    if (status == 'vehicle_received') {
+      return 'Tình trạng xe đã được xác nhận. Sau bước này yêu cầu không còn hủy theo cách thông thường.';
+    }
+    if (status == 'inspection_completed') {
+      return 'Kết quả đăng kiểm được lưu riêng; FlashX tiếp tục đưa xe về và bàn giao cho bạn.';
+    }
+    if (status == 'scheduled')
+      return 'FlashX sẽ bắt đầu tìm người thực hiện gần giờ hẹn.';
+    if (status == 'searching')
+      return 'Hệ thống đang kết nối với tài xế/đối tác đủ điều kiện.';
+    if (status == 'completed') return 'Cảm ơn bạn đã sử dụng FlashX.';
+    return service == 'vehicle_inspection_assist'
+        ? 'Theo dõi từng bước nhận xe, đăng kiểm và trả xe tại đây.'
+        : 'Bạn có thể theo dõi tài xế và trạng thái xe theo thời gian thực.';
+  }
+
+  static String _inspectionResult(String value) => switch (value) {
+        'passed' => 'Đạt',
+        'failed' => 'Không đạt',
+        'deferred' => 'Cần thực hiện lại',
+        'unavailable' => 'Chưa có kết quả',
+        _ => value,
+      };
+
+  static String _vehicleLabel(Map<String, dynamic> vehicle) {
+    final plate = vehicle['license_plate']?.toString() ?? '';
+    final brand = vehicle['brand']?.toString() ?? '';
+    final model = vehicle['model']?.toString() ?? '';
+    final name = [brand, model].where((e) => e.trim().isNotEmpty).join(' ');
+    return name.isEmpty ? plate : '$name · $plate';
   }
 
   static String _money(dynamic value) {
@@ -657,138 +853,73 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       ? value
       : value.substring(value.length - 8).toUpperCase();
 
-  static String _statusLabel(String status) => switch (status) {
-        'searching' => 'Đang tìm tài xế gần bạn',
-        'accepted' => 'Tài xế đã nhận chuyến',
-        'arriving' => 'Tài xế đang đến đón bạn',
-        'arrived' => 'Tài xế đã đến điểm đón',
-        'in_progress' => 'Bạn đang trên chuyến đi',
-        'completed' => 'Chuyến đi đã hoàn thành',
-        'cancelled' => 'Chuyến đi đã hủy',
-        _ => 'Chuyến đi',
-      };
+  static String _dateTimeLabel(DateTime value) {
+    final h = value.hour.toString().padLeft(2, '0');
+    final m = value.minute.toString().padLeft(2, '0');
+    return '$h:$m · ${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+  }
 
-  static String _statusHint(String status) => switch (status) {
-        'searching' => 'FlashX đang kết nối với tài xế phù hợp.',
-        'accepted' => 'Thông tin tài xế đã được xác nhận.',
-        'arriving' => 'Theo dõi vị trí tài xế trực tiếp trên bản đồ.',
-        'arrived' => 'Hãy kiểm tra biển số trước khi lên xe.',
-        'in_progress' => 'Chúc bạn có một chuyến đi an toàn.',
-        'completed' => 'Cảm ơn bạn đã sử dụng FlashX.',
-        'cancelled' => 'Bạn có thể đặt một chuyến mới bất cứ lúc nào.',
-        _ => 'Trạng thái chuyến đang được cập nhật.',
-      };
+  Widget _handle() => Container(
+        width: 42,
+        height: 4,
+        decoration: BoxDecoration(
+            color: const Color(0xFFD7DAE0),
+            borderRadius: BorderRadius.circular(99)),
+      );
 }
 
-class _FlashXMiniBrand extends StatelessWidget {
-  const _FlashXMiniBrand();
+class _BrandPill extends StatelessWidget {
+  const _BrandPill();
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(8, 7, 12, 7),
+        padding: const EdgeInsets.fromLTRB(9, 7, 13, 7),
         decoration: BoxDecoration(
-            color: FlashXTheme.navy,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: const [
-              BoxShadow(
-                  color: Color(0x22000000),
-                  blurRadius: 16,
-                  offset: Offset(0, 6))
-            ]),
+            color: FlashXTheme.navy, borderRadius: BorderRadius.circular(18)),
         child: const Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.bolt_rounded, color: FlashXTheme.yellow, size: 25),
+          Icon(Icons.bolt_rounded, color: FlashXTheme.yellow),
           SizedBox(width: 4),
           Text('FlashX',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -.5))
+              style:
+                  TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
         ]),
       );
 }
 
-class _MapAction extends StatelessWidget {
-  const _MapAction(
-      {required this.icon, required this.semanticLabel, required this.onTap});
+class _MapButton extends StatelessWidget {
+  const _MapButton(
+      {required this.icon, required this.tooltip, required this.onPressed});
   final IconData icon;
-  final String semanticLabel;
-  final VoidCallback? onTap;
+  final String tooltip;
+  final VoidCallback? onPressed;
   @override
   Widget build(BuildContext context) => Material(
         color: Colors.white,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(17),
-            side: const BorderSide(color: FlashXTheme.border)),
-        elevation: 3,
-        shadowColor: const Color(0x22000000),
+        borderRadius: BorderRadius.circular(16),
         child: IconButton(
-            onPressed: onTap,
-            tooltip: semanticLabel,
+            onPressed: onPressed,
+            tooltip: tooltip,
             icon: Icon(icon, color: FlashXTheme.navy)),
       );
 }
 
-class _TripStatusPill extends StatelessWidget {
-  const _TripStatusPill({required this.status});
-  final String status;
+class _ActivePill extends StatelessWidget {
+  const _ActivePill({required this.label, required this.service});
+  final String label;
+  final String service;
   @override
-  Widget build(BuildContext context) => Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-              color: FlashXTheme.navy,
-              borderRadius: BorderRadius.circular(999),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x260B132B),
-                    blurRadius: 20,
-                    offset: Offset(0, 8))
-              ]),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(
-                width: 8,
-                height: 8,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: FlashXTheme.yellow)),
-            const SizedBox(width: 9),
-            Text(_RiderHomeScreenState._statusLabel(status),
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800))
-          ]),
-        ),
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+            color: FlashXTheme.navy, borderRadius: BorderRadius.circular(18)),
+        child: Row(children: [
+          const Icon(Icons.bolt_rounded, color: FlashXTheme.yellow, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text('$service · $label',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w700))),
+        ]),
       );
-}
-
-class _LocationRow extends StatelessWidget {
-  const _LocationRow(
-      {required this.icon,
-      required this.iconColor,
-      required this.title,
-      required this.subtitle});
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-  @override
-  Widget build(BuildContext context) => Row(children: [
-        Icon(icon, color: iconColor, size: 20),
-        const SizedBox(width: 12),
-        Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 2),
-          Text(subtitle,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: FlashXTheme.textSecondary))
-        ]))
-      ]);
 }
 
 class _ServiceCard extends StatelessWidget {
@@ -796,339 +927,186 @@ class _ServiceCard extends StatelessWidget {
       {required this.selected,
       required this.icon,
       required this.title,
-      required this.subtitle,
       required this.onTap});
   final bool selected;
   final IconData icon;
   final String title;
-  final String subtitle;
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Material(
-        color: selected ? const Color(0xFFFFF9D6) : Colors.white,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: BorderSide(
-                color: selected ? FlashXTheme.yellow : FlashXTheme.border,
-                width: selected ? 1.5 : 1)),
+        color: selected ? FlashXTheme.navy : const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(18),
           child: Padding(
-            padding: const EdgeInsets.all(13),
-            child: Row(children: [
-              Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                      color: selected
-                          ? FlashXTheme.yellow
-                          : const Color(0xFFF2F4F7),
-                      borderRadius: BorderRadius.circular(13)),
-                  child: Icon(icon, color: FlashXTheme.navy, size: 22)),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Text(title,
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: const TextStyle(
-                            fontSize: 10.5, color: FlashXTheme.textSecondary))
-                  ]))
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+            child: Column(children: [
+              Icon(icon,
+                  color: selected ? FlashXTheme.yellow : FlashXTheme.navy,
+                  size: 28),
+              const SizedBox(height: 7),
+              Text(title,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  style: TextStyle(
+                      color: selected ? Colors.white : FlashXTheme.navy,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12)),
             ]),
           ),
         ),
       );
 }
 
-class _EmptySearchResult extends StatelessWidget {
-  const _EmptySearchResult();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF7F8FA),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: FlashXTheme.border),
-        ),
-        child: Column(
-          children: [
-            const Icon(Icons.search_off_rounded,
-                color: FlashXTheme.textSecondary, size: 28),
-            const SizedBox(height: 8),
-            const Text('Chưa thấy địa điểm phù hợp',
-                style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text(
-              'Thử một từ khóa khác. Khi Places API được cấu hình, FlashX sẽ tìm địa điểm trực tiếp trên bản đồ.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: FlashXTheme.textSecondary),
-            ),
-          ],
-        ),
-      );
-}
-
-class _DestinationTile extends StatelessWidget {
-  const _DestinationTile({required this.name, required this.onTap});
-  final String name;
-  final VoidCallback? onTap;
-  @override
-  Widget build(BuildContext context) => Material(
-        color: Colors.white,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(17),
-            side: const BorderSide(color: FlashXTheme.border)),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(17),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(children: [
-              Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                      color: const Color(0xFFF2F4F7),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.history_rounded,
-                      color: FlashXTheme.navy, size: 19)),
-              const SizedBox(width: 11),
-              Expanded(
-                  child: Text(name,
-                      style: const TextStyle(fontWeight: FontWeight.w700))),
-              const Icon(Icons.chevron_right_rounded,
-                  color: FlashXTheme.textSecondary)
-            ]),
-          ),
-        ),
-      );
-}
-
-class _EstimateStat extends StatelessWidget {
-  const _EstimateStat({required this.label, required this.value});
-  final String label;
-  final String value;
-  @override
-  Widget build(BuildContext context) => Column(children: [
-        Text(label,
-            style: const TextStyle(
-                color: FlashXTheme.textSecondary,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w600)),
-        const SizedBox(height: 5),
-        Text(value,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                color: FlashXTheme.navy,
-                fontSize: 13,
-                fontWeight: FontWeight.w800))
-      ]);
-}
-
-class _TripTimeline extends StatelessWidget {
-  const _TripTimeline({required this.status});
-  final String status;
-  @override
-  Widget build(BuildContext context) {
-    const steps = [
-      'searching',
-      'accepted',
-      'arrived',
-      'in_progress',
-      'completed'
-    ];
-    final normalized = status == 'arriving' ? 'accepted' : status;
-    final index = steps.indexOf(normalized);
-    return Row(
-      children: List.generate(
-          steps.length,
-          (i) => Expanded(
-                  child: Row(children: [
-                Expanded(
-                    child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        height: 5,
-                        decoration: BoxDecoration(
-                            color: i <= index
-                                ? FlashXTheme.yellow
-                                : const Color(0xFFE9EBF0),
-                            borderRadius: BorderRadius.circular(99)))),
-                if (i < steps.length - 1) const SizedBox(width: 5)
-              ]))),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-  final String message;
-  @override
-  Widget build(BuildContext context) => Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-          color: const Color(0xFFFFEEEE),
-          borderRadius: BorderRadius.circular(14)),
-      child: Row(children: [
-        const Icon(Icons.error_outline_rounded,
-            color: FlashXTheme.danger, size: 18),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(message,
-                style: const TextStyle(
-                    color: FlashXTheme.danger,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600)))
-      ]));
-}
-
-class _PageBrand extends StatelessWidget {
-  const _PageBrand();
-  @override
-  Widget build(BuildContext context) => const Row(children: [
-        Icon(Icons.bolt_rounded, color: FlashXTheme.navy, size: 28),
-        SizedBox(width: 4),
-        Text('FlashX',
-            style: TextStyle(
-                color: FlashXTheme.navy,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -.7))
-      ]);
-}
-
-class _EmptyCard extends StatelessWidget {
-  const _EmptyCard(
-      {required this.icon, required this.title, required this.subtitle});
+class _InfoBox extends StatelessWidget {
+  const _InfoBox(
+      {required this.icon, required this.text, this.warning = false});
   final IconData icon;
-  final String title;
-  final String subtitle;
+  final String text;
+  final bool warning;
   @override
   Widget build(BuildContext context) => Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: FlashXTheme.border)),
-      child: Column(children: [
-        Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-                color: const Color(0xFFF2F4F7),
-                borderRadius: BorderRadius.circular(17)),
-            child: Icon(icon, color: FlashXTheme.navy)),
-        const SizedBox(height: 12),
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text(subtitle,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium)
-      ]));
-}
-
-class _TripHistoryCard extends StatelessWidget {
-  const _TripHistoryCard(
-      {required this.trip,
-      required this.statusLabel,
-      required this.money,
-      required this.canRate,
-      required this.onRate});
-  final Map<String, dynamic> trip;
-  final String statusLabel;
-  final String money;
-  final bool canRate;
-  final VoidCallback onRate;
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: FlashXTheme.border)),
+          color: warning ? const Color(0xFFFFF5E6) : const Color(0xFFF4F7FB),
+          borderRadius: BorderRadius.circular(16),
+        ),
         child: Row(children: [
-          Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7C2),
-                  borderRadius: BorderRadius.circular(15)),
-              child: const Icon(Icons.route_rounded, color: FlashXTheme.navy)),
-          const SizedBox(width: 12),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(statusLabel,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Text(
-                    _RiderHomeScreenState._shortId(
-                        trip['id']?.toString() ?? ''),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: FlashXTheme.textSecondary)),
-                if (canRate)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 7),
-                      child: GestureDetector(
-                          onTap: onRate,
-                          child: const Text('★ Đánh giá tài xế',
-                              style: TextStyle(
-                                  color: FlashXTheme.warning,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800))))
-              ])),
-          Text(money,
-              style: const TextStyle(
-                  color: FlashXTheme.navy,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900))
+          Icon(icon, color: warning ? FlashXTheme.warning : FlashXTheme.navy),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
         ]),
       );
 }
 
-class _AccountItem extends StatelessWidget {
-  const _AccountItem(
-      {required this.icon, required this.title, required this.subtitle});
-  final IconData icon;
+class _ErrorBox extends StatelessWidget {
+  const _ErrorBox({required this.message});
+  final String message;
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: const Color(0xFFFFECEC),
+            borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          const Icon(Icons.error_outline_rounded, color: FlashXTheme.danger),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(message,
+                  style: const TextStyle(color: FlashXTheme.danger))),
+        ]),
+      );
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat(this.label, this.value);
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        Text(value,
+            style: const TextStyle(
+                fontWeight: FontWeight.w900, color: FlashXTheme.navy)),
+        const SizedBox(height: 3),
+        Text(label,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall),
+      ]);
+}
+
+class _ProgressLine extends StatelessWidget {
+  const _ProgressLine({required this.status, required this.inspection});
+  final String status;
+  final bool inspection;
+  @override
+  Widget build(BuildContext context) {
+    final stages = inspection
+        ? const [
+            'searching',
+            'accepted',
+            'vehicle_received',
+            'inspection_in_progress',
+            'returning_vehicle',
+            'handover',
+            'completed'
+          ]
+        : const [
+            'searching',
+            'accepted',
+            'arrived',
+            'vehicle_received',
+            'in_progress',
+            'handover',
+            'completed'
+          ];
+    final aliases = <String, String>{
+      'scheduled': 'searching',
+      'arriving': 'accepted',
+      'arriving_for_pickup': 'accepted',
+      'arrived_for_pickup': 'arrived',
+      'en_route_to_inspection': 'vehicle_received',
+      'arrived_at_inspection_center': 'inspection_in_progress',
+      'inspection_completed': 'returning_vehicle',
+      'arrived_for_return': 'handover',
+    };
+    final normalized = aliases[status] ?? status;
+    final current = stages.indexOf(normalized).clamp(0, stages.length - 1);
+    return Row(
+      children: List.generate(
+          stages.length,
+          (index) => Expanded(
+                child: Container(
+                  margin: EdgeInsets.only(
+                      right: index == stages.length - 1 ? 0 : 4),
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: index <= current
+                        ? FlashXTheme.lime
+                        : const Color(0xFFE5E7EB),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              )),
+    );
+  }
+}
+
+class _ServiceIcon extends StatelessWidget {
+  const _ServiceIcon({required this.service});
+  final String service;
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+        backgroundColor: const Color(0xFFF1F3F7),
+        foregroundColor: FlashXTheme.navy,
+        child: Icon(service.contains('inspection')
+            ? Icons.fact_check_rounded
+            : service.contains('bike')
+                ? Icons.two_wheeler_rounded
+                : Icons.directions_car_rounded),
+      );
+}
+
+class _PageHeader extends StatelessWidget {
+  const _PageHeader({required this.title, required this.subtitle});
   final String title;
   final String subtitle;
   @override
-  Widget build(BuildContext context) => Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(19),
-          border: Border.all(color: FlashXTheme.border)),
-      child: Row(children: [
-        Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-                color: const Color(0xFFF2F4F7),
-                borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: FlashXTheme.navy, size: 21)),
-        const SizedBox(width: 12),
+  Widget build(BuildContext context) => Row(children: [
+        const _BrandPill(),
+        const SizedBox(width: 14),
         Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 3),
-          Text(subtitle,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: FlashXTheme.textSecondary))
+          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
         ])),
-      ]));
+      ]);
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
 }

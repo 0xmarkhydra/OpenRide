@@ -30,6 +30,7 @@ type Driver struct {
 	Phone        string             `json:"phone"`
 	FullName     string             `json:"full_name"`
 	ServiceType  string             `json:"service_type"`
+	Capabilities []string           `json:"capabilities"`
 	Approval     ApprovalStatus     `json:"approval_status"`
 	Availability AvailabilityStatus `json:"availability_status"`
 	Location     *Location          `json:"location,omitempty"`

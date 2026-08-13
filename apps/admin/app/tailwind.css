@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-flashx-yellow: #ffd600;
+  --color-flashx-ink: #0b132b;
+}

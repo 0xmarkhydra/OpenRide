@@ -150,23 +150,32 @@
 - [ ] Customer edit/cancel policy trước giờ hẹn.
 - [ ] Admin filter scheduled jobs.
 
-## P0.7 — Handover & Trust
+## P0.7 — Handover, Evidence & Incident
 
-### MVP tối thiểu
+### MVP bắt buộc
 - [ ] Xác nhận tài xế đã tới.
 - [ ] Xác nhận nhận xe.
 - [ ] Vehicle/customer/job summary rõ.
+- [ ] Ảnh/evidence tối thiểu khi nhận xe và trả xe.
+- [ ] Dashboard/odometer evidence khi phù hợp.
+- [ ] Ghi chú tình trạng bất thường.
+- [ ] Lưu thời gian/vị trí/người xác nhận tại mốc bàn giao.
 - [ ] Xác nhận bàn giao hoàn tất.
-- [ ] Audit event cho các mốc quan trọng.
+- [ ] Sau `VEHICLE_RECEIVED` không còn normal cancellation.
+- [ ] Không reassign trực tiếp sau `VEHICLE_RECEIVED`; nếu bắt buộc phải qua controlled handover.
+- [ ] Incident tối thiểu: loại sự cố + ảnh + vị trí + note + trạng thái + Operations owner.
+- [ ] Incident đang mở có thể chặn flow tự động tiếp tục theo policy.
+- [ ] Audit event cho các mốc/action quan trọng.
 - [ ] Support path rõ ràng.
+- [ ] Evidence media upload direct-to-object-storage, backend chỉ lưu metadata/signed access.
 
-### Sau MVP nhưng thiết kế data model không được chặn
-- [ ] Ảnh hiện trạng xe trước/sau.
-- [ ] Odometer/fuel.
-- [ ] Damage notes.
-- [ ] OTP/PIN bàn giao.
-- [ ] Incident/claim workflow.
-- [ ] SOS/share job.
+### Sau MVP nhưng data model không được chặn
+- [ ] Bộ ảnh/evidence chi tiết theo loại xe.
+- [ ] Structured fuel/battery/odometer.
+- [ ] Damage annotation.
+- [ ] OTP/PIN/signature bàn giao nâng cao.
+- [ ] Claim workflow hoàn chỉnh.
+- [ ] SOS/share job nâng cao.
 
 ## P0.8 — Admin / Operations
 
@@ -240,12 +249,12 @@
 
 # P1 — Nên có ngay sau MVP/pilot
 
-- [ ] Ảnh hiện trạng xe trước/sau.
-- [ ] PIN/OTP bàn giao.
-- [ ] Incident management.
-- [ ] Share job/SOS.
+- [ ] Evidence/condition capture nâng cao theo loại xe.
+- [ ] PIN/OTP/signature bàn giao nâng cao.
+- [ ] Claim/incident resolution hoàn chỉnh.
+- [ ] Share job/SOS nâng cao.
 - [ ] Promo code basic.
-- [ ] Driver earning breakdown/settlement.
+- [ ] Driver earning breakdown/settlement tự động hơn.
 - [ ] Better manual dispatch/reassign console.
 - [ ] Partner/referral QR cho nhà hàng/bar/khách sạn.
 - [ ] Insurance/claim process integration.
@@ -267,16 +276,23 @@
 
 # Delivery order hiện tại
 
-1. Khóa service semantics + state machine.
-2. CustomerVehicle.
-3. Scheduling + Pricing v2.
-4. Lái hộ ô tô end-to-end.
-5. Lái hộ xe máy end-to-end.
-6. Đăng kiểm hộ end-to-end.
-7. Driver capability/KYC + handover.
-8. Admin Operations theo domain mới.
-9. Maps/S3/SMS/Push provider thật.
-10. Full regression/UAT/release.
+1. Khóa business/domain contract + 3 service semantics.
+2. Centralize active-state/driver-occupied rules + state machine.
+3. CustomerVehicle.
+4. Driver capability/KYC eligibility.
+5. Scheduling.
+6. Quote + Pricing v2.
+7. Handover + Evidence + Incident foundation.
+8. Lái hộ ô tô end-to-end.
+9. Realtime route/ETA/reconnect.
+10. Lái hộ xe máy end-to-end.
+11. Inspection details/checklist + Đăng kiểm hộ end-to-end.
+12. Marketplace financial separation: customer charge / driver earning / FlashX fee.
+13. Admin Operations theo domain mới.
+14. Maps/S3/SMS/Push provider production.
+15. Full regression/UAT/release.
+
+> Chưa triển khai sâu gọi xe/xe ghép trước khi 3 dịch vụ MVP qua UAT. Code/domain mới chỉ cần tránh các giả định khiến tương lai phải rewrite toàn bộ.
 
 ## Definition of Done chung
 

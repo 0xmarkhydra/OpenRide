@@ -19,9 +19,14 @@ class RiderTripController extends ChangeNotifier {
   Map<String, dynamic>? estimate;
   Map<String, dynamic>? activeTrip;
   List<Map<String, dynamic>> history = const [];
+  List<Map<String, dynamic>> vehicles = const [];
+  String? selectedVehicleID;
   Map<String, dynamic>? driverLocation;
   final Set<String> ratedTripIds = <String>{};
-  Map<String, double> pickup = const {'lat': 21.0285, 'lng': 105.8542};
+
+  // Thanh Hoa city fallback keeps the demo deterministic when location access
+  // is denied; a real device GPS location replaces this immediately.
+  Map<String, double> pickup = const {'lat': 19.8067, 'lng': 105.7852};
   Map<String, double>? selectedDestination;
   bool busy = false;
   String? error;
@@ -30,11 +35,31 @@ class RiderTripController extends ChangeNotifier {
   bool get hasActiveTrip =>
       activeTrip != null && status != 'completed' && status != 'cancelled';
 
+  bool get canCancel {
+    final actions = activeTrip?['allowed_actions'];
+    if (actions is List)
+      return actions.map((e) => e.toString()).contains('cancel');
+    return const {
+      'scheduled',
+      'searching',
+      'accepted',
+      'arriving',
+      'arrived',
+      'arriving_for_pickup',
+      'arrived_for_pickup',
+    }.contains(status);
+  }
+
   static const destinations = <String, Map<String, double>>{
-    'Hồ Hoàn Kiếm': {'lat': 21.0288, 'lng': 105.8522},
-    'Lotte Center': {'lat': 21.0322, 'lng': 105.8127},
-    'Times City': {'lat': 20.9950, 'lng': 105.8682},
+    'Quảng trường Lam Sơn': {'lat': 19.8079, 'lng': 105.7768},
+    'Vincom Plaza Thanh Hóa': {'lat': 19.8045, 'lng': 105.7779},
+    'Sầm Sơn': {'lat': 19.7412, 'lng': 105.9020},
+    'Trung tâm đăng kiểm Thanh Hóa': {'lat': 19.8330, 'lng': 105.7810},
   };
+
+  Future<void> initialize() async {
+    await Future.wait([loadVehicles(), loadHistory(), refreshPickupLocation()]);
+  }
 
   Future<void> refreshPickupLocation() async {
     try {
@@ -53,8 +78,56 @@ class RiderTripController extends ChangeNotifier {
       pickup = {'lat': position.latitude, 'lng': position.longitude};
       notifyListeners();
     } catch (_) {
-      // Keep the deterministic Hanoi fallback so development/demo remains usable.
+      // Keep the deterministic Thanh Hoa fallback for demo/offline development.
     }
+  }
+
+  Future<void> loadVehicles() async {
+    try {
+      final response = await api.get('/v1/rider/vehicles');
+      final list = response['data'] as List<dynamic>? ?? const [];
+      vehicles = list.cast<Map<String, dynamic>>();
+      if (selectedVehicleID == null && vehicles.isNotEmpty) {
+        selectedVehicleID = vehicles.first['id']?.toString();
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  List<Map<String, dynamic>> vehiclesForService(String serviceType) {
+    final wanted =
+        serviceType == 'designated_driver_bike' ? 'motorbike' : 'car';
+    return vehicles.where((vehicle) => vehicle['type'] == wanted).toList();
+  }
+
+  void selectVehicle(String? id) {
+    selectedVehicleID = id;
+    estimate = null;
+    notifyListeners();
+  }
+
+  Future<bool> createVehicle({
+    required String type,
+    required String licensePlate,
+    String brand = '',
+    String model = '',
+    String color = '',
+    String transmission = 'n/a',
+  }) async {
+    return _guard(() async {
+      final response = await api.post('/v1/rider/vehicles', body: {
+        'type': type,
+        'license_plate': licensePlate,
+        'brand': brand,
+        'model': model,
+        'color': color,
+        'transmission': transmission,
+        'seats': type == 'car' ? 5 : 0,
+      });
+      final vehicle = response['data'] as Map<String, dynamic>;
+      selectedVehicleID = vehicle['id']?.toString();
+      await loadVehicles();
+    });
   }
 
   Future<void> loadHistory() async {
@@ -65,26 +138,34 @@ class RiderTripController extends ChangeNotifier {
       final candidates = history
           .where((e) => !['completed', 'cancelled'].contains(e['status']))
           .toList();
-      if (candidates.isNotEmpty) activeTrip = candidates.first;
+      activeTrip = candidates.isNotEmpty ? candidates.first : null;
       notifyListeners();
     } catch (_) {}
   }
 
   Future<bool> estimateTo(Map<String, double> destination,
-      {String serviceType = 'bike'}) async {
+      {String serviceType = 'designated_driver_car'}) async {
     return _guard(() async {
       selectedDestination = destination;
       final response = await api.post('/v1/trips/estimate', body: {
         'pickup': pickup,
         'destination': destination,
         'service_type': serviceType,
+        if (selectedVehicleID != null) 'customer_vehicle_id': selectedVehicleID,
       });
       estimate = response['data'] as Map<String, dynamic>;
     });
   }
 
   Future<bool> createTrip(Map<String, double> destination,
-      {String serviceType = 'bike'}) async {
+      {String serviceType = 'designated_driver_car',
+      String bookingMode = 'immediate',
+      DateTime? scheduledAt}) async {
+    if (selectedVehicleID == null) {
+      error = 'Hãy chọn xe của bạn trước khi đặt dịch vụ.';
+      notifyListeners();
+      return false;
+    }
     return _guard(() async {
       final response = await api.post(
         '/v1/trips',
@@ -92,17 +173,22 @@ class RiderTripController extends ChangeNotifier {
         body: {
           'pickup': pickup,
           'destination': destination,
-          'service_type': serviceType
+          'service_type': serviceType,
+          'customer_vehicle_id': selectedVehicleID,
+          'booking_mode': bookingMode,
+          if (scheduledAt != null)
+            'scheduled_at': scheduledAt.toUtc().toIso8601String(),
         },
       );
       activeTrip = response['data'] as Map<String, dynamic>;
       estimate = null;
+      await loadHistory();
     });
   }
 
   Future<bool> cancel() async {
     final id = activeTrip?['id']?.toString();
-    if (id == null) return false;
+    if (id == null || !canCancel) return false;
     return _guard(() async {
       final response = await api
           .post('/v1/trips/$id/cancel', body: {'reason': 'rider_cancelled'});

@@ -62,7 +62,9 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                   ),
                   const SizedBox(height: 40),
                   Text(
-                    waiting ? 'Xác thực tài xế' : 'Sẵn sàng. Bật máy. Chạy.',
+                    waiting
+                        ? 'Xác thực tài xế'
+                        : 'Sẵn sàng nhận việc cùng FlashX.',
                     style: theme.textTheme.displaySmall
                         ?.copyWith(color: Colors.white),
                   ),
@@ -70,7 +72,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                   Text(
                     waiting
                         ? 'Nhập mã OTP để tiếp tục.'
-                        : 'Nhận chuyến gần bạn, theo dõi thu nhập và xử lý chuyến với ít thao tác nhất.',
+                        : 'Nhận việc phù hợp gần bạn, xem rõ xe của khách và thực hiện từng bước an toàn.',
                     style: theme.textTheme.bodyLarge
                         ?.copyWith(color: const Color(0xFFB9C1D5)),
                   ),

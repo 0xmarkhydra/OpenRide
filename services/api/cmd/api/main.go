@@ -11,6 +11,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
@@ -38,6 +39,7 @@ func main() {
 	var (
 		tripStore        trips.Store
 		driverStore      drivers.Store
+		vehicleStore     customervehicles.Store
 		userStore        users.Store
 		locationIndex    drivers.LocationIndex
 		idempotencyStore idempotency.Store
@@ -56,6 +58,7 @@ func main() {
 	case "memory":
 		tripStore = trips.NewMemoryStore()
 		driverStore = drivers.NewMemoryStore()
+		vehicleStore = customervehicles.NewMemoryStore()
 		userStore = users.NewMemoryStore()
 		locationIndex = drivers.NewMemoryLocationIndex()
 		idempotencyStore = idempotency.NewMemoryStore()
@@ -77,6 +80,7 @@ func main() {
 		defer resources.Close()
 		tripStore = trips.NewPostgresStore(resources.Postgres)
 		driverStore = drivers.NewPostgresStore(resources.Postgres)
+		vehicleStore = customervehicles.NewPostgresStore(resources.Postgres)
 		userStore = users.NewPostgresStore(resources.Postgres)
 		locationIndex = drivers.NewRedisLocationIndex(resources.Redis, "flashx")
 		idempotencyStore = idempotency.NewRedisStore(resources.Redis)
@@ -141,6 +145,7 @@ func main() {
 
 	tripService := trips.NewService(tripStore)
 	driverService := drivers.NewServiceWithLocationIndex(driverStore, locationIndex)
+	vehicleService := customervehicles.NewService(vehicleStore)
 	userService := users.NewService(userStore)
 	adminService := admin.NewService(adminStore)
 	if cfg.AdminPhone != "" {
@@ -177,6 +182,7 @@ func main() {
 		Persistence:      cfg.Persistence,
 		Trips:            tripService,
 		Drivers:          driverService,
+		CustomerVehicles: vehicleService,
 		DriverDocuments:  driverDocumentService,
 		Users:            userService,
 		Admin:            adminService,

@@ -5,6 +5,8 @@ class AppConfig {
   static const _definedApi = String.fromEnvironment('API_BASE_URL');
   static const mapsEnabled =
       bool.fromEnvironment('MAPS_ENABLED', defaultValue: false);
+  static const demoMode =
+      bool.fromEnvironment('DEMO_MODE', defaultValue: false);
 
   static String get apiBaseUrl {
     if (_definedApi.isNotEmpty) return _definedApi;

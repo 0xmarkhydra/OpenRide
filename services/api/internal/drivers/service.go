@@ -2,10 +2,12 @@ package drivers
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
 	"flashx/services/api/internal/platform/ids"
+	"flashx/services/api/internal/trips"
 )
 
 var (
@@ -46,10 +48,22 @@ func (s *Service) RegisterApproved(id, fullName, serviceType string) (Driver, er
 		return Driver{}, ErrInvalidInput
 	}
 	now := s.now()
+	var capabilities []string
+	if strings.TrimSpace(serviceType) == "all" {
+		serviceType = trips.ServiceDesignatedDriverCar
+		capabilities = []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection}
+	} else {
+		serviceType = trips.NormalizeServiceType(serviceType)
+		if !trips.IsSupportedService(serviceType) {
+			return Driver{}, ErrInvalidInput
+		}
+		capabilities = capabilitiesForServiceType(serviceType)
+	}
 	driver := Driver{
 		ID:           id,
 		FullName:     fullName,
 		ServiceType:  serviceType,
+		Capabilities: capabilities,
 		Approval:     ApprovalApproved,
 		Availability: AvailabilityOffline,
 		LastIdleAt:   now,
@@ -65,7 +79,9 @@ func (s *Service) RegisterApproved(id, fullName, serviceType string) (Driver, er
 
 func (s *Service) FindOrCreatePendingByPhone(phone string) (Driver, bool, error) {
 	phone = strings.TrimSpace(phone)
-	if phone == "" { return Driver{}, false, ErrInvalidInput }
+	if phone == "" {
+		return Driver{}, false, ErrInvalidInput
+	}
 	if driver, err := s.store.GetByPhone(phone); err == nil {
 		return driver, false, nil
 	} else if !errors.Is(err, ErrNotFound) {
@@ -73,8 +89,9 @@ func (s *Service) FindOrCreatePendingByPhone(phone string) (Driver, bool, error)
 	}
 	now := s.now()
 	driver := Driver{
-		ID: ids.New("drv"), Phone: phone, ServiceType: "bike",
-		Approval: ApprovalPending, Availability: AvailabilityOffline,
+		ID: ids.New("drv"), Phone: phone, ServiceType: trips.ServiceDesignatedDriverCar,
+		Capabilities: []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection},
+		Approval:     ApprovalPending, Availability: AvailabilityOffline,
 		LastIdleAt: now, CreatedAt: now, UpdatedAt: now, Version: 1,
 	}
 	if err := s.store.Create(driver); err != nil {
@@ -92,13 +109,17 @@ func (s *Service) SetApproval(id string, status ApprovalStatus) (Driver, error) 
 		return Driver{}, ErrInvalidInput
 	}
 	driver, err := s.store.Get(id)
-	if err != nil { return Driver{}, err }
+	if err != nil {
+		return Driver{}, err
+	}
 	driver.Approval = status
 	if status != ApprovalApproved {
 		driver.Availability = AvailabilityOffline
 	}
 	driver.UpdatedAt = s.now()
-	if err := s.store.Save(driver); err != nil { return Driver{}, err }
+	if err := s.store.Save(driver); err != nil {
+		return Driver{}, err
+	}
 	if status != ApprovalApproved {
 		_ = s.locations.SetEligible(id, driver.ServiceType, false)
 	}
@@ -107,16 +128,30 @@ func (s *Service) SetApproval(id string, status ApprovalStatus) (Driver, error) 
 
 func (s *Service) UpdateProfile(id, fullName, serviceType string) (Driver, error) {
 	driver, err := s.store.Get(id)
-	if err != nil { return Driver{}, err }
+	if err != nil {
+		return Driver{}, err
+	}
 	fullName = strings.TrimSpace(fullName)
 	serviceType = strings.TrimSpace(serviceType)
-	if len(fullName) > 160 || (serviceType != "bike" && serviceType != "car") {
+	if serviceType == "all" {
+		serviceType = trips.ServiceDesignatedDriverCar
+		driver.Capabilities = []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection}
+	} else {
+		serviceType = trips.NormalizeServiceType(serviceType)
+		if !trips.IsSupportedService(serviceType) {
+			return Driver{}, ErrInvalidInput
+		}
+		driver.Capabilities = capabilitiesForServiceType(serviceType)
+	}
+	if len(fullName) > 160 {
 		return Driver{}, ErrInvalidInput
 	}
 	driver.FullName = fullName
 	driver.ServiceType = serviceType
 	driver.UpdatedAt = s.now()
-	if err := s.store.Save(driver); err != nil { return Driver{}, err }
+	if err := s.store.Save(driver); err != nil {
+		return Driver{}, err
+	}
 	return s.Get(id)
 }
 
@@ -206,25 +241,51 @@ func (s *Service) UpdateLocation(id string, location Location) (Driver, error) {
 }
 
 func (s *Service) NearbyCandidates(serviceType string, center Location, radiusM float64, maxLocationAge time.Duration, limit int) ([]NearbyDriver, error) {
+	serviceType = trips.NormalizeServiceType(serviceType)
 	locations, err := s.locations.Nearby(serviceType, center, radiusM, limit)
 	if err != nil {
 		return nil, err
 	}
 	now := s.now()
 	result := make([]NearbyDriver, 0, len(locations))
+	seen := map[string]bool{}
 	for _, item := range locations {
 		if !locationIsFresh(item.Location, now, maxLocationAge) {
 			continue
 		}
-		driver, err := s.store.Get(item.DriverID)
-		if err != nil {
-			continue
-		}
-		if driver.Approval != ApprovalApproved || driver.Availability != AvailabilityOnline || driver.ServiceType != serviceType {
+		driver, getErr := s.store.Get(item.DriverID)
+		if getErr != nil || driver.Approval != ApprovalApproved || driver.Availability != AvailabilityOnline || !driverCanServe(driver, serviceType) {
 			continue
 		}
 		driver.Location = &item.Location
 		result = append(result, NearbyDriver{Driver: driver, DistanceM: item.DistanceM})
+		seen[driver.ID] = true
+	}
+	// Compatibility path: a driver may be indexed under the legacy/primary service
+	// while their approved capabilities include this service. This keeps the demo
+	// and rolling migration operational without rewriting the GEO index first.
+	all, listErr := s.store.List()
+	if listErr != nil {
+		return nil, listErr
+	}
+	for _, driver := range all {
+		if seen[driver.ID] || driver.Approval != ApprovalApproved || driver.Availability != AvailabilityOnline || !driverCanServe(driver, serviceType) {
+			continue
+		}
+		location, locationErr := s.locations.Get(driver.ID)
+		if locationErr != nil || !locationIsFresh(location, now, maxLocationAge) {
+			continue
+		}
+		distance := distanceMeters(center.Lat, center.Lng, location.Lat, location.Lng)
+		if radiusM > 0 && distance > radiusM {
+			continue
+		}
+		driver.Location = &location
+		result = append(result, NearbyDriver{Driver: driver, DistanceM: distance})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].DistanceM < result[j].DistanceM })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }
@@ -237,8 +298,9 @@ func (s *Service) Candidates(serviceType string, maxLocationAge time.Duration) [
 		return nil
 	}
 	result := make([]Driver, 0)
+	serviceType = trips.NormalizeServiceType(serviceType)
 	for _, driver := range items {
-		if driver.Approval != ApprovalApproved || driver.Availability != AvailabilityOnline || driver.ServiceType != serviceType {
+		if driver.Approval != ApprovalApproved || driver.Availability != AvailabilityOnline || !driverCanServe(driver, serviceType) {
 			continue
 		}
 		location, err := s.locations.Get(driver.ID)
@@ -281,6 +343,38 @@ func (s *Service) MarkAvailable(id string) (Driver, error) {
 		_ = s.locations.SetEligible(id, driver.ServiceType, locationIsFresh(location, now, 20*time.Second))
 	}
 	return s.Get(id)
+}
+
+func capabilitiesForServiceType(serviceType string) []string {
+	serviceType = trips.NormalizeServiceType(serviceType)
+	switch serviceType {
+	case trips.ServiceVehicleInspection:
+		return []string{trips.ServiceVehicleInspection, trips.ServiceDesignatedDriverCar}
+	case trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike:
+		return []string{serviceType}
+	default:
+		return nil
+	}
+}
+
+func driverCanServe(driver Driver, serviceType string) bool {
+	serviceType = trips.NormalizeServiceType(serviceType)
+	capabilities := driver.Capabilities
+	if len(capabilities) == 0 {
+		capabilities = capabilitiesForServiceType(driver.ServiceType)
+	}
+	has := func(target string) bool {
+		for _, capability := range capabilities {
+			if trips.NormalizeServiceType(capability) == target {
+				return true
+			}
+		}
+		return false
+	}
+	if serviceType == trips.ServiceVehicleInspection {
+		return has(trips.ServiceVehicleInspection) && has(trips.ServiceDesignatedDriverCar)
+	}
+	return has(serviceType)
 }
 
 func validLocation(location Location) bool {

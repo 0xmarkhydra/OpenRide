@@ -21,7 +21,7 @@ class DriverMapView extends StatelessWidget {
     if (!AppConfig.mapsEnabled) return _MapFallback(online: online);
 
     final driver = position == null
-        ? const LatLng(21.0285, 105.8542)
+        ? const LatLng(19.8067, 105.7852)
         : LatLng(position!.latitude, position!.longitude);
     final pickup = _point(trip?['pickup']);
     final destination = _point(trip?['destination']);
@@ -36,7 +36,7 @@ class DriverMapView extends StatelessWidget {
         Marker(
           markerId: const MarkerId('pickup'),
           position: pickup,
-          infoWindow: const InfoWindow(title: 'Điểm đón'),
+          infoWindow: const InfoWindow(title: 'Điểm nhận xe'),
         ),
       if (destination != null)
         Marker(

@@ -54,7 +54,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                       Text(
                         awaitingCode
                             ? 'Xác nhận số điện thoại'
-                            : 'Đi đâu cũng nhanh hơn.',
+                            : 'Tài xế của bạn, khi bạn cần.',
                         style: theme.textTheme.displaySmall?.copyWith(
                           color: Colors.white,
                         ),
@@ -63,7 +63,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                       Text(
                         awaitingCode
                             ? 'Nhập mã OTP 6 số vừa được gửi đến ${_phone.text.trim()}.'
-                            : 'Đặt chuyến, theo dõi tài xế và thanh toán trong một trải nghiệm gọn gàng.',
+                            : 'Đặt lái hộ ô tô, lái hộ xe máy hoặc đăng kiểm hộ; theo dõi người thực hiện và xe của bạn rõ ràng.',
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: const Color(0xFFB9C1D5),
                         ),

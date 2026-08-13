@@ -6,6 +6,7 @@ import (
 
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/trips"
 )
 
 func (s *Server) adminMe(w http.ResponseWriter, r *http.Request) {
@@ -63,27 +64,90 @@ type driverApprovalRequest struct {
 
 func (s *Server) adminTrips(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := s.actorID(w, r, auth.RoleAdmin, "X-Dev-Admin-ID")
-	if !ok { return }
-	if s.deps.Admin == nil { writeError(w,http.StatusServiceUnavailable,"ADMIN_UNAVAILABLE","Admin service is unavailable",nil); return }
-	if _, err := s.deps.Admin.Get(adminID); err != nil { writeError(w,http.StatusForbidden,"ADMIN_FORBIDDEN","Admin account is not active",nil); return }
+	if !ok {
+		return
+	}
+	if s.deps.Admin == nil {
+		writeError(w, http.StatusServiceUnavailable, "ADMIN_UNAVAILABLE", "Admin service is unavailable", nil)
+		return
+	}
+	if _, err := s.deps.Admin.Get(adminID); err != nil {
+		writeError(w, http.StatusForbidden, "ADMIN_FORBIDDEN", "Admin account is not active", nil)
+		return
+	}
 	items, err := s.deps.Trips.ListAll(100)
-	if err != nil { writeError(w,http.StatusInternalServerError,"INTERNAL_ERROR","Unable to list trips",nil); return }
-	writeJSON(w,http.StatusOK,dataEnvelope{Data:items,Meta:map[string]any{"count":len(items)}})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to list trips", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
 }
 
 func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := s.actorID(w, r, auth.RoleAdmin, "X-Dev-Admin-ID")
-	if !ok { return }
-	if s.deps.Admin == nil { writeError(w,http.StatusServiceUnavailable,"ADMIN_UNAVAILABLE","Admin service is unavailable",nil); return }
-	if _, err := s.deps.Admin.Get(adminID); err != nil { writeError(w,http.StatusForbidden,"ADMIN_FORBIDDEN","Admin account is not active",nil); return }
+	if !ok {
+		return
+	}
+	if s.deps.Admin == nil {
+		writeError(w, http.StatusServiceUnavailable, "ADMIN_UNAVAILABLE", "Admin service is unavailable", nil)
+		return
+	}
+	if _, err := s.deps.Admin.Get(adminID); err != nil {
+		writeError(w, http.StatusForbidden, "ADMIN_FORBIDDEN", "Admin account is not active", nil)
+		return
+	}
 	driversList, err := s.deps.Drivers.ListAll()
-	if err != nil { writeError(w,http.StatusInternalServerError,"INTERNAL_ERROR","Unable to load dashboard",nil); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to load dashboard", nil)
+		return
+	}
 	tripList, err := s.deps.Trips.ListAll(500)
-	if err != nil { writeError(w,http.StatusInternalServerError,"INTERNAL_ERROR","Unable to load dashboard",nil); return }
-	metrics := map[string]int{"drivers_total":len(driversList),"drivers_online":0,"drivers_pending":0,"trips_total":len(tripList),"trips_searching":0,"trips_active":0,"trips_completed":0,"trips_cancelled":0}
-	for _,d:=range driversList{if d.Availability==drivers.AvailabilityOnline{metrics["drivers_online"]++};if d.Approval==drivers.ApprovalPending{metrics["drivers_pending"]++}}
-	for _,t:=range tripList{switch t.Status{case "searching":metrics["trips_searching"]++;case "accepted","arriving","arrived","in_progress":metrics["trips_active"]++;case "completed":metrics["trips_completed"]++;case "cancelled":metrics["trips_cancelled"]++}}
-	writeJSON(w,http.StatusOK,dataEnvelope{Data:metrics})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to load dashboard", nil)
+		return
+	}
+	metrics := map[string]int{
+		"drivers_total": len(driversList), "drivers_online": 0, "drivers_pending": 0,
+		"trips_total": len(tripList), "trips_scheduled": 0, "trips_searching": 0,
+		"trips_active": 0, "trips_completed": 0, "trips_cancelled": 0, "trips_incident": 0,
+		"service_designated_car": 0, "service_designated_bike": 0, "service_inspection": 0,
+	}
+	for _, d := range driversList {
+		if d.Availability == drivers.AvailabilityOnline {
+			metrics["drivers_online"]++
+		}
+		if d.Approval == drivers.ApprovalPending {
+			metrics["drivers_pending"]++
+		}
+	}
+	for _, t := range tripList {
+		if t.IncidentOpen {
+			metrics["trips_incident"]++
+		}
+		switch trips.NormalizeServiceType(t.ServiceType) {
+		case trips.ServiceDesignatedDriverCar:
+			metrics["service_designated_car"]++
+		case trips.ServiceDesignatedDriverBike:
+			metrics["service_designated_bike"]++
+		case trips.ServiceVehicleInspection:
+			metrics["service_inspection"]++
+		}
+		switch t.Status {
+		case trips.StatusScheduled:
+			metrics["trips_scheduled"]++
+		case trips.StatusSearching:
+			metrics["trips_searching"]++
+		case trips.StatusCompleted:
+			metrics["trips_completed"]++
+		case trips.StatusCancelled:
+			metrics["trips_cancelled"]++
+		default:
+			if trips.IsDriverOccupiedStatus(t.Status) {
+				metrics["trips_active"]++
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: metrics})
 }
 
 func (s *Server) adminDriverApproval(w http.ResponseWriter, r *http.Request) {

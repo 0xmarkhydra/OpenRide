@@ -45,6 +45,25 @@ services:
       retries: 10
     restart: unless-stopped
 
+  migrate:
+    image: postgis/postgis:16-3.4
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-flashx}
+    volumes:
+      - ./infrastructure/migrations:/migrations:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for file in /migrations/*.sql; do
+          echo "Applying $$file"
+          psql -h postgres -U ${POSTGRES_USER:-flashx} -d ${POSTGRES_DB:-flashx} -v ON_ERROR_STOP=1 -f "$$file"
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   redis:
     image: redis:7-alpine
     ports:
@@ -66,6 +85,8 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

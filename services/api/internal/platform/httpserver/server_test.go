@@ -9,6 +9,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/payments"
@@ -23,6 +24,7 @@ import (
 func newTestServer() *Server {
 	tripService := trips.NewService(trips.NewMemoryStore())
 	driverService := drivers.NewService(drivers.NewMemoryStore())
+	vehicleService := customervehicles.NewService(customervehicles.NewMemoryStore())
 	userService := users.NewService(users.NewMemoryStore())
 	adminService := admin.NewService(admin.NewMemoryStore())
 	if _, err := adminService.Bootstrap("0900000001", "admin@flashx.test", "Test Admin"); err != nil {
@@ -37,6 +39,7 @@ func newTestServer() *Server {
 		AllowDevIdentity: true,
 		Trips:            tripService,
 		Drivers:          driverService,
+		CustomerVehicles: vehicleService,
 		Users:            userService,
 		Admin:            adminService,
 		Dispatch:         dispatch.NewEngine(driverService, tripService),
@@ -152,7 +155,7 @@ func TestFullRideFlow(t *testing.T) {
 		t.Fatalf("accept status=%d body=%s", accept.Code, accept.Body.String())
 	}
 
-	for _, action := range []string{"arriving", "arrived", "start", "complete"} {
+	for _, action := range []string{"arriving", "arrived", "vehicle-received", "start", "handover", "complete"} {
 		rr := perform(t, s, http.MethodPost, "/v1/driver/trips/"+tripID+"/"+action, []byte(`{}`), driverHeaders)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s status=%d body=%s", action, rr.Code, rr.Body.String())

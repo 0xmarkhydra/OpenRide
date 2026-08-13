@@ -7,9 +7,9 @@ import (
 	"flashx/services/api/internal/trips"
 )
 
-// Service orchestrates cross-domain trip/driver state changes. The in-memory
-// MVP implementation serializes these commands. Production persistence must
-// replace this process-local lock with a database transaction/outbox pattern.
+// Service orchestrates cross-domain job/driver changes. The process-local lock
+// keeps the memory/demo runtime deterministic; persistent assignment still uses
+// the dispatch lock + optimistic DB versioning already present in the project.
 type Service struct {
 	mu      sync.Mutex
 	trips   *trips.Service
@@ -23,7 +23,6 @@ func NewService(tripService *trips.Service, driverService *drivers.Service) *Ser
 func (s *Service) CancelByRider(id, riderID, reason string) (trips.Trip, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	before, err := s.trips.GetForRider(id, riderID)
 	if err != nil {
 		return trips.Trip{}, err
@@ -45,23 +44,60 @@ func (s *Service) MarkArriving(id, driverID string) (trips.Trip, error) {
 	defer s.mu.Unlock()
 	return s.trips.MarkArriving(id, driverID)
 }
-
 func (s *Service) MarkArrived(id, driverID string) (trips.Trip, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.trips.MarkArrived(id, driverID)
 }
-
+func (s *Service) MarkVehicleReceived(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.MarkVehicleReceived(id, driverID)
+}
 func (s *Service) Start(id, driverID string) (trips.Trip, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.trips.Start(id, driverID)
 }
+func (s *Service) ArriveInspectionCenter(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.ArriveInspectionCenter(id, driverID)
+}
+func (s *Service) StartInspection(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.StartInspection(id, driverID)
+}
+func (s *Service) CompleteInspection(id, driverID, result string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.CompleteInspection(id, driverID, result)
+}
+func (s *Service) ReturningVehicle(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.ReturningVehicle(id, driverID)
+}
+func (s *Service) ArrivedForReturn(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.ArrivedForReturn(id, driverID)
+}
+func (s *Service) MarkHandover(id, driverID string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.MarkHandover(id, driverID)
+}
+func (s *Service) ReportIncident(id, driverID, incidentType, note string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.ReportIncident(id, driverID, incidentType, note)
+}
 
 func (s *Service) Complete(id, driverID string, finalFareMinor int64) (trips.Trip, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	trip, err := s.trips.Complete(id, driverID, finalFareMinor)
 	if err != nil {
 		return trips.Trip{}, err

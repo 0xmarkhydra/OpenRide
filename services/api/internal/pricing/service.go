@@ -28,6 +28,8 @@ type Estimate struct {
 type rule struct {
 	baseFareMinor int64
 	perKMMinor    int64
+	serviceMinor  int64
+	minimumMinor  int64
 }
 
 type Service struct {
@@ -35,9 +37,7 @@ type Service struct {
 	routing routing.Provider
 }
 
-func NewService() *Service {
-	return NewServiceWithRouting(routing.NewFallbackProvider())
-}
+func NewService() *Service { return NewServiceWithRouting(routing.NewFallbackProvider()) }
 
 func NewServiceWithRouting(provider routing.Provider) *Service {
 	if provider == nil {
@@ -46,13 +46,15 @@ func NewServiceWithRouting(provider routing.Provider) *Service {
 	return &Service{
 		routing: provider,
 		rules: map[string]rule{
-			"bike": {baseFareMinor: 12_000, perKMMinor: 5_000},
-			"car":  {baseFareMinor: 25_000, perKMMinor: 12_000},
+			trips.ServiceDesignatedDriverBike: {baseFareMinor: 45_000, perKMMinor: 9_000, minimumMinor: 60_000},
+			trips.ServiceDesignatedDriverCar:  {baseFareMinor: 90_000, perKMMinor: 18_000, minimumMinor: 120_000},
+			trips.ServiceVehicleInspection:    {baseFareMinor: 0, perKMMinor: 5_000, serviceMinor: 299_000, minimumMinor: 299_000},
 		},
 	}
 }
 
 func (s *Service) Estimate(pickup, destination trips.Point, serviceType string) (Estimate, error) {
+	serviceType = trips.NormalizeServiceType(serviceType)
 	rule, ok := s.rules[serviceType]
 	if !ok {
 		return Estimate{}, ErrUnsupportedServiceType
@@ -74,7 +76,10 @@ func (s *Service) Estimate(pickup, destination trips.Point, serviceType string) 
 	}
 
 	distanceMinor := int64(math.Ceil(float64(route.DistanceM)/1000.0)) * rule.perKMMinor
-	total := rule.baseFareMinor + distanceMinor
+	total := rule.baseFareMinor + rule.serviceMinor + distanceMinor
+	if total < rule.minimumMinor {
+		total = rule.minimumMinor
+	}
 	return Estimate{
 		ServiceType: serviceType,
 		DistanceM:   route.DistanceM,
@@ -82,10 +87,9 @@ func (s *Service) Estimate(pickup, destination trips.Point, serviceType string) 
 		Fare: trips.FareBreakdown{
 			BaseFareMinor: rule.baseFareMinor,
 			DistanceMinor: distanceMinor,
+			ServiceMinor:  rule.serviceMinor,
 			TotalMinor:    total,
 		},
-		Currency:    "VND",
-		PricingVer:  "mvp-v1",
-		RouteSource: route.Source,
+		Currency: "VND", PricingVer: "marketplace-demo-v1", RouteSource: route.Source,
 	}, nil
 }

@@ -12,7 +12,7 @@ void main() {
     await tester.pumpWidget(const FlashXDriverApp());
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('Sẵn sàng. Bật máy. Chạy.'), findsOneWidget);
+    expect(find.text('Sẵn sàng nhận việc cùng FlashX.'), findsOneWidget);
     expect(find.text('Số điện thoại'), findsOneWidget);
     expect(find.text('Vào FlashX Driver'), findsOneWidget);
   });

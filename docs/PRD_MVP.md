@@ -2,6 +2,8 @@
 
 > **Business baseline: 12/08/2026**  
 > Chi tiết yêu cầu khách hàng: [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md)
+>
+> Quy tắc vận hành 3 dịch vụ: [`BA_MVP_OPERATING_RULES_2026-08-12.md`](./BA_MVP_OPERATING_RULES_2026-08-12.md)
 
 ## 1. Product objective
 
@@ -151,10 +153,10 @@ Offer hiển thị:
 Accept phải atomic/idempotent; UI không tự coi là thành công trước server response.
 
 ### 5.5 Lái hộ workflow
-Target UX/business flow:
+Target UX/business flow của **job**:
 
 ```text
-OFFERED
+SEARCHING
 -> ACCEPTED
 -> ARRIVING
 -> ARRIVED
@@ -164,23 +166,31 @@ OFFERED
 -> COMPLETED
 ```
 
+`OFFERED` **không phải trạng thái của job**. Trong lúc job vẫn ở `SEARCHING`, hệ thống có thể có một hoặc nhiều `DriverOffer` ở trạng thái `PENDING / ACCEPTED / REJECTED / EXPIRED / INVALIDATED`. Job chỉ chuyển sang `ACCEPTED` khi assignment đã được chốt atomically.
+
 Implementation có thể giữ compatibility state machine ngắn hạn nhưng API/UI phải có kế hoạch migrate rõ.
 
 ### 5.6 Đăng kiểm hộ workflow
-Target business flow:
+Target business flow của **job**:
 
 ```text
-OFFERED
+SCHEDULED (nếu hẹn giờ)
+-> SEARCHING
 -> ACCEPTED
 -> ARRIVING_FOR_PICKUP
+-> ARRIVED_FOR_PICKUP
 -> VEHICLE_RECEIVED
 -> EN_ROUTE_TO_INSPECTION
+-> ARRIVED_AT_INSPECTION_CENTER
 -> INSPECTION_IN_PROGRESS
 -> INSPECTION_COMPLETED
 -> RETURNING_VEHICLE
+-> ARRIVED_FOR_RETURN
 -> HANDOVER
 -> COMPLETED
 ```
+
+`inspection_result` tách khỏi job status (`passed / failed / deferred / unavailable`). Vì vậy FlashX có thể hoàn thành việc nhận xe, làm thủ tục và trả xe dù kết quả đăng kiểm là `failed`.
 
 MVP có thể map một số bước vào status + substatus/event history, nhưng Operations phải nhìn được tiến trình thực tế.
 
@@ -289,15 +299,19 @@ P0:
 - rating/history;
 - Admin audit;
 - support path;
-- nhận/bàn giao xe ở mức cơ bản.
+- nhận/bàn giao xe có evidence tối thiểu;
+- ảnh tổng quan xe trước/sau và dashboard/odometer khi phù hợp;
+- ghi chú tình trạng bất thường;
+- incident workflow tối thiểu + Operations takeover;
+- sau `VEHICLE_RECEIVED` không normal-cancel hoặc reassign trực tiếp.
 
 P1:
-- ảnh xe trước/sau;
-- odometer/fuel;
-- damage notes;
-- OTP/PIN handover;
-- incident claim flow;
-- SOS/share job;
+- evidence/condition capture chi tiết hơn;
+- fuel/battery/odometer structured fields nâng cao;
+- damage annotation;
+- OTP/PIN/signature handover nâng cao;
+- claim resolution hoàn chỉnh;
+- SOS/share job nâng cao;
 - bảo hiểm integration/process.
 
 ## 11. Payment MVP
@@ -305,6 +319,9 @@ P1:
 - Cash-first được chấp nhận cho MVP.
 - Payment state tách khỏi job state.
 - Mọi completed service có ledger/payment record phù hợp.
+- **Customer charge, driver earning và FlashX fee phải tách nhau**; không được coi `final_fare` là thu nhập tài xế.
+- Pilot có thể đối soát commission/settlement bán thủ công, nhưng dữ liệu nguồn phải ghi đúng gross/net ngay từ đầu.
+- Khoản phát sinh ngoài quote phải có reason + customer approval/Operations audit theo policy.
 - Online gateway chỉ đưa vào P0 nếu khách cung cấp merchant account và chốt provider đúng hạn.
 
 ## 12. UX/UI requirements
@@ -385,15 +402,17 @@ MVP đạt yêu cầu khi:
 - Call masking/VoIP riêng.
 - Launch toàn quốc ngay Phase 1.
 
-## 16. Open decisions cần khách hàng chốt
+## 16. Những quyết định còn cần Founder/Legal/Finance duyệt trước production
 
-- Pilot ở thành phố/khu vực nào.
-- Bảng giá 3 service.
-- Hẹn giờ là P0 bắt buộc hay rollout sau immediate booking.
-- Waiting/cancellation/night/holiday policy.
-- Quy trình nhận/bàn giao xe tối thiểu.
-- Checklist giấy tờ cho đăng kiểm hộ.
-- Bảo hiểm/trách nhiệm sự cố.
-- SLA support.
-- Payment online có trong MVP không.
+BA mặc định đã chốt flow vận hành trong `BA_MVP_OPERATING_RULES_2026-08-12.md`, gồm scheduling P0, handover/evidence tối thiểu, incident flow và nguyên tắc cancellation sau khi nhận xe.
+
+Các mục còn cần người có thẩm quyền duyệt:
+- vùng pilot cuối cùng/ngày Go-Live; BA khuyến nghị Thanh Hóa, Hạc Thành trước rồi mở Sầm Sơn khi supply/ETA đạt;
+- bảng giá cụ thể của 3 service;
+- mức tiền waiting/cancellation/night/holiday cụ thể (logic/config đã là P0);
+- checklist giấy tờ đăng kiểm theo pháp lý/quy định hiện hành;
+- bảo hiểm/trách nhiệm/bồi thường khi xảy ra sự cố;
+- commission, payout và settlement chính thức;
+- SLA support/khung giờ trực Operations;
+- payment online có trong launch hay giữ cash-first;
 - SMS OTP provider production.

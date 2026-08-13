@@ -3,8 +3,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 type TokenPair = { access_token: string; refresh_token: string; expires_at: string };
-type Driver = { id: string; phone?: string; full_name: string; service_type: string; approval_status: string; availability_status: string };
-type Trip = { id: string; rider_id: string; driver_id?: string; service_type: string; status: string; estimated_fare_minor: number; final_fare_minor: number; created_at: string };
+type Driver = { id: string; phone?: string; full_name: string; service_type: string; capabilities?: string[]; approval_status: string; availability_status: string };
+type Trip = { id: string; rider_id: string; driver_id?: string; customer_vehicle_id?: string; service_type: string; booking_mode?: string; scheduled_at?: string; status: string; estimated_fare_minor: number; final_fare_minor: number; inspection_result?: string; incident_open?: boolean; created_at: string };
 type Metrics = Record<string, number>;
 
 type ApiError = { error?: { message?: string; code?: string } };
@@ -31,18 +31,39 @@ function money(value?: number) {
 
 function tripStatusLabel(status: string) {
   return ({
+    scheduled: 'Đã hẹn lịch',
     searching: 'Đang tìm tài xế',
-    accepted: 'Đã nhận chuyến',
-    arriving: 'Đang đến đón',
-    arrived: 'Đã tới điểm đón',
-    in_progress: 'Đang di chuyển',
+    accepted: 'Đã nhận việc',
+    arriving: 'Đang đến nhận xe',
+    arrived: 'Đã tới điểm nhận',
+    arriving_for_pickup: 'Đang đến nhận xe',
+    arrived_for_pickup: 'Đã tới điểm nhận',
+    vehicle_received: 'Đã nhận xe khách',
+    in_progress: 'Đang thực hiện',
+    en_route_to_inspection: 'Đang tới nơi đăng kiểm',
+    arrived_at_inspection_center: 'Đã tới nơi đăng kiểm',
+    inspection_in_progress: 'Đang đăng kiểm',
+    inspection_completed: 'Đã có kết quả đăng kiểm',
+    returning_vehicle: 'Đang trả xe',
+    arrived_for_return: 'Đã tới điểm trả',
+    handover: 'Đang bàn giao',
     completed: 'Hoàn thành',
     cancelled: 'Đã hủy',
   } as Record<string, string>)[status] || status;
 }
 
 function serviceLabel(service: string) {
-  return service === 'car' ? 'FlashX Car' : service === 'bike' ? 'FlashX Bike' : service;
+  return ({
+    car: 'Lái hộ ô tô',
+    designated_driver_car: 'Lái hộ ô tô',
+    bike: 'Lái hộ xe máy',
+    designated_driver_bike: 'Lái hộ xe máy',
+    vehicle_inspection_assist: 'Đăng kiểm hộ',
+  } as Record<string, string>)[service] || service;
+}
+
+function inspectionResultLabel(result?: string) {
+  return ({ passed: 'Đạt', failed: 'Không đạt', deferred: 'Cần thực hiện lại', unavailable: 'Chưa có kết quả' } as Record<string, string>)[result || ''] || result || '';
 }
 
 export default function AdminClient() {
@@ -121,7 +142,12 @@ export default function AdminClient() {
     }
   }, [authedApi, token]);
 
-  useEffect(() => { if (token) void load(token); }, [token, load]);
+  useEffect(() => {
+    if (!token) return;
+    void load(token);
+    const timer = window.setInterval(() => void load(token), 5000);
+    return () => window.clearInterval(timer);
+  }, [token, load]);
 
   async function requestOtp(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
@@ -169,10 +195,10 @@ export default function AdminClient() {
   }
 
   const cards = useMemo(() => [
-    ['Tổng chuyến', metrics.trips_total || 0, `${metrics.trips_completed || 0} hoàn thành`, '↗'],
+    ['Tổng công việc', metrics.trips_total || 0, `${metrics.trips_completed || 0} hoàn thành`, '↗'],
     ['Tài xế online', metrics.drivers_online || 0, `${metrics.drivers_total || 0} tổng tài xế`, '●'],
-    ['Đang tìm tài xế', metrics.trips_searching || 0, `${metrics.trips_active || 0} chuyến đang chạy`, '⌖'],
-    ['Chờ duyệt', metrics.drivers_pending || 0, `${metrics.trips_cancelled || 0} chuyến đã hủy`, '✓'],
+    ['Đang vận hành', metrics.trips_active || 0, `${metrics.trips_searching || 0} đang tìm · ${metrics.trips_scheduled || 0} đã hẹn`, '⌖'],
+    ['Cần chú ý', metrics.trips_incident || 0, `${metrics.drivers_pending || 0} tài xế chờ duyệt`, '!'],
   ], [metrics]);
 
   if (!token) {
@@ -193,7 +219,7 @@ export default function AdminClient() {
     <aside className="sidebar">
       <div className="brand"><div className="brandMark">⚡</div><div className="brandText"><strong>FlashX</strong><span>Operations</span></div></div>
       <nav className="nav" aria-label="Điều hướng quản trị">
-        {['▦ Tổng quan','⇄ Chuyến đi','◉ Tài xế','◎ Khách hàng','₫ Giá cước','% Khuyến mại','⌕ Audit log','⚙ Cài đặt'].map((item,i)=><div className={`navItem${i===0?' active':''}`} key={item}>{item}</div>)}
+        {['▦ Tổng quan','⇄ Công việc','◉ Tài xế','◎ Khách hàng','▣ Xe khách','₫ Bảng giá','! Sự cố','⌕ Nhật ký','⚙ Cài đặt'].map((item,i)=><div className={`navItem${i===0?' active':''}`} key={item}>{item}</div>)}
       </nav>
       <div className="sidebarFooter"><strong style={{color:'white'}}>MVP Operations</strong><br/>Dữ liệu trực tiếp từ FlashX API.</div>
     </aside>
@@ -201,14 +227,14 @@ export default function AdminClient() {
       <header className="topbar"><h1>Trung tâm vận hành</h1><div className="topbarRight"><button className="linkButton" onClick={()=>void load()} disabled={busy}>Làm mới</button><span className="env">LIVE</span><button className="avatar" onClick={()=>void logout()}>AD</button></div></header>
       <div className="content" aria-busy={busy}>
         {busy && <div className="loadingBar" aria-label="Đang đồng bộ dữ liệu"><span /></div>}
-        <section className="pageHeading"><div><div className="eyebrow">FLASHX OPERATIONS</div><h2>Tổng quan hoạt động</h2><p>Giám sát chuyến đi và duyệt tài xế trước khi vận hành.</p></div><div className="liveBadge"><span className="liveDot"/> Backend connected</div></section>
+        <section className="pageHeading"><div><div className="eyebrow">FLASHX OPERATIONS</div><h2>Trung tâm điều hành dịch vụ</h2><p>Giám sát Lái hộ ô tô, Lái hộ xe máy và Đăng kiểm hộ trên cùng một hệ thống.</p></div><div className="liveBadge"><span className="liveDot"/> Backend connected</div></section>
         {error && <div className="errorBox" role="alert">{error}</div>}
         <section className="metrics">{cards.map(([label,value,foot,icon])=><article className="metricCard" key={label}><div className="metricTop"><span>{label}</span><span className="metricIcon">{icon}</span></div><div className="metricValue">{value}</div><div className="metricFoot good">{foot}</div></article>)}</section>
         <section className="grid">
-          <article className="card"><div className="cardHeader"><h3>Bản đồ vận hành</h3><span className="muted">Map adapter chờ API key khách hàng</span></div><div className="opsMap"><div className="mapRoad r1"/><div className="mapRoad r2"/><div className="mapRoad r3"/><div className="mapRoad r4"/><div className="mapLabel">{metrics.drivers_online || 0} tài xế online · {metrics.trips_active || 0} chuyến active</div></div></article>
+          <article className="card"><div className="cardHeader"><h3>Bản đồ vận hành</h3><span className="muted">Map adapter chờ API key khách hàng</span></div><div className="opsMap"><div className="mapRoad r1"/><div className="mapRoad r2"/><div className="mapRoad r3"/><div className="mapRoad r4"/><div className="mapLabel">{metrics.drivers_online || 0} tài xế online · {metrics.trips_active || 0} công việc đang thực hiện</div></div></article>
           <article className="card"><div className="cardHeader"><div><h3>Chờ duyệt tài xế</h3><span className="cardHint">Hồ sơ cần Operations xử lý</span></div><span className="countBadge">{drivers.length}</span></div><div className="queue">{drivers.length===0?<div className="emptyState"><span className="emptyIcon">✓</span><strong>Đã xử lý hết hồ sơ</strong><span>Hiện không có tài xế nào đang chờ duyệt.</span></div>:drivers.map(d=><div className="queueItem" key={d.id}><div className="queueAvatar">{(d.full_name||d.phone||'TX').slice(0,2).toUpperCase()}</div><div className="queueIdentity"><div className="queueTitle">{d.full_name||d.phone||d.id}</div><div className="queueSub">{serviceLabel(d.service_type)} · {d.phone||d.id}</div></div><div className="queueActions"><button className="rejectButton" disabled={busy} onClick={()=>void approve(d,'rejected')}>Từ chối</button><button className="approveButton" disabled={busy} onClick={()=>void approve(d,'approved')}>Duyệt</button></div></div>)}</div></article>
         </section>
-        <section className="card tableCard"><div className="cardHeader"><div><h3>Chuyến gần đây</h3><span className="cardHint">Dòng hoạt động mới nhất của hệ thống</span></div><span className="countBadge">{trips.length}</span></div><div className="tableWrap">{trips.length===0?<div className="emptyState tableEmpty"><span className="emptyIcon">⇄</span><strong>Chưa có chuyến đi</strong><span>Dữ liệu chuyến sẽ xuất hiện tại đây khi Rider bắt đầu đặt xe.</span></div>:<table><thead><tr><th>Mã chuyến</th><th>Rider</th><th>Driver</th><th>Dịch vụ</th><th>Giá</th><th>Trạng thái</th></tr></thead><tbody>{trips.map(t=><tr key={t.id}><td className="tripId">{t.id}</td><td>{t.rider_id}</td><td>{t.driver_id||'—'}</td><td>{serviceLabel(t.service_type)}</td><td><strong>{money(t.final_fare_minor||t.estimated_fare_minor)}</strong></td><td><span className={`status ${t.status==='cancelled'?'cancelled':t.status==='completed'?'active':'pending'}`}>{tripStatusLabel(t.status)}</span></td></tr>)}</tbody></table>}</div></section>
+        <section className="card tableCard"><div className="cardHeader"><div><h3>Công việc gần đây</h3><span className="cardHint">Theo dõi tiến trình của cả 3 dịch vụ</span></div><span className="countBadge">{trips.length}</span></div><div className="tableWrap">{trips.length===0?<div className="emptyState tableEmpty"><span className="emptyIcon">⇄</span><strong>Chưa có công việc</strong><span>Công việc sẽ xuất hiện khi khách đặt một trong ba dịch vụ FlashX.</span></div>:<table><thead><tr><th>Mã việc</th><th>Khách</th><th>Tài xế</th><th>Dịch vụ</th><th>Giá</th><th>Trạng thái</th></tr></thead><tbody>{trips.map(t=><tr key={t.id}><td className="tripId">{t.id}</td><td>{t.rider_id}</td><td>{t.driver_id||'—'}</td><td>{serviceLabel(t.service_type)}</td><td><strong>{money(t.final_fare_minor||t.estimated_fare_minor)}</strong></td><td><span className={`status ${t.incident_open?'cancelled':t.status==='completed'?'active':'pending'}`}>{t.incident_open?'Có sự cố':tripStatusLabel(t.status)}</span>{t.inspection_result&&<div className="cardHint">KQ: {inspectionResultLabel(t.inspection_result)}</div>}</td></tr>)}</tbody></table>}</div></section>
       </div>
     </main>
   </div>;

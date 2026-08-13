@@ -61,6 +61,25 @@ func (s *Server) driverTrips(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
 }
 
+func (s *Server) driverTripDetail(w http.ResponseWriter, r *http.Request) {
+	driverID, ok := s.driverID(w, r)
+	if !ok {
+		return
+	}
+	trip, err := s.deps.Trips.GetForDriver(r.PathValue("id"), driverID)
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	payload := map[string]any{"trip": trip}
+	if s.deps.CustomerVehicles != nil && trip.CustomerVehicleID != "" {
+		if vehicle, vehicleErr := s.deps.CustomerVehicles.Get(trip.CustomerVehicleID); vehicleErr == nil {
+			payload["vehicle"] = vehicle
+		}
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: payload})
+}
+
 type availabilityRequest struct {
 	Status drivers.AvailabilityStatus `json:"status"`
 }
@@ -80,6 +99,7 @@ func (s *Server) driverAvailability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Status == drivers.AvailabilityOnline && s.deps.Dispatch != nil {
+		_, _ = s.deps.Trips.ActivateDueScheduled(50)
 		s.publishOffers(s.deps.Dispatch.DispatchWaiting(50))
 	}
 	s.publishActor(driverID, "driver.availability", "", driver)
@@ -104,6 +124,7 @@ func (s *Server) driverLocation(w http.ResponseWriter, r *http.Request) {
 		s.publishActor(activeTrip.RiderID, "driver.location", activeTrip.ID, map[string]any{"driver_id": driverID, "location": req})
 	}
 	if s.deps.Dispatch != nil {
+		_, _ = s.deps.Trips.ActivateDueScheduled(50)
 		s.publishOffers(s.deps.Dispatch.DispatchWaiting(50))
 	}
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: driver})
@@ -128,7 +149,13 @@ func (s *Server) currentDriverOffer(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{"offer": offer, "trip": trip}})
+	payload := map[string]any{"offer": offer, "trip": trip}
+	if s.deps.CustomerVehicles != nil && trip.CustomerVehicleID != "" {
+		if vehicle, vehicleErr := s.deps.CustomerVehicles.Get(trip.CustomerVehicleID); vehicleErr == nil {
+			payload["vehicle"] = vehicle
+		}
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: payload})
 }
 
 func (s *Server) acceptDriverOffer(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +205,91 @@ func (s *Server) driverTripArrived(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) driverTripVehicleReceived(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.MarkVehicleReceived(id, driverID)
+	})
+}
+
 func (s *Server) driverTripStart(w http.ResponseWriter, r *http.Request) {
 	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
 		return s.deps.Ride.Start(id, driverID)
 	})
+}
+
+func (s *Server) driverTripArriveInspection(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.ArriveInspectionCenter(id, driverID)
+	})
+}
+
+func (s *Server) driverTripStartInspection(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.StartInspection(id, driverID)
+	})
+}
+
+type completeInspectionRequest struct {
+	Result string `json:"result"`
+}
+
+func (s *Server) driverTripCompleteInspection(w http.ResponseWriter, r *http.Request) {
+	driverID, ok := s.driverID(w, r)
+	if !ok {
+		return
+	}
+	var req completeInspectionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	trip, err := s.deps.Ride.CompleteInspection(r.PathValue("id"), driverID, req.Result)
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	s.publishTrip(trip, "trip."+string(trip.Status), trip)
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: trip})
+}
+
+func (s *Server) driverTripReturning(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.ReturningVehicle(id, driverID)
+	})
+}
+
+func (s *Server) driverTripArrivedReturn(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.ArrivedForReturn(id, driverID)
+	})
+}
+
+func (s *Server) driverTripHandover(w http.ResponseWriter, r *http.Request) {
+	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		return s.deps.Ride.MarkHandover(id, driverID)
+	})
+}
+
+type incidentRequest struct {
+	Type string `json:"type"`
+	Note string `json:"note"`
+}
+
+func (s *Server) driverTripIncident(w http.ResponseWriter, r *http.Request) {
+	driverID, ok := s.driverID(w, r)
+	if !ok {
+		return
+	}
+	var req incidentRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	trip, err := s.deps.Ride.ReportIncident(r.PathValue("id"), driverID, req.Type, req.Note)
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	s.publishTrip(trip, "trip.incident", trip)
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: trip})
 }
 
 func (s *Server) driverTripComplete(w http.ResponseWriter, r *http.Request) {

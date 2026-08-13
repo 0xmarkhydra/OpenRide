@@ -36,7 +36,7 @@ type Config struct {
 func Load() Config {
 	return Config{
 		AppEnv:                env("APP_ENV", "development"),
-		HTTPAddr:              env("HTTP_ADDR", ":8080"),
+		HTTPAddr:              httpAddr(),
 		DatabaseURL:           env("DATABASE_URL", "postgres://flashx:flashx@localhost:55432/flashx?sslmode=disable"),
 		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:         env("REDIS_PASSWORD", ""),
@@ -60,6 +60,16 @@ func Load() Config {
 		S3ForcePathStyle:      envBool("S3_FORCE_PATH_STYLE", true),
 		S3PresignTTLSeconds:   envInt("S3_PRESIGN_TTL_SECONDS", 600),
 	}
+}
+
+func httpAddr() string {
+	if value := os.Getenv("HTTP_ADDR"); value != "" {
+		return value
+	}
+	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+		return ":" + port
+	}
+	return ":8080"
 }
 
 func env(key, fallback string) string {

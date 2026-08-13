@@ -6,6 +6,7 @@
 # Go
 bin/
 coverage.out
+/services/api/api
 
 # Node
 node_modules/

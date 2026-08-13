@@ -10,8 +10,10 @@ type Config struct {
 	AppEnv                string
 	HTTPAddr              string
 	DatabaseURL           string
+	DatabaseName          string
 	RedisAddr             string
 	RedisPassword         string
+	RedisDB               int
 	Persistence           string
 	JWTSecret             string
 	AllowDevIdentity      bool
@@ -36,10 +38,12 @@ type Config struct {
 func Load() Config {
 	return Config{
 		AppEnv:                env("APP_ENV", "development"),
-		HTTPAddr:              env("HTTP_ADDR", ":8080"),
+		HTTPAddr:              httpAddr(),
 		DatabaseURL:           env("DATABASE_URL", "postgres://flashx:flashx@localhost:55432/flashx?sslmode=disable"),
+		DatabaseName:          env("DATABASE_NAME", ""),
 		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:         env("REDIS_PASSWORD", ""),
+		RedisDB:               envNonNegativeInt("REDIS_DB", 0),
 		Persistence:           env("PERSISTENCE", "postgres"),
 		JWTSecret:             env("JWT_SECRET", "dev-change-me-please"),
 		AllowDevIdentity:      envBool("ALLOW_DEV_IDENTITY", true),
@@ -60,6 +64,16 @@ func Load() Config {
 		S3ForcePathStyle:      envBool("S3_FORCE_PATH_STYLE", true),
 		S3PresignTTLSeconds:   envInt("S3_PRESIGN_TTL_SECONDS", 600),
 	}
+}
+
+func httpAddr() string {
+	if value := os.Getenv("HTTP_ADDR"); value != "" {
+		return value
+	}
+	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+		return ":" + port
+	}
+	return ":8080"
 }
 
 func env(key, fallback string) string {
@@ -91,6 +105,18 @@ func envInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envNonNegativeInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
 		return fallback
 	}
 	return parsed

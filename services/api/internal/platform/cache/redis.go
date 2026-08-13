@@ -8,11 +8,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func Open(ctx context.Context, addr, password string) (*redis.Client, error) {
+func Open(ctx context.Context, addr, password string, db int) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:         addr,
 		Password:     password,
-		DB:           0,
+		DB:           db,
 		PoolSize:     30,
 		MinIdleConns: 2,
 		DialTimeout:  5 * time.Second,

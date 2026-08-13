@@ -1,0 +1,24 @@
+FROM golang:1.25-alpine AS build
+
+WORKDIR /src
+COPY services/api/go.mod services/api/go.sum ./
+RUN go mod download
+
+COPY services/api/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/flashx-api ./cmd/api
+
+FROM alpine:3.22 AS runtime
+RUN apk add --no-cache ca-certificates postgresql-client \
+    && addgroup -S flashx \
+    && adduser -S -G flashx -u 10001 flashx
+
+WORKDIR /app
+COPY --from=build /out/flashx-api /app/flashx-api
+COPY infrastructure/migrations /app/migrations
+COPY scripts/railway_migrate.sh /app/railway_migrate.sh
+RUN chmod 0755 /app/railway_migrate.sh \
+    && chown -R flashx:flashx /app
+
+USER flashx
+EXPOSE 8080
+ENTRYPOINT ["/app/flashx-api"]

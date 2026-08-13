@@ -1,0 +1,41 @@
+name: Admin UI lockfile
+
+on:
+  push:
+    branches:
+      - feat/admin-ui-system
+    paths:
+      - apps/admin/package.json
+
+permissions:
+  contents: write
+
+jobs:
+  lock-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/admin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/admin-ui-system
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/admin/package-lock.json
+      - name: Install dependencies and refresh lockfile
+        run: npm install
+      - name: Build admin
+        run: npm run build
+      - name: Commit lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(admin): refresh UI dependency lockfile"
+          git push origin HEAD:feat/admin-ui-system

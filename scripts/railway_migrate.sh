@@ -6,6 +6,10 @@ if [ -z "${DATABASE_URL:-}" ]; then
   exit 1
 fi
 
+if [ -n "${DATABASE_NAME:-}" ]; then
+  DATABASE_URL="${DATABASE_URL%/*}/${DATABASE_NAME}"
+fi
+
 for file in /app/migrations/*.sql; do
   echo "Applying $(basename "$file")"
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"

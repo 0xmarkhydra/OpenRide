@@ -18,7 +18,7 @@ type Resources struct {
 }
 
 func Open(ctx context.Context, cfg config.Config) (*Resources, error) {
-	pool, err := database.Open(ctx, cfg.DatabaseURL)
+	pool, err := database.Open(ctx, cfg.DatabaseURL, cfg.DatabaseName)
 	if err != nil {
 		return nil, err
 	}

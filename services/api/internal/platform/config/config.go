@@ -10,6 +10,7 @@ type Config struct {
 	AppEnv                string
 	HTTPAddr              string
 	DatabaseURL           string
+	DatabaseName          string
 	RedisAddr             string
 	RedisPassword         string
 	RedisDB               int
@@ -39,6 +40,7 @@ func Load() Config {
 		AppEnv:                env("APP_ENV", "development"),
 		HTTPAddr:              httpAddr(),
 		DatabaseURL:           env("DATABASE_URL", "postgres://flashx:flashx@localhost:55432/flashx?sslmode=disable"),
+		DatabaseName:          env("DATABASE_NAME", ""),
 		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:         env("REDIS_PASSWORD", ""),
 		RedisDB:               envNonNegativeInt("REDIS_DB", 0),

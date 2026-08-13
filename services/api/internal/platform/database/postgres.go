@@ -8,10 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+func Open(ctx context.Context, databaseURL, databaseName string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	if databaseName != "" {
+		cfg.ConnConfig.Database = databaseName
 	}
 	cfg.MaxConns = 20
 	cfg.MinConns = 2

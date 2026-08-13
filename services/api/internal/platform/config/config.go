@@ -12,6 +12,7 @@ type Config struct {
 	DatabaseURL           string
 	RedisAddr             string
 	RedisPassword         string
+	RedisDB               int
 	Persistence           string
 	JWTSecret             string
 	AllowDevIdentity      bool
@@ -40,6 +41,7 @@ func Load() Config {
 		DatabaseURL:           env("DATABASE_URL", "postgres://flashx:flashx@localhost:55432/flashx?sslmode=disable"),
 		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:         env("REDIS_PASSWORD", ""),
+		RedisDB:               envNonNegativeInt("REDIS_DB", 0),
 		Persistence:           env("PERSISTENCE", "postgres"),
 		JWTSecret:             env("JWT_SECRET", "dev-change-me-please"),
 		AllowDevIdentity:      envBool("ALLOW_DEV_IDENTITY", true),
@@ -101,6 +103,18 @@ func envInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envNonNegativeInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
 		return fallback
 	}
 	return parsed

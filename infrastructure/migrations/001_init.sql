@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS postgis;
-
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     phone VARCHAR(32) UNIQUE NOT NULL,
@@ -16,7 +14,8 @@ CREATE TABLE IF NOT EXISTS drivers (
     service_type VARCHAR(32) NOT NULL DEFAULT 'bike',
     approval_status VARCHAR(32) NOT NULL DEFAULT 'pending',
     availability_status VARCHAR(32) NOT NULL DEFAULT 'offline',
-    latest_location GEOGRAPHY(POINT, 4326),
+    latest_lat DOUBLE PRECISION,
+    latest_lng DOUBLE PRECISION,
     location_accuracy_m DOUBLE PRECISION,
     heading_deg DOUBLE PRECISION,
     speed_mps DOUBLE PRECISION,
@@ -27,7 +26,6 @@ CREATE TABLE IF NOT EXISTS drivers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS drivers_location_gix ON drivers USING GIST (latest_location);
 CREATE INDEX IF NOT EXISTS drivers_dispatch_idx ON drivers (service_type, approval_status, availability_status);
 
 CREATE TABLE IF NOT EXISTS vehicles (
@@ -59,8 +57,10 @@ CREATE TABLE IF NOT EXISTS trips (
     driver_id TEXT REFERENCES drivers(id),
     service_type VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'searching',
-    pickup GEOGRAPHY(POINT, 4326) NOT NULL,
-    destination GEOGRAPHY(POINT, 4326) NOT NULL,
+    pickup_lat DOUBLE PRECISION NOT NULL,
+    pickup_lng DOUBLE PRECISION NOT NULL,
+    destination_lat DOUBLE PRECISION NOT NULL,
+    destination_lng DOUBLE PRECISION NOT NULL,
     estimated_distance_m BIGINT NOT NULL DEFAULT 0,
     estimated_duration_s BIGINT NOT NULL DEFAULT 0,
     estimated_fare_minor BIGINT NOT NULL DEFAULT 0,
@@ -79,8 +79,6 @@ CREATE TABLE IF NOT EXISTS trips (
     cancelled_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS trips_pickup_gix ON trips USING GIST (pickup);
-CREATE INDEX IF NOT EXISTS trips_destination_gix ON trips USING GIST (destination);
 CREATE INDEX IF NOT EXISTS trips_status_created_idx ON trips (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS trips_rider_created_idx ON trips (rider_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS trips_driver_status_idx ON trips (driver_id, status) WHERE driver_id IS NOT NULL;

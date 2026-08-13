@@ -22,7 +22,7 @@ func Open(ctx context.Context, cfg config.Config) (*Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	redisClient, err := cache.Open(ctx, cfg.RedisAddr, cfg.RedisPassword)
+	redisClient, err := cache.Open(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
 		pool.Close()
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"flashx/services/api/internal/admin"
@@ -475,6 +476,21 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 		}
 	}
 
+	pricingUpdate := perform(t, s, http.MethodPatch, "/v1/admin/pricing/"+trips.ServiceDesignatedDriverCar, []byte(`{"base_fare_minor":100000,"per_km_minor":20000,"service_minor":5000,"minimum_minor":140000}`), adminHeaders)
+	if pricingUpdate.Code != http.StatusOK {
+		t.Fatalf("pricing update status=%d body=%s", pricingUpdate.Code, pricingUpdate.Body.String())
+	}
+	if !bytes.Contains(pricingUpdate.Body.Bytes(), []byte(`"base_fare_minor":100000`)) || !bytes.Contains(pricingUpdate.Body.Bytes(), []byte(`"pricing_version":"admin-`)) {
+		t.Fatalf("pricing update missing new version: %s", pricingUpdate.Body.String())
+	}
+	estimate, err := s.deps.Pricing.Estimate(trips.Point{Lat: 19.807, Lng: 105.776}, trips.Point{Lat: 19.82, Lng: 105.79}, trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimate.Fare.BaseFareMinor != 100000 || estimate.Fare.ServiceMinor != 5000 || !strings.HasPrefix(estimate.PricingVer, "admin-") {
+		t.Fatalf("estimate did not use admin pricing: %+v", estimate)
+	}
+
 	resolved := perform(t, s, http.MethodPost, "/v1/admin/trips/"+trip.ID+"/incident/resolve", []byte(`{"note":"Đã xác minh với khách và tài xế"}`), adminHeaders)
 	if resolved.Code != http.StatusOK {
 		t.Fatalf("resolve incident status=%d body=%s", resolved.Code, resolved.Body.String())
@@ -487,8 +503,8 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 	if audit.Code != http.StatusOK {
 		t.Fatalf("audit status=%d body=%s", audit.Code, audit.Body.String())
 	}
-	if !bytes.Contains(audit.Body.Bytes(), []byte("trip.incident_resolved")) || !bytes.Contains(audit.Body.Bytes(), []byte(adminID)) {
-		t.Fatalf("audit missing incident resolution: %s", audit.Body.String())
+	if !bytes.Contains(audit.Body.Bytes(), []byte("trip.incident_resolved")) || !bytes.Contains(audit.Body.Bytes(), []byte("pricing.rule_updated")) || !bytes.Contains(audit.Body.Bytes(), []byte(adminID)) {
+		t.Fatalf("audit missing operations actions: %s", audit.Body.String())
 	}
 }
 

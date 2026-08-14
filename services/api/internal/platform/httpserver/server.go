@@ -134,6 +134,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/admin/customers", s.adminCustomers)
 	mux.HandleFunc("GET /v1/admin/vehicles", s.adminVehicles)
 	mux.HandleFunc("GET /v1/admin/pricing", s.adminPricing)
+	mux.HandleFunc("PATCH /v1/admin/pricing/{serviceType}", s.adminUpdatePricing)
 	mux.HandleFunc("GET /v1/admin/audit", s.adminAudit)
 	mux.HandleFunc("GET /v1/admin/system", s.adminSystem)
 	mux.HandleFunc("GET /v1/admin/dashboard", s.adminDashboard)

@@ -48,6 +48,7 @@ func main() {
 		paymentStore     payments.Store
 		ratingStore      ratings.Store
 		documentStore    driverdocs.Store
+		pricingStore     pricing.Store
 		dispatchOffers   dispatch.OfferStore
 		dispatchLocker   dispatch.Locker
 		resources        *persistence.Resources
@@ -67,6 +68,7 @@ func main() {
 		paymentStore = payments.NewMemoryStore()
 		ratingStore = ratings.NewMemoryStore()
 		documentStore = driverdocs.NewMemoryStore()
+		pricingStore = pricing.NewMemoryStore()
 		dispatchOffers = dispatch.NewMemoryOfferStore()
 		dispatchLocker = dispatch.NewMemoryLocker()
 	case "postgres", "persistent":
@@ -89,6 +91,7 @@ func main() {
 		paymentStore = payments.NewPostgresStore(resources.Postgres)
 		ratingStore = ratings.NewPostgresStore(resources.Postgres)
 		documentStore = driverdocs.NewPostgresStore(resources.Postgres)
+		pricingStore = pricing.NewPostgresStore(resources.Postgres)
 		dispatchOffers = dispatch.NewRedisOfferStore(resources.Redis, "flashx")
 		dispatchLocker = dispatch.NewRedisLocker(resources.Redis, "flashx")
 		readyCheck = resources.Ready
@@ -169,7 +172,10 @@ func main() {
 	default:
 		log.Fatalf("unsupported MAPS_PROVIDER %q", cfg.MapsProvider)
 	}
-	pricingService := pricing.NewServiceWithRouting(routeProvider)
+	pricingService, err := pricing.NewServiceWithStore(routeProvider, pricingStore)
+	if err != nil {
+		log.Fatalf("configure pricing: %v", err)
+	}
 	paymentService := payments.NewService(paymentStore)
 	ratingService := ratings.NewService(ratingStore, tripService)
 	driverDocumentService := driverdocs.NewService(documentStore, storageSigner)

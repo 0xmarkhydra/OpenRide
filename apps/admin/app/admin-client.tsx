@@ -209,8 +209,15 @@ function canManageDriver(trip: Trip) {
 
 const phoneSchema = z.object({ phone: z.string().trim().min(9, 'Nhập số điện thoại Admin') });
 const otpSchema = z.object({ code: z.string().regex(/^\d{6}$/, 'OTP phải gồm 6 chữ số') });
+const pricingSchema = z.object({
+  base_fare_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  per_km_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  service_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  minimum_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+}).refine(values => Object.values(values).some(value => value > 0), { message: 'Ít nhất một thành phần giá phải lớn hơn 0', path: ['minimum_minor'] });
 type PhoneForm = z.infer<typeof phoneSchema>;
 type OTPForm = z.infer<typeof otpSchema>;
+type PricingForm = z.infer<typeof pricingSchema>;
 
 const navItems: NavItem[] = [
   { key: 'overview', label: 'Tổng quan', icon: LayoutDashboard },
@@ -509,6 +516,23 @@ export default function AdminClient() {
     }
   }
 
+  async function updatePricingRule(serviceType: string, values: PricingForm) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<PricingRule>(`/v1/admin/pricing/${encodeURIComponent(serviceType)}`, {
+        method: 'PATCH', body: JSON.stringify(values),
+      });
+      setPricing(items => items.map(item => item.service_type === updated.service_type ? updated : item));
+      await loadAudit();
+    } catch (pricingError) {
+      setError(pricingError instanceof Error ? pricingError.message : 'Không thể cập nhật bảng giá');
+      throw pricingError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function logout() {
     if (refreshToken) {
       try { await api('/v1/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }); } catch {}
@@ -598,9 +622,9 @@ export default function AdminClient() {
       </Section>;
     }
     if (activeView === 'pricing') {
-      return <Section title='Bảng giá' description='Cấu hình giá đang được backend sử dụng cho ba dịch vụ MVP.'>
-        <div className='grid gap-4 lg:grid-cols-3'>{pricing.map(rule => <Card key={rule.service_type} className='rounded-2xl shadow-none'><CardContent className='p-5'><div className='flex items-start justify-between gap-3'><div><div className='text-sm font-semibold text-primary'>{serviceLabel(rule.service_type)}</div><div className='mt-1 text-xs text-muted'>{rule.pricing_version}</div></div><Badge variant='outline'>{rule.currency}</Badge></div><div className='mt-5 grid gap-3'><PriceRow label='Giá mở cửa' value={money(rule.base_fare_minor)} /><PriceRow label='Theo km' value={`${money(rule.per_km_minor)} / km`} /><PriceRow label='Phí dịch vụ' value={money(rule.service_minor)} /><PriceRow label='Tối thiểu' value={money(rule.minimum_minor)} strong /></div></CardContent></Card>)}</div>
-        <p className='mt-4 text-sm leading-6 text-muted'>Màn này hiển thị đúng rule hiện hành. Chỉnh giá chưa được mở trên Admin vì backend hiện dùng cấu hình version cố định; không hiển thị nút chỉnh sửa giả.</p>
+      return <Section title='Bảng giá' description='Quản lý rule giá đang dùng thật cho ba dịch vụ MVP. Mỗi lần lưu tạo một version mới và được ghi audit.'>
+        <div className='mb-4 rounded-2xl border border-primary/10 bg-primary-soft/55 p-4 text-sm leading-6 text-muted'><strong className='text-primary'>An toàn tài chính:</strong> thay đổi chỉ áp dụng cho báo giá/công việc tạo sau khi lưu. Công việc đã tạo giữ nguyên fare snapshot trước đó.</div>
+        <div className='grid gap-4 xl:grid-cols-3'>{pricing.map(rule => <PricingEditor key={`${rule.service_type}:${rule.pricing_version}`} rule={rule} busy={busy} onSave={values => updatePricingRule(rule.service_type, values)} />)}</div>
       </Section>;
     }
     if (activeView === 'audit') {
@@ -751,7 +775,21 @@ function Section({ title, description, children }: { title: string; description:
 function InfoState({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) { return <div className='rounded-3xl border border-dashed border-border bg-surface-soft/60 p-7 text-center'><div className='mx-auto grid size-12 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 font-semibold text-foreground'>{title}</div><p className='mx-auto mt-1 max-w-md text-sm leading-6 text-muted'>{text}</p></div>; }
 function InfoCard({ label, value, detail, icon: Icon }: { label: string; value: string; detail?: string; icon: LucideIcon }) { return <div className='rounded-2xl border border-border bg-surface p-4'><div className='flex items-start gap-3'><div className='grid size-10 shrink-0 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-4' /></div><div className='min-w-0'><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 break-words font-semibold text-foreground'>{value}</div>{detail ? <div className='mt-1 text-xs leading-5 text-muted'>{detail}</div> : null}</div></div></div>; }
 function MiniMetric({ label, value, tone }: { label: string; value: number; tone?: 'warning' }) { return <div className={`rounded-2xl border p-4 ${tone === 'warning' && value ? 'border-warning/15 bg-warning-soft/40' : 'border-border bg-surface-soft/45'}`}><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 text-2xl font-bold tracking-tight text-foreground'>{value}</div></div>; }
-function PriceRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) { return <div className='flex items-center justify-between gap-3 border-b border-border pb-3 last:border-0 last:pb-0'><span className='text-sm text-muted'>{label}</span><span className={strong ? 'font-bold text-foreground' : 'font-semibold text-foreground'}>{value}</span></div>; }
+function PricingEditor({ rule, busy, onSave }: { rule: PricingRule; busy: boolean; onSave: (values: PricingForm) => Promise<void> }) {
+  const form = useForm<PricingForm>({
+    resolver: zodResolver(pricingSchema),
+    defaultValues: { base_fare_minor: rule.base_fare_minor, per_km_minor: rule.per_km_minor, service_minor: rule.service_minor, minimum_minor: rule.minimum_minor },
+  });
+  const values = form.watch();
+  const submit = form.handleSubmit(async data => { try { await onSave(data); } catch {} });
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>{serviceLabel(rule.service_type)}</CardTitle><CardDescription className='mt-1 break-all text-xs'>Version: {rule.pricing_version}</CardDescription></div><Badge variant='outline'>{rule.currency}</Badge></div></CardHeader><CardContent><form onSubmit={submit} className='grid gap-3'>
+    <label className='text-sm font-semibold text-foreground'>Giá mở cửa<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('base_fare_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.base_fare_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.base_fare_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Giá mỗi km<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('per_km_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.per_km_minor) || 0)} / km</span><span className='text-xs font-normal text-danger'>{form.formState.errors.per_km_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Phí dịch vụ<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('service_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.service_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.service_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Giá tối thiểu<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('minimum_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.minimum_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.minimum_minor?.message || ''}</span></label>
+    <Button className='mt-2 w-full' type='submit' disabled={busy || form.formState.isSubmitting || !form.formState.isDirty}><BadgeDollarSign aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang lưu…' : 'Lưu version giá mới'}</Button>
+  </form></CardContent></Card>;
+}
 function SystemCard({ icon: Icon, title, value, detail }: { icon: LucideIcon; title: string; value: string; detail: string }) { return <div className='rounded-2xl border border-border bg-surface p-5'><div className='grid size-10 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 text-sm font-semibold text-muted'>{title}</div><div className='mt-1 text-xl font-bold tracking-tight text-foreground'>{value}</div><p className='mt-2 text-sm leading-6 text-muted'>{detail}</p></div>; }
 
 function Brand() { return <div className='flex items-center gap-3 px-2'><div className='grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm'><Zap aria-hidden='true' className='size-5 fill-current' /></div><div><div className='text-base font-bold tracking-tight text-foreground'>FlashX</div><div className='text-[11px] font-medium text-muted'>Operations</div></div></div>; }
@@ -775,5 +813,8 @@ function auditActionLabel(action: string) {
     'driver.approval_changed': 'Đổi trạng thái tài xế',
     'driver.document_reviewed': 'Duyệt tài liệu KYC',
     'trip.incident_resolved': 'Đóng sự cố công việc',
+    'trip.driver_assigned': 'Gán tài xế thủ công',
+    'trip.driver_reassigned': 'Đổi tài xế thủ công',
+    'pricing.rule_updated': 'Cập nhật bảng giá',
   } as Record<string, string>)[action] || action;
 }

@@ -1,12 +1,14 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/pricing"
 	"flashx/services/api/internal/trips"
 )
 
@@ -142,6 +144,60 @@ func (s *Server) adminPricing(w http.ResponseWriter, r *http.Request) {
 	}
 	items := s.deps.Pricing.Rules()
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+type adminPricingUpdateRequest struct {
+	BaseFareMinor int64 `json:"base_fare_minor"`
+	PerKMMinor    int64 `json:"per_km_minor"`
+	ServiceMinor  int64 `json:"service_minor"`
+	MinimumMinor  int64 `json:"minimum_minor"`
+}
+
+func (s *Server) adminUpdatePricing(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := s.activeAdminID(w, r)
+	if !ok {
+		return
+	}
+	if s.deps.Pricing == nil {
+		writeError(w, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Pricing service is unavailable", nil)
+		return
+	}
+	var req adminPricingUpdateRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	serviceType := trips.NormalizeServiceType(strings.TrimSpace(r.PathValue("serviceType")))
+	before := s.deps.Pricing.Rules()
+	updated, err := s.deps.Pricing.UpdateRule(pricing.UpdateRuleInput{
+		ServiceType: serviceType, BaseFareMinor: req.BaseFareMinor, PerKMMinor: req.PerKMMinor,
+		ServiceMinor: req.ServiceMinor, MinimumMinor: req.MinimumMinor, ActorID: adminID,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, pricing.ErrUnsupportedServiceType):
+			writeError(w, http.StatusUnprocessableEntity, "SERVICE_TYPE_UNSUPPORTED", "Service type is not supported", nil)
+		case errors.Is(err, pricing.ErrInvalidRule):
+			writeError(w, http.StatusUnprocessableEntity, "PRICING_INVALID", "Pricing values are invalid", nil)
+		default:
+			writeError(w, http.StatusInternalServerError, "PRICING_UPDATE_FAILED", "Unable to update pricing", nil)
+		}
+		return
+	}
+	var previous any
+	for _, item := range before {
+		if item.ServiceType == serviceType {
+			previous = item
+			break
+		}
+	}
+	if err := s.deps.Admin.Audit(adminID, "pricing.rule_updated", "pricing_rule", serviceType, map[string]any{
+		"previous": previous,
+		"current":  updated,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Pricing changed but audit write failed", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: updated})
 }
 
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {

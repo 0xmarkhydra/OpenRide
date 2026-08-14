@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tableFeatures, useTable, type ColumnDef } from '@tanstack/react-table';
-import { Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 
@@ -15,6 +16,9 @@ type DataTableProps<TData extends Record<string, unknown>> = {
   loading?: boolean;
   onRowClick?: (row: TData) => void;
   mobileRow?: (row: TData) => ReactNode;
+  searchText?: (row: TData) => string;
+  defaultPageSize?: number;
+  pageSizeOptions?: number[];
 };
 
 export function DataTable<TData extends Record<string, unknown>>({
@@ -24,16 +28,38 @@ export function DataTable<TData extends Record<string, unknown>>({
   loading = false,
   onRowClick,
   mobileRow,
+  searchText,
+  defaultPageSize = 20,
+  pageSizeOptions = [20, 50, 100],
 }: DataTableProps<TData>) {
   const [query, setQuery] = useState('');
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
+
   const filteredData = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('vi');
     if (!normalized) return data;
-    return data.filter(row => JSON.stringify(row).toLocaleLowerCase('vi').includes(normalized));
-  }, [data, query]);
+    return data.filter(row => (searchText ? searchText(row) : JSON.stringify(row)).toLocaleLowerCase('vi').includes(normalized));
+  }, [data, query, searchText]);
 
-  const table = useTable({ features: dataTableFeatures, data: filteredData, columns });
+  const pageCount = Math.max(1, Math.ceil(filteredData.length / pageSize));
+  const safePageIndex = Math.min(pageIndex, pageCount - 1);
+  const pageData = useMemo(() => {
+    const start = safePageIndex * pageSize;
+    return filteredData.slice(start, start + pageSize);
+  }, [filteredData, pageSize, safePageIndex]);
+  const table = useTable({ features: dataTableFeatures, data: pageData, columns });
   const noRowsText = query.trim() ? 'Không có kết quả phù hợp.' : 'Chưa có dữ liệu.';
+  const startRecord = filteredData.length ? safePageIndex * pageSize + 1 : 0;
+  const endRecord = Math.min((safePageIndex + 1) * pageSize, filteredData.length);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [query, pageSize]);
+
+  useEffect(() => {
+    if (pageIndex > pageCount - 1) setPageIndex(Math.max(0, pageCount - 1));
+  }, [pageCount, pageIndex]);
 
   function activateRow(event: KeyboardEvent<HTMLTableRowElement>, row: TData) {
     if (!onRowClick || (event.key !== 'Enter' && event.key !== ' ')) return;
@@ -43,27 +69,40 @@ export function DataTable<TData extends Record<string, unknown>>({
 
   return (
     <div className='flex flex-col gap-3'>
-      <div className='relative max-w-sm'>
-        <Search aria-hidden='true' className='pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-soft' />
-        <Input
-          aria-label={searchPlaceholder}
-          className='pl-9'
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          placeholder={searchPlaceholder}
-        />
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        <div className='relative w-full max-w-sm'>
+          <Search aria-hidden='true' className='pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-soft' />
+          <Input
+            aria-label={searchPlaceholder}
+            className='pl-9'
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </div>
+        <label className='flex items-center gap-2 text-xs font-medium text-muted'>
+          Hiển thị
+          <select
+            aria-label='Số bản ghi mỗi trang'
+            className='min-h-10 rounded-xl border border-border bg-surface px-3 text-sm font-semibold text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15'
+            value={pageSize}
+            onChange={event => setPageSize(Number(event.target.value))}
+          >
+            {pageSizeOptions.map(option => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
       </div>
 
       {mobileRow ? (
         <div className='grid gap-3 md:hidden'>
           {loading ? Array.from({ length: 4 }, (_, index) => (
             <div key={index} className='h-28 animate-pulse rounded-2xl border border-border bg-surface-soft motion-reduce:animate-none' />
-          )) : filteredData.length ? filteredData.map((row, index) => (
+          )) : pageData.length ? pageData.map((row, index) => (
             onRowClick ? (
-              <button key={index} type='button' onClick={() => onRowClick(row)} className='rounded-2xl text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15'>
+              <button key={`${safePageIndex}-${index}`} type='button' onClick={() => onRowClick(row)} className='rounded-2xl text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15'>
                 {mobileRow(row)}
               </button>
-            ) : <div key={index}>{mobileRow(row)}</div>
+            ) : <div key={`${safePageIndex}-${index}`}>{mobileRow(row)}</div>
           )) : <div className='rounded-2xl border border-dashed border-border bg-surface-soft/60 p-7 text-center text-sm text-muted'>{noRowsText}</div>}
         </div>
       ) : null}
@@ -83,7 +122,7 @@ export function DataTable<TData extends Record<string, unknown>>({
           </TableHeader>
           <TableBody>
             {loading ? (
-              Array.from({ length: 5 }, (_, rowIndex) => (
+              Array.from({ length: Math.min(pageSize, 5) }, (_, rowIndex) => (
                 <TableRow key={`loading-${rowIndex}`}>
                   {columns.map((_, columnIndex) => (
                     <TableCell key={`loading-${rowIndex}-${columnIndex}`}>
@@ -120,8 +159,13 @@ export function DataTable<TData extends Record<string, unknown>>({
         </Table>
       </div>
 
-      <div className='text-xs text-muted' aria-live='polite'>
-        {loading ? 'Đang tải dữ liệu…' : `${filteredData.length} bản ghi`}
+      <div className='flex flex-col gap-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between' aria-live='polite'>
+        <span>{loading ? 'Đang tải dữ liệu…' : filteredData.length ? `${startRecord}–${endRecord} / ${filteredData.length} bản ghi` : '0 bản ghi'}</span>
+        <div className='flex items-center gap-2'>
+          <span>Trang {safePageIndex + 1}/{pageCount}</span>
+          <Button size='icon' variant='outline' className='size-9' disabled={loading || safePageIndex === 0} onClick={() => setPageIndex(index => Math.max(0, index - 1))} aria-label='Trang trước'><ChevronLeft aria-hidden='true' className='size-4' /></Button>
+          <Button size='icon' variant='outline' className='size-9' disabled={loading || safePageIndex >= pageCount - 1} onClick={() => setPageIndex(index => Math.min(pageCount - 1, index + 1))} aria-label='Trang sau'><ChevronRight aria-hidden='true' className='size-4' /></Button>
+        </div>
       </div>
     </div>
   );

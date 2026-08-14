@@ -223,12 +223,63 @@ func (s *Server) adminTrips(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "ADMIN_FORBIDDEN", "Admin account is not active", nil)
 		return
 	}
-	items, err := s.deps.Trips.ListAll(100)
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	serviceType := trips.NormalizeServiceType(strings.TrimSpace(r.URL.Query().Get("service")))
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	incident := strings.TrimSpace(r.URL.Query().Get("incident"))
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	sortOrder := strings.TrimSpace(r.URL.Query().Get("sort"))
+
+	// Read at most the latest 500 jobs, then apply admin-facing filters. This
+	// bounds response cost today while keeping the endpoint compatible with a
+	// future cursor-backed implementation once operations volume outgrows MVP.
+	items, err := s.deps.Trips.ListAll(500)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to list trips", nil)
 		return
 	}
-	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+	filtered := make([]trips.Trip, 0, len(items))
+	for _, trip := range items {
+		if serviceType != "" && trip.ServiceType != serviceType {
+			continue
+		}
+		if status != "" && string(trip.Status) != status {
+			continue
+		}
+		if incident == "open" && !trip.IncidentOpen {
+			continue
+		}
+		if incident == "closed" && trip.IncidentOpen {
+			continue
+		}
+		if query != "" {
+			haystack := strings.ToLower(strings.Join([]string{
+				trip.ID, trip.RiderID, trip.DriverID, trip.CustomerVehicleID,
+				trip.ServiceType, string(trip.Status), trip.InspectionResult,
+				trip.IncidentType, trip.IncidentNote,
+			}, " "))
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		filtered = append(filtered, trip)
+	}
+	if sortOrder == "oldest" {
+		for left, right := 0, len(filtered)-1; left < right; left, right = left+1, right-1 {
+			filtered[left], filtered[right] = filtered[right], filtered[left]
+		}
+	}
+	total := len(filtered)
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: filtered, Meta: map[string]any{
+		"count": len(filtered), "total": total, "limit": limit,
+	}})
 }
 
 func (s *Server) adminCustomers(w http.ResponseWriter, r *http.Request) {

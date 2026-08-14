@@ -517,6 +517,18 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 		t.Fatalf("enabled bike estimate status=%d body=%s", bikeEstimate.Code, bikeEstimate.Body.String())
 	}
 
+	filteredTrips := perform(t, s, http.MethodGet, "/v1/admin/trips?service=designated_driver_car&status=in_progress&incident=open&q=vehicle_issue&limit=20", nil, adminHeaders)
+	if filteredTrips.Code != http.StatusOK {
+		t.Fatalf("filtered trips status=%d body=%s", filteredTrips.Code, filteredTrips.Body.String())
+	}
+	if !bytes.Contains(filteredTrips.Body.Bytes(), []byte(trip.ID)) || !bytes.Contains(filteredTrips.Body.Bytes(), []byte(`"total":1`)) {
+		t.Fatalf("filtered trips missing incident trip/meta: %s", filteredTrips.Body.String())
+	}
+	emptyFilter := perform(t, s, http.MethodGet, "/v1/admin/trips?service=designated_driver_bike&incident=open&limit=20", nil, adminHeaders)
+	if emptyFilter.Code != http.StatusOK || bytes.Contains(emptyFilter.Body.Bytes(), []byte(trip.ID)) || !bytes.Contains(emptyFilter.Body.Bytes(), []byte(`"total":0`)) {
+		t.Fatalf("filtered trips should be empty: status=%d body=%s", emptyFilter.Code, emptyFilter.Body.String())
+	}
+
 	resolved := perform(t, s, http.MethodPost, "/v1/admin/trips/"+trip.ID+"/incident/resolve", []byte(`{"note":"Đã xác minh với khách và tài xế"}`), adminHeaders)
 	if resolved.Code != http.StatusOK {
 		t.Fatalf("resolve incident status=%d body=%s", resolved.Code, resolved.Body.String())

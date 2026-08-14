@@ -278,6 +278,13 @@ export default function AdminClient() {
   const [metrics, setMetrics] = useState<Metrics>({});
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripList, setTripList] = useState<Trip[]>([]);
+  const [tripListLoaded, setTripListLoaded] = useState(false);
+  const [tripListLoading, setTripListLoading] = useState(false);
+  const [tripServiceFilter, setTripServiceFilter] = useState('');
+  const [tripStatusFilter, setTripStatusFilter] = useState('');
+  const [tripIncidentFilter, setTripIncidentFilter] = useState('');
+  const [tripSort, setTripSort] = useState<'newest' | 'oldest'>('newest');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [pricing, setPricing] = useState<PricingRule[]>([]);
@@ -318,6 +325,8 @@ export default function AdminClient() {
     setRefreshToken(null);
     setCurrentAdmin(null);
     setAdminAccounts([]);
+    setTripList([]);
+    setTripListLoaded(false);
     setHasLoaded(false);
   }, []);
 
@@ -371,6 +380,26 @@ export default function AdminClient() {
       setBusy(false);
     }
   }, [authedApi, token]);
+
+  const loadTripList = useCallback(async (access = token) => {
+    if (!access) return;
+    setTripListLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '500' });
+      if (tripServiceFilter) params.set('service', tripServiceFilter);
+      if (tripStatusFilter) params.set('status', tripStatusFilter);
+      if (tripIncidentFilter) params.set('incident', tripIncidentFilter);
+      if (tripSort === 'oldest') params.set('sort', 'oldest');
+      const items = await authedApi<Trip[]>(`/v1/admin/trips?${params.toString()}`, {}, access);
+      setTripList(items);
+      setTripListLoaded(true);
+      setSelectedTrip(current => current ? items.find(item => item.id === current.id) || current : null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Không thể tải danh sách công việc');
+    } finally {
+      setTripListLoading(false);
+    }
+  }, [authedApi, token, tripIncidentFilter, tripServiceFilter, tripSort, tripStatusFilter]);
 
   const loadReference = useCallback(async (access = token) => {
     if (!access) return;
@@ -431,6 +460,13 @@ export default function AdminClient() {
     const timer = window.setInterval(() => void loadCore(token), 5000);
     return () => window.clearInterval(timer);
   }, [token, loadCore, loadReference]);
+
+  useEffect(() => {
+    if (!token || activeView !== 'trips') return;
+    void loadTripList(token);
+    const timer = window.setInterval(() => void loadTripList(token), 10000);
+    return () => window.clearInterval(timer);
+  }, [activeView, loadTripList, token]);
 
   useEffect(() => {
     setAssignmentReason('');
@@ -533,6 +569,7 @@ export default function AdminClient() {
         method: 'POST', body: JSON.stringify({ note: incidentResolutionNote.trim() }),
       });
       setTrips(items => items.map(item => item.id === updated.id ? updated : item));
+      setTripList(items => items.map(item => item.id === updated.id ? updated : item));
       setSelectedTrip(updated);
       setIncidentResolutionNote('');
       await Promise.all([loadCore(), loadAudit()]);
@@ -557,6 +594,7 @@ export default function AdminClient() {
         method: 'POST', body: JSON.stringify({ driver_id: candidate.driver.id, reason }),
       });
       setTrips(items => items.map(item => item.id === updated.id ? updated : item));
+      setTripList(items => items.map(item => item.id === updated.id ? updated : item));
       setSelectedTrip(updated);
       setAssignmentReason('');
       await Promise.all([loadCore(), loadAudit(), loadDriverCandidates(updated)]);
@@ -643,6 +681,17 @@ export default function AdminClient() {
   const driverMap = useMemo(() => new Map(drivers.map(driver => [driver.id, driver])), [drivers]);
   const vehicleMap = useMemo(() => new Map(vehicles.map(vehicle => [vehicle.id, vehicle])), [vehicles]);
   const visibleNavItems = useMemo(() => navItems.filter(item => !item.superOnly || currentAdmin?.role === 'super_admin'), [currentAdmin?.role]);
+  const tripSearchText = useCallback((trip: Trip) => {
+    const customer = customerMap.get(trip.rider_id);
+    const driver = trip.driver_id ? driverMap.get(trip.driver_id) : undefined;
+    const vehicle = trip.customer_vehicle_id ? vehicleMap.get(trip.customer_vehicle_id) : undefined;
+    return [
+      trip.id, trip.rider_id, customer?.full_name, customer?.phone,
+      trip.driver_id, driver?.full_name, driver?.phone,
+      trip.customer_vehicle_id, vehicle?.license_plate, vehicle?.brand, vehicle?.model,
+      serviceLabel(trip.service_type), tripStatusLabel(trip.status), trip.incident_type, trip.incident_note,
+    ].filter(Boolean).join(' ');
+  }, [customerMap, driverMap, vehicleMap]);
 
   const tripColumns = useMemo<Array<ColumnDef<typeof dataTableFeatures, Trip>>>(() => [
     { accessorKey: 'id', header: 'Mã việc', cell: ({ row }) => <span className='font-mono text-xs font-semibold text-foreground'>{row.original.id}</span> },
@@ -690,11 +739,20 @@ export default function AdminClient() {
   const activeLabel = visibleNavItems.find(item => item.key === activeView)?.label || 'Tổng quan';
   const selectView = (view: ViewKey) => { setActiveView(view); setMobileNavOpen(false); };
   const initialLoading = busy && !hasLoaded;
+  const displayedTripList = tripListLoaded ? tripList : trips;
+  const tripFiltersActive = Boolean(tripServiceFilter || tripStatusFilter || tripIncidentFilter || tripSort !== 'newest');
+  const resetTripFilters = () => {
+    setTripServiceFilter('');
+    setTripStatusFilter('');
+    setTripIncidentFilter('');
+    setTripSort('newest');
+  };
 
   function renderView() {
     if (activeView === 'trips') {
       return <Section title='Công việc' description='Theo dõi vòng đời, khách, xe, tài xế và các điểm cần Operations can thiệp.'>
-        <DataTable columns={tripColumns} data={trips} loading={initialLoading} onRowClick={setSelectedTrip} searchPlaceholder='Tìm mã việc, khách, tài xế...' mobileRow={trip => <TripMobileRow trip={trip} customer={customerMap.get(trip.rider_id)} driver={trip.driver_id ? driverMap.get(trip.driver_id) : undefined} />} />
+        <TripFilters service={tripServiceFilter} status={tripStatusFilter} incident={tripIncidentFilter} sort={tripSort} active={tripFiltersActive} loading={tripListLoading} onService={setTripServiceFilter} onStatus={setTripStatusFilter} onIncident={setTripIncidentFilter} onSort={setTripSort} onReset={resetTripFilters} />
+        <DataTable columns={tripColumns} data={displayedTripList} loading={tripListLoading || (!tripListLoaded && initialLoading)} onRowClick={setSelectedTrip} searchText={tripSearchText} searchPlaceholder='Tìm trong kết quả: mã việc, khách, tài xế...' defaultPageSize={20} mobileRow={trip => <TripMobileRow trip={trip} customer={customerMap.get(trip.rider_id)} driver={trip.driver_id ? driverMap.get(trip.driver_id) : undefined} />} />
       </Section>;
     }
     if (activeView === 'drivers') {
@@ -716,7 +774,7 @@ export default function AdminClient() {
     if (activeView === 'incidents') {
       return <Section title='Sự cố' description='Hàng đợi ưu tiên cao. Công việc có sự cố bị chặn tiến trình cho tới khi Operations xử lý.'>
         {incidents.length ? <div className='mb-4 rounded-2xl border border-danger/10 bg-danger-soft/60 p-4 text-sm leading-6 text-danger'><strong>{incidents.length} sự cố đang mở.</strong> Mở từng công việc để xem loại sự cố, ghi chú và đóng sự cố sau khi đã xử lý thực tế.</div> : null}
-        <DataTable columns={tripColumns} data={incidents} loading={initialLoading} onRowClick={setSelectedTrip} searchPlaceholder='Tìm sự cố...' mobileRow={trip => <TripMobileRow trip={trip} customer={customerMap.get(trip.rider_id)} driver={trip.driver_id ? driverMap.get(trip.driver_id) : undefined} />} />
+        <DataTable columns={tripColumns} data={incidents} loading={initialLoading} onRowClick={setSelectedTrip} searchText={tripSearchText} searchPlaceholder='Tìm sự cố...' mobileRow={trip => <TripMobileRow trip={trip} customer={customerMap.get(trip.rider_id)} driver={trip.driver_id ? driverMap.get(trip.driver_id) : undefined} />} />
       </Section>;
     }
     if (activeView === 'pricing') {
@@ -899,6 +957,31 @@ function DriverMobileRow({ driver }: { driver: Driver }) { return <div className
 function CustomerMobileRow({ customer, jobs, vehicles }: { customer: Customer; jobs: number; vehicles: number }) { return <div className='rounded-2xl border border-border bg-surface p-4 shadow-sm'><div className='font-semibold text-foreground'>{customer.full_name || 'Chưa cập nhật tên'}</div><div className='mt-1 text-sm text-muted'>{customer.phone}</div><div className='mt-3 flex gap-4 text-xs text-muted'><span>{vehicles} xe</span><span>{jobs} công việc</span></div></div>; }
 function VehicleMobileRow({ vehicle, owner, jobs }: { vehicle: Vehicle; owner?: Customer; jobs: number }) { return <div className='rounded-2xl border border-border bg-surface p-4 shadow-sm'><div className='flex items-start justify-between gap-3'><div><div className='font-semibold text-foreground'>{vehicle.license_plate}</div><div className='mt-1 text-xs text-muted'>{[vehicle.brand, vehicle.model].filter(Boolean).join(' ') || vehicleTypeLabel(vehicle.type)}</div></div><Badge variant={vehicle.status === 'active' ? 'success' : 'secondary'}>{vehicle.status === 'active' ? 'Đang dùng' : vehicle.status}</Badge></div><div className='mt-3 text-sm text-muted'>{owner?.full_name || owner?.phone || vehicle.owner_user_id} · {jobs} công việc</div></div>; }
 function AuditMobileRow({ entry }: { entry: AuditEntry }) { return <div className='rounded-2xl border border-border bg-surface p-4 shadow-sm'><div className='font-semibold text-foreground'>{auditActionLabel(entry.action)}</div><div className='mt-1 text-xs text-muted'>{formatDate(entry.created_at)}</div><div className='mt-3 font-mono text-xs text-muted'>{entry.resource_type} · {entry.resource_id || '—'}</div></div>; }
+
+function TripFilters({ service, status, incident, sort, active, loading, onService, onStatus, onIncident, onSort, onReset }: {
+  service: string;
+  status: string;
+  incident: string;
+  sort: 'newest' | 'oldest';
+  active: boolean;
+  loading: boolean;
+  onService: (value: string) => void;
+  onStatus: (value: string) => void;
+  onIncident: (value: string) => void;
+  onSort: (value: 'newest' | 'oldest') => void;
+  onReset: () => void;
+}) {
+  const selectClass = 'min-h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm font-medium text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15';
+  return <div className='mb-4 rounded-3xl border border-border bg-surface-soft/50 p-4'>
+    <div className='mb-3 flex flex-wrap items-center justify-between gap-3'><div><div className='text-sm font-semibold text-foreground'>Bộ lọc vận hành</div><div className='mt-0.5 text-xs text-muted'>Backend lọc tối đa 500 công việc gần nhất; bảng bên dưới phân trang riêng.</div></div><div className='flex items-center gap-2'>{loading ? <Badge variant='secondary'>Đang đồng bộ…</Badge> : active ? <Badge variant='success'>Đang lọc</Badge> : <Badge variant='outline'>Tất cả</Badge>}<Button size='sm' variant='ghost' disabled={!active || loading} onClick={onReset}>Đặt lại</Button></div></div>
+    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+      <label className='text-xs font-semibold text-muted'>Dịch vụ<select className={`mt-1.5 ${selectClass}`} value={service} onChange={event => onService(event.target.value)}><option value=''>Tất cả dịch vụ</option><option value='designated_driver_car'>Lái hộ ô tô</option><option value='designated_driver_bike'>Lái hộ xe máy</option><option value='vehicle_inspection_assist'>Đăng kiểm hộ</option></select></label>
+      <label className='text-xs font-semibold text-muted'>Trạng thái<select className={`mt-1.5 ${selectClass}`} value={status} onChange={event => onStatus(event.target.value)}><option value=''>Tất cả trạng thái</option><option value='scheduled'>Đã hẹn lịch</option><option value='searching'>Đang tìm tài xế</option><option value='accepted'>Đã nhận việc</option><option value='arriving'>Đang đến nhận xe</option><option value='arriving_for_pickup'>Đang đến nhận xe · đăng kiểm</option><option value='vehicle_received'>Đã nhận xe</option><option value='in_progress'>Đang lái hộ</option><option value='inspection_in_progress'>Đang đăng kiểm</option><option value='returning_vehicle'>Đang trả xe</option><option value='handover'>Đang bàn giao</option><option value='completed'>Hoàn thành</option><option value='cancelled'>Đã hủy</option></select></label>
+      <label className='text-xs font-semibold text-muted'>Sự cố<select className={`mt-1.5 ${selectClass}`} value={incident} onChange={event => onIncident(event.target.value)}><option value=''>Tất cả</option><option value='open'>Chỉ sự cố đang mở</option><option value='closed'>Không có sự cố mở</option></select></label>
+      <label className='text-xs font-semibold text-muted'>Thứ tự<select className={`mt-1.5 ${selectClass}`} value={sort} onChange={event => onSort(event.target.value as 'newest' | 'oldest')}><option value='newest'>Mới nhất trước</option><option value='oldest'>Cũ nhất trước</option></select></label>
+    </div>
+  </div>;
+}
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) { return <Card className='fx-enter'><CardHeader><CardTitle className='text-xl'>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent>{children}</CardContent></Card>; }
 function InfoState({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) { return <div className='rounded-3xl border border-dashed border-border bg-surface-soft/60 p-7 text-center'><div className='mx-auto grid size-12 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 font-semibold text-foreground'>{title}</div><p className='mx-auto mt-1 max-w-md text-sm leading-6 text-muted'>{text}</p></div>; }

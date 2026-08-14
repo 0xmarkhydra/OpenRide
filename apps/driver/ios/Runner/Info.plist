@@ -49,6 +49,10 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>FlashX Driver cần camera để chụp ảnh tình trạng phương tiện khi nhận và bàn giao xe.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>FlashX Driver cần quyền thư viện ảnh để chọn ảnh bằng chứng tình trạng phương tiện.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>FlashX Driver cần vị trí để tìm chuyến và điều hướng tới khách hàng.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

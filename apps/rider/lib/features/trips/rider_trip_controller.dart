@@ -18,6 +18,7 @@ class RiderTripController extends ChangeNotifier {
 
   Map<String, dynamic>? estimate;
   Map<String, dynamic>? activeTrip;
+  List<Map<String, dynamic>> custodyEvidence = const [];
   List<Map<String, dynamic>> history = const [];
   List<Map<String, dynamic>> vehicles = const [];
   String? selectedVehicleID;
@@ -35,10 +36,21 @@ class RiderTripController extends ChangeNotifier {
   bool get hasActiveTrip =>
       activeTrip != null && status != 'completed' && status != 'cancelled';
 
+  Map<String, dynamic>? custodyFor(String stage) {
+    for (final snapshot in custodyEvidence) {
+      final evidence = snapshot['evidence'];
+      if (evidence is Map && evidence['stage']?.toString() == stage) {
+        return snapshot;
+      }
+    }
+    return null;
+  }
+
   bool get canCancel {
     final actions = activeTrip?['allowed_actions'];
-    if (actions is List)
+    if (actions is List) {
       return actions.map((e) => e.toString()).contains('cancel');
+    }
     return const {
       'scheduled',
       'searching',
@@ -139,6 +151,11 @@ class RiderTripController extends ChangeNotifier {
           .where((e) => !['completed', 'cancelled'].contains(e['status']))
           .toList();
       activeTrip = candidates.isNotEmpty ? candidates.first : null;
+      if (activeTrip != null) {
+        await loadCustodyEvidence();
+      } else {
+        custodyEvidence = const [];
+      }
       notifyListeners();
     } catch (_) {}
   }
@@ -207,12 +224,51 @@ class RiderTripController extends ChangeNotifier {
     });
   }
 
+  Future<void> loadCustodyEvidence() async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null || id.isEmpty) {
+      custodyEvidence = const [];
+      notifyListeners();
+      return;
+    }
+    try {
+      final response = await api.get('/v1/trips/$id/custody');
+      final data = response['data'];
+      custodyEvidence = data is List
+          ? data
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+          : const [];
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        custodyEvidence = const [];
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> confirmCustody(String stage) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    return _guard(() async {
+      await api.post('/v1/trips/$id/custody/$stage/confirm');
+      await loadCustodyEvidence();
+    });
+  }
+
   Future<void> refreshActive() async {
     final id = activeTrip?['id']?.toString();
     if (id == null) return;
     try {
       final response = await api.get('/v1/trips/$id');
       activeTrip = response['data'] as Map<String, dynamic>;
+      if (hasActiveTrip) {
+        await loadCustodyEvidence();
+      } else {
+        custodyEvidence = const [];
+      }
       notifyListeners();
     } catch (_) {}
   }
@@ -225,11 +281,24 @@ class RiderTripController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (type == 'trip.custody_evidence_updated') {
+      final data = event['data'];
+      final evidence = data is Map ? data['evidence'] : null;
+      final tripID = evidence is Map ? evidence['trip_id']?.toString() : null;
+      if (tripID != null && tripID == activeTrip?['id']?.toString()) {
+        unawaited(loadCustodyEvidence());
+      }
+      return;
+    }
     if (type.startsWith('trip.')) {
       final data = event['data'];
       if (data is Map<String, dynamic>) {
-        final trip = data['trip'];
-        activeTrip = trip is Map<String, dynamic> ? trip : data;
+        final nested = data['trip'];
+        final trip = nested is Map<String, dynamic> ? nested : data;
+        // Auxiliary trip.* realtime events (location/evidence/etc.) must never
+        // replace the current job unless they actually carry a trip record.
+        if (trip['id'] == null || trip['status'] == null) return;
+        activeTrip = trip;
       }
       unawaited(refreshActive());
     }

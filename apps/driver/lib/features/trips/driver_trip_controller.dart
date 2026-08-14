@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,17 +8,20 @@ import '../../core/config/app_config.dart';
 import '../../core/network/api_client.dart';
 import '../../core/realtime/realtime_client.dart';
 import '../auth/auth_controller.dart';
+import 'custody_evidence_client.dart';
 
 class DriverTripController extends ChangeNotifier {
   DriverTripController({required this.auth})
       : api = auth.api,
         realtime = auth.realtime {
+    custody = CustodyEvidenceClient(api: api);
     _realtimeSub = realtime.events.listen(_onRealtime, onError: (_) {});
   }
 
   final AuthController auth;
   final ApiClient api;
   final RealtimeClient realtime;
+  late final CustodyEvidenceClient custody;
 
   StreamSubscription<Map<String, dynamic>>? _realtimeSub;
   StreamSubscription<Position>? _positionSub;
@@ -26,10 +30,12 @@ class DriverTripController extends ChangeNotifier {
   Map<String, dynamic>? offeredVehicle;
   Map<String, dynamic>? activeTrip;
   Map<String, dynamic>? activeVehicle;
+  List<Map<String, dynamic>> custodyEvidence = const [];
   List<Map<String, dynamic>> history = const [];
   Position? lastPosition;
   bool online = false;
   bool busy = false;
+  bool custodyStorageUnavailable = false;
   String? error;
 
   String get approval =>
@@ -55,6 +61,26 @@ class DriverTripController extends ChangeNotifier {
     final raw = activeTrip?['allowed_actions'];
     if (raw is List) return raw.map((e) => e.toString()).toList();
     return const [];
+  }
+
+  Map<String, dynamic>? custodyFor(String stage) {
+    for (final snapshot in custodyEvidence) {
+      final evidence = snapshot['evidence'];
+      if (evidence is Map && evidence['stage']?.toString() == stage) {
+        return snapshot;
+      }
+    }
+    return null;
+  }
+
+  bool driverConfirmedCustody(String stage) {
+    final evidence = custodyFor(stage)?['evidence'];
+    return evidence is Map && evidence['driver_confirmed_at'] != null;
+  }
+
+  int custodyPhotoCount(String stage) {
+    final photos = custodyFor(stage)?['photos'];
+    return photos is List ? photos.length : 0;
   }
 
   Future<void> initialize() async {
@@ -106,11 +132,99 @@ class DriverTripController extends ChangeNotifier {
           activeTrip = data?['trip'] as Map<String, dynamic>? ?? activeTrip;
           activeVehicle = data?['vehicle'] as Map<String, dynamic>?;
         } catch (_) {}
+        await loadCustodyEvidence();
       } else {
         activeVehicle = null;
+        custodyEvidence = const [];
       }
       notifyListeners();
     } catch (_) {}
+  }
+
+  Future<void> loadCustodyEvidence() async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null || id.isEmpty) {
+      custodyEvidence = const [];
+      notifyListeners();
+      return;
+    }
+    try {
+      custodyEvidence = await custody.list(id);
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        custodyEvidence = const [];
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> saveCustodyMetadata({
+    required String stage,
+    required String conditionNote,
+    int? odometerKm,
+    int? fuelPercent,
+    int? batteryPercent,
+  }) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    return _guard(() async {
+      await custody.saveMetadata(
+        tripID: id,
+        stage: stage,
+        conditionNote: conditionNote,
+        odometerKm: odometerKm,
+        fuelPercent: fuelPercent,
+        batteryPercent: batteryPercent,
+      );
+      await loadCustodyEvidence();
+    });
+  }
+
+  Future<bool> uploadCustodyPhoto({
+    required String stage,
+    required File file,
+    required String photoType,
+    String? contentType,
+  }) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    busy = true;
+    error = null;
+    notifyListeners();
+    try {
+      await custody.uploadPhoto(
+        tripID: id,
+        stage: stage,
+        file: file,
+        photoType: photoType,
+        contentType: contentType,
+      );
+      custodyStorageUnavailable = false;
+      await loadCustodyEvidence();
+      return true;
+    } on ApiException catch (e) {
+      if (e.statusCode == 503 && e.code == 'OBJECT_STORAGE_UNAVAILABLE') {
+        custodyStorageUnavailable = true;
+      }
+      error = e.message;
+      return false;
+    } catch (e) {
+      error = e.toString();
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> confirmCustody(String stage) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    return _guard(() async {
+      await custody.confirm(tripID: id, stage: stage);
+      await loadCustodyEvidence();
+    });
   }
 
   Future<void> refreshOffer() async {
@@ -309,12 +423,25 @@ class DriverTripController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (type == 'trip.custody_evidence_updated' &&
+        data is Map<String, dynamic>) {
+      final evidence = data['evidence'];
+      final tripID = evidence is Map ? evidence['trip_id']?.toString() : null;
+      if (tripID != null && tripID == activeTrip?['id']?.toString()) {
+        unawaited(loadCustodyEvidence());
+      }
+      return;
+    }
     if (type.startsWith('trip.') && data is Map<String, dynamic>) {
       final nested = data['trip'];
       final trip = nested is Map<String, dynamic> ? nested : data;
+      // Only lifecycle events that actually carry a trip record may replace
+      // activeTrip. Auxiliary trip.* events (location/evidence/etc.) must not.
+      if (trip['id'] == null || trip['status'] == null) return;
       activeTrip = trip;
       if (trip['status'] == 'completed' || trip['status'] == 'cancelled') {
         activeTrip = null;
+        custodyEvidence = const [];
         unawaited(loadHistory());
       }
       notifyListeners();
@@ -347,6 +474,7 @@ class DriverTripController extends ChangeNotifier {
   void dispose() {
     unawaited(_positionSub?.cancel());
     unawaited(_realtimeSub?.cancel());
+    custody.close();
     super.dispose();
   }
 }

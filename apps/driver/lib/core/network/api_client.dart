@@ -51,6 +51,13 @@ class ApiClient {
   }) =>
       _request('PATCH', path, body: body, authenticated: authenticated);
 
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) =>
+      _request('PUT', path, body: body, authenticated: authenticated);
+
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {

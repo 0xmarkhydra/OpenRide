@@ -158,6 +158,26 @@ func (s *Server) requireCustodyEvidence(w http.ResponseWriter) bool {
 	return true
 }
 
+// requireCustodyReady enforces bilateral custody evidence only when the runtime
+// has object storage configured. Production bootstrap requires object storage,
+// while local/demo development may intentionally run without it.
+func (s *Server) requireCustodyReady(tripID string, stage custodyevidence.Stage) error {
+	if s.deps.CustodyEvidence == nil || !s.deps.CustodyEvidence.EnforcementEnabled() {
+		return nil
+	}
+	ready, err := s.deps.CustodyEvidence.IsReady(tripID, stage)
+	if err != nil {
+		if errors.Is(err, custodyevidence.ErrNotFound) {
+			return custodyevidence.ErrNotReady
+		}
+		return err
+	}
+	if !ready {
+		return custodyevidence.ErrNotReady
+	}
+	return nil
+}
+
 func custodyStage(r *http.Request) custodyevidence.Stage {
 	return custodyevidence.Stage(r.PathValue("stage"))
 }

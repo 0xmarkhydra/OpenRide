@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/theme/flashx_theme.dart';
 import '../auth/auth_controller.dart';
 import '../trips/driver_trip_controller.dart';
@@ -284,6 +287,19 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final incidentOpen = trip['incident_open'] == true;
     final vehicle = trips.activeVehicle;
     final primary = _primaryAction();
+    final custodyStage = trips.allowedActions.contains('vehicle_received')
+        ? 'pickup'
+        : trips.allowedActions.contains('handover')
+            ? 'return'
+            : null;
+    final custodySnapshot =
+        custodyStage == null ? null : trips.custodyFor(custodyStage);
+    final driverCustodyConfirmed =
+        custodyStage == null || trips.driverConfirmedCustody(custodyStage);
+    final custodyReady =
+        custodyStage == null || custodySnapshot?['ready'] == true;
+    final allowDemoBypass =
+        AppConfig.demoMode || trips.custodyStorageUnavailable;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -339,13 +355,59 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                 'Tiếp tục đưa xe về và bàn giao cho khách dù kết quả đạt hay không đạt.',
           ),
         ],
-        if (primary != null && !incidentOpen) ...[
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: trips.busy ? null : primary.onPressed,
-            icon: Icon(primary.icon),
-            label: Text(primary.label),
+        if (custodyStage != null && !incidentOpen) ...[
+          const SizedBox(height: 12),
+          _CustodyDriverCard(
+            stage: custodyStage,
+            snapshot: custodySnapshot,
           ),
+          if (!driverCustodyConfirmed) ...[
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: trips.busy
+                  ? null
+                  : () => _captureCustodyEvidence(custodyStage),
+              icon: const Icon(Icons.add_a_photo_rounded),
+              label: Text(custodyStage == 'pickup'
+                  ? 'Ghi bằng chứng nhận xe'
+                  : 'Ghi bằng chứng trả xe'),
+            ),
+          ] else if (!custodyReady && !trips.custodyStorageUnavailable) ...[
+            const SizedBox(height: 10),
+            const _InfoCard(
+              icon: Icons.hourglass_top_rounded,
+              title: 'Đang chờ khách xác nhận',
+              text:
+                  'Giữ nguyên bộ bằng chứng hiện tại. Khi khách xác nhận, bước tiếp theo sẽ tự mở.',
+            ),
+          ],
+          if (trips.custodyStorageUnavailable) ...[
+            const SizedBox(height: 10),
+            const _InfoCard(
+              icon: Icons.cloud_off_rounded,
+              title: 'Kho ảnh demo chưa cấu hình',
+              text:
+                  'Ảnh chưa được lưu. Backend development không bật enforcement nên chỉ cho phép tiếp tục bằng nút có nhãn Demo; production vẫn bắt buộc evidence đầy đủ.',
+              warning: true,
+            ),
+          ],
+        ],
+        if (primary != null &&
+            !incidentOpen &&
+            (custodyReady || allowDemoBypass)) ...[
+          const SizedBox(height: 10),
+          if (allowDemoBypass && custodyStage != null && !custodyReady)
+            OutlinedButton.icon(
+              onPressed: trips.busy ? null : primary.onPressed,
+              icon: Icon(primary.icon),
+              label: Text('${primary.label} · Demo'),
+            )
+          else
+            FilledButton.icon(
+              onPressed: trips.busy ? null : primary.onPressed,
+              icon: Icon(primary.icon),
+              label: Text(primary.label),
+            ),
         ],
         if (trips.allowedActions.contains('report_incident') &&
             !incidentOpen) ...[
@@ -413,6 +475,233 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     return null;
   }
 
+  Future<void> _captureCustodyEvidence(String stage) async {
+    final current = trips.custodyFor(stage);
+    final evidence = Map<String, dynamic>.from(
+      current?['evidence'] as Map? ?? const {},
+    );
+    final formKey = GlobalKey<FormState>();
+    final note = TextEditingController(
+        text: evidence['condition_note']?.toString() ?? '');
+    final odometer =
+        TextEditingController(text: evidence['odometer_km']?.toString() ?? '');
+    final fuel =
+        TextEditingController(text: evidence['fuel_percent']?.toString() ?? '');
+    final battery = TextEditingController(
+        text: evidence['battery_percent']?.toString() ?? '');
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(stage == 'pickup'
+            ? 'Tình trạng khi nhận xe'
+            : 'Tình trạng khi trả xe'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextFormField(
+                controller: note,
+                maxLines: 3,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Ghi chú tình trạng xe *',
+                  hintText:
+                      'Ví dụ: Có vết xước cũ ở cản sau, ngoại thất khô ráo',
+                ),
+                validator: (value) => (value?.trim().length ?? 0) < 3
+                    ? 'Mô tả tình trạng xe tối thiểu 3 ký tự'
+                    : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: odometer,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: 'Odo (km) · không bắt buộc'),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) return null;
+                  final parsed = int.tryParse(value.trim());
+                  return parsed == null || parsed < 0
+                      ? 'Odo không hợp lệ'
+                      : null;
+                },
+              ),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: fuel,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Xăng %'),
+                    validator: _percentValidator,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: battery,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Pin %'),
+                    validator: _percentValidator,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 12),
+              const _InfoCard(
+                icon: Icons.verified_user_outlined,
+                title: 'Xác nhận gắn với bộ evidence hiện tại',
+                text:
+                    'Nếu sửa tình trạng hoặc thêm ảnh sau khi xác nhận, hệ thống sẽ yêu cầu hai bên xác nhận lại.',
+              ),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Đóng')),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(dialogContext, true);
+            },
+            child: const Text('Lưu & chụp ảnh'),
+          ),
+        ],
+      ),
+    );
+
+    final conditionNote = note.text.trim();
+    final odometerKm = _optionalInt(odometer.text);
+    final fuelPercent = _optionalInt(fuel.text);
+    final batteryPercent = _optionalInt(battery.text);
+    note.dispose();
+    odometer.dispose();
+    fuel.dispose();
+    battery.dispose();
+    if (saved != true || !mounted) return;
+
+    final metadataSaved = await trips.saveCustodyMetadata(
+      stage: stage,
+      conditionNote: conditionNote,
+      odometerKm: odometerKm,
+      fuelPercent: fuelPercent,
+      batteryPercent: batteryPercent,
+    );
+    if (!metadataSaved || !mounted) {
+      _showMessage(trips.error ?? 'Không thể lưu tình trạng xe.');
+      return;
+    }
+
+    var snapshot = trips.custodyFor(stage);
+    final existingTypes = <String>{};
+    final existingPhotos = snapshot?['photos'];
+    if (existingPhotos is List) {
+      for (final item in existingPhotos) {
+        if (item is Map && item['photo'] is Map) {
+          final type = (item['photo'] as Map)['photo_type']?.toString();
+          if (type != null && type.isNotEmpty) existingTypes.add(type);
+        }
+      }
+    }
+    var photoCount = trips.custodyPhotoCount(stage);
+    const preferredPhotos = <(String, String)>[
+      ('front', 'mặt trước xe'),
+      ('rear', 'mặt sau xe'),
+      ('left', 'bên trái xe'),
+      ('right', 'bên phải xe'),
+    ];
+    for (final photo in preferredPhotos) {
+      if (photoCount >= 2) break;
+      if (existingTypes.contains(photo.$1)) continue;
+      final picked = await _pickEvidenceImage(photo.$2);
+      if (picked == null || !mounted) break;
+      final uploaded = await trips.uploadCustodyPhoto(
+        stage: stage,
+        file: File(picked.path),
+        photoType: photo.$1,
+        contentType: picked.mimeType,
+      );
+      if (!uploaded || !mounted) {
+        _showMessage(trips.error ?? 'Không thể tải ảnh bằng chứng.');
+        return;
+      }
+      existingTypes.add(photo.$1);
+      photoCount = trips.custodyPhotoCount(stage);
+    }
+
+    snapshot = trips.custodyFor(stage);
+    if (trips.custodyPhotoCount(stage) < 2) {
+      if (mounted) {
+        _showMessage(
+            'Đã lưu tình trạng. Cần tối thiểu 2 ảnh trước khi tài xế xác nhận.');
+      }
+      return;
+    }
+    final confirmed = await trips.confirmCustody(stage);
+    if (!mounted) return;
+    if (confirmed) {
+      _showMessage(stage == 'pickup'
+          ? 'Đã xác nhận bằng chứng nhận xe. Chờ khách xác nhận.'
+          : 'Đã xác nhận bằng chứng trả xe. Chờ khách xác nhận.');
+    } else {
+      _showMessage(trips.error ?? 'Chưa thể xác nhận bằng chứng.');
+    }
+  }
+
+  Future<XFile?> _pickEvidenceImage(String label) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Ảnh $label', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded),
+              title: const Text('Chụp ảnh mới'),
+              subtitle: const Text('Khuyến nghị khi đang nhận/bàn giao xe'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Chọn từ thư viện'),
+              subtitle: const Text('Hữu ích khi demo trên thiết bị giả lập'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+            ),
+          ]),
+        ),
+      ),
+    );
+    if (source == null || !mounted) return null;
+    return ImagePicker().pickImage(
+      source: source,
+      imageQuality: 84,
+      maxWidth: 1800,
+    );
+  }
+
+  static String? _percentValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final parsed = int.tryParse(value.trim());
+    return parsed == null || parsed < 0 || parsed > 100 ? '0–100' : null;
+  }
+
+  static int? _optionalInt(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : int.tryParse(trimmed);
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<bool> _completeInspection() async {
     var result = 'passed';
     final confirmed = await showDialog<bool>(
@@ -421,7 +710,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Kết quả đăng kiểm'),
           content: DropdownButtonFormField<String>(
-            value: result,
+            initialValue: result,
             decoration: const InputDecoration(labelText: 'Kết quả'),
             items: const [
               DropdownMenuItem(value: 'passed', child: Text('Đạt')),
@@ -459,7 +748,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           title: const Text('Báo sự cố'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             DropdownButtonFormField<String>(
-              value: type,
+              initialValue: type,
               decoration: const InputDecoration(labelText: 'Loại sự cố'),
               items: const [
                 DropdownMenuItem(
@@ -832,6 +1121,177 @@ class _ServiceBadge extends StatelessWidget {
                     ? Icons.two_wheeler_rounded
                     : Icons.directions_car_filled_rounded,
             color: FlashXTheme.navy),
+      );
+}
+
+class _CustodyDriverCard extends StatelessWidget {
+  const _CustodyDriverCard({required this.stage, required this.snapshot});
+
+  final String stage;
+  final Map<String, dynamic>? snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final evidence = Map<String, dynamic>.from(
+      snapshot?['evidence'] as Map? ?? const {},
+    );
+    final photos = snapshot?['photos'] as List? ?? const [];
+    final driverConfirmed = evidence['driver_confirmed_at'] != null;
+    final riderConfirmed = evidence['rider_confirmed_at'] != null;
+    final ready = snapshot?['ready'] == true;
+    final note = evidence['condition_note']?.toString().trim() ?? '';
+    final metrics = <String>[
+      if (evidence['odometer_km'] != null) '${evidence['odometer_km']} km',
+      if (evidence['fuel_percent'] != null) 'Xăng ${evidence['fuel_percent']}%',
+      if (evidence['battery_percent'] != null)
+        'Pin ${evidence['battery_percent']}%',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ready ? const Color(0xFFECFDF3) : const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: ready ? const Color(0xFFABEFC6) : FlashXTheme.border,
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: ready ? const Color(0xFFD1FADF) : const Color(0xFFEFF1F5),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(
+              stage == 'pickup' ? Icons.key_rounded : Icons.handshake_rounded,
+              color: ready ? FlashXTheme.success : FlashXTheme.navy,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                stage == 'pickup' ? 'Bằng chứng nhận xe' : 'Bằng chứng trả xe',
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                ready
+                    ? 'Hai bên đã xác nhận'
+                    : driverConfirmed
+                        ? 'Tài xế đã xác nhận · chờ khách'
+                        : 'Cần tối thiểu 2 ảnh và xác nhận tài xế',
+                style: TextStyle(
+                  color:
+                      ready ? FlashXTheme.success : FlashXTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ]),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: photos.length >= 2
+                  ? const Color(0xFFD1FADF)
+                  : const Color(0xFFFFF3DF),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              '${photos.length}/2 ảnh',
+              style: TextStyle(
+                color: photos.length >= 2
+                    ? FlashXTheme.success
+                    : FlashXTheme.warning,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ]),
+        if (note.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(note, style: Theme.of(context).textTheme.bodySmall),
+        ],
+        if (metrics.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: metrics
+                .map((metric) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(color: FlashXTheme.border),
+                      ),
+                      child: Text(metric,
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w700)),
+                    ))
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: _CustodyConfirmLine(
+              label: 'Tài xế',
+              confirmed: driverConfirmed,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _CustodyConfirmLine(
+              label: 'Khách',
+              confirmed: riderConfirmed,
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _CustodyConfirmLine extends StatelessWidget {
+  const _CustodyConfirmLine({required this.label, required this.confirmed});
+
+  final String label;
+  final bool confirmed;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: FlashXTheme.border),
+        ),
+        child: Row(children: [
+          Icon(
+            confirmed
+                ? Icons.check_circle_rounded
+                : Icons.radio_button_unchecked_rounded,
+            size: 17,
+            color: confirmed ? FlashXTheme.success : FlashXTheme.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '$label · ${confirmed ? 'đã xác nhận' : 'chưa xác nhận'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ]),
       );
 }
 

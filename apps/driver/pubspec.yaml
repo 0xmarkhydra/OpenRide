@@ -12,6 +12,7 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   geolocator: ^14.0.2
   google_maps_flutter: ^2.18.0
+  image_picker: ^1.2.3
 
 dev_dependencies:
   flutter_test:

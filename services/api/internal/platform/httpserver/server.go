@@ -399,6 +399,8 @@ func (s *Server) writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "TRIP_NOT_FOUND", "Trip was not found", nil)
 	case errors.Is(err, trips.ErrForbidden):
 		writeError(w, http.StatusForbidden, "TRIP_FORBIDDEN", "Trip is not accessible by this actor", nil)
+	case errors.Is(err, custodyevidence.ErrNotReady):
+		writeError(w, http.StatusConflict, "CUSTODY_EVIDENCE_REQUIRED", "Both driver and customer must confirm the required vehicle custody evidence before this action", nil)
 	case errors.Is(err, trips.ErrInvalidState):
 		writeError(w, http.StatusConflict, "TRIP_INVALID_STATE", "Trip cannot perform this action from its current state", nil)
 	case errors.Is(err, trips.ErrInvalidInput):

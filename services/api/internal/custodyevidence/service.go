@@ -31,6 +31,7 @@ var allowedPhotoTypes = map[string]struct{}{
 
 var allowedContentTypes = map[string]struct{}{
 	"image/jpeg": {}, "image/png": {}, "image/webp": {},
+	"image/heic": {}, "image/heif": {},
 }
 
 type Service struct {
@@ -43,6 +44,11 @@ type Service struct {
 func NewService(store Store, signer objectstorage.Signer, tripService *trips.Service) *Service {
 	return &Service{store: store, signer: signer, trips: tripService, now: func() time.Time { return time.Now().UTC() }}
 }
+
+// EnforcementEnabled is true only when custody photos can actually be stored.
+// Production requires object storage during bootstrap, while development/demo
+// may intentionally run without it and keep the legacy lifecycle unblocked.
+func (s *Service) EnforcementEnabled() bool { return s != nil && s.signer != nil }
 
 func (s *Service) UpdateByDriver(tripID, driverID string, stage Stage, input EvidenceInput) (Snapshot, error) {
 	trip, err := s.driverTrip(tripID, driverID)

@@ -1,0 +1,110 @@
+name: FlashX TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App to upload
+        required: true
+        type: choice
+        options:
+          - rider
+          - driver
+          - all
+      release_version:
+        description: Marketing version (for example 1.0.0)
+        required: true
+        default: 1.0.0
+      changelog:
+        description: Notes shown to TestFlight testers
+        required: false
+        default: Automated TestFlight build
+  push:
+    tags:
+      - "testflight-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  upload-rider:
+    if: ${{ github.event_name == 'push' || github.event.inputs.app == 'rider' || github.event.inputs.app == 'all' }}
+    name: Upload rider
+    runs-on: macos-latest
+    env:
+      FLASHX_APP: rider
+      RELEASE_VERSION: ${{ github.event.inputs.release_version || '1.0.0' }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      TESTFLIGHT_CHANGELOG: ${{ github.event.inputs.changelog || format('Automated build from {0}', github.ref_name) }}
+      API_BASE_URL: ${{ secrets.API_BASE_URL_STAGING }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install iOS dependencies
+        run: |
+          (cd apps/rider && flutter pub get)
+          (cd apps/driver && flutter pub get)
+
+      - name: Configure signing-repository access
+        if: ${{ secrets.MATCH_GIT_PRIVATE_KEY != '' }}
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.MATCH_GIT_PRIVATE_KEY }}
+
+      - name: Build and upload
+        run: bundle exec fastlane ios testflight app:rider build_number:${{ github.run_number }}
+
+  upload-driver:
+    if: ${{ github.event_name == 'push' || github.event.inputs.app == 'driver' || github.event.inputs.app == 'all' }}
+    name: Upload driver
+    runs-on: macos-latest
+    env:
+      FLASHX_APP: driver
+      RELEASE_VERSION: ${{ github.event.inputs.release_version || '1.0.0' }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      TESTFLIGHT_CHANGELOG: ${{ github.event.inputs.changelog || format('Automated build from {0}', github.ref_name) }}
+      API_BASE_URL: ${{ secrets.API_BASE_URL_STAGING }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install iOS dependencies
+        run: |
+          (cd apps/rider && flutter pub get)
+          (cd apps/driver && flutter pub get)
+
+      - name: Configure signing-repository access
+        if: ${{ secrets.MATCH_GIT_PRIVATE_KEY != '' }}
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.MATCH_GIT_PRIVATE_KEY }}
+
+      - name: Build and upload
+        run: bundle exec fastlane ios testflight app:driver build_number:${{ github.run_number }}

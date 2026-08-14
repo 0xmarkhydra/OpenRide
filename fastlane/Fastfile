@@ -1,0 +1,56 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build and upload one FlashX app to TestFlight"
+  lane :testflight do |options|
+    app = options.fetch(:app, ENV.fetch("FLASHX_APP", "rider"))
+    app_config = {
+      "rider" => {
+        identifier: "com.flashx.flashxRider",
+        path: "apps/rider",
+      },
+      "driver" => {
+        identifier: "com.flashx.flashxDriver",
+        path: "apps/driver",
+      },
+    }.fetch(app) do
+      UI.user_error!("Unknown app '#{app}'. Use rider or driver.")
+    end
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
+      is_key_content_base64: true,
+      duration: 1_200,
+    )
+
+    # Match creates or renews the App Store profile when needed. Its encrypted
+    # signing repository and password are supplied only through CI secrets.
+    sync_code_signing(
+      type: "appstore",
+      app_identifier: app_config[:identifier],
+      api_key: api_key,
+      readonly: false,
+    )
+
+    build_number = options[:build_number] || ENV.fetch("BUILD_NUMBER", Time.now.utc.strftime("%Y%m%d%H%M"))
+    Dir.chdir(app_config[:path]) do
+      sh(
+        "flutter build ipa --release " \
+        "--build-name=#{ENV.fetch('RELEASE_VERSION', '1.0.0')} " \
+        "--build-number=#{build_number} " \
+        "--dart-define=API_BASE_URL=#{ENV.fetch('API_BASE_URL')}"
+      )
+    end
+
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: app_config[:identifier],
+      ipa: "#{app_config[:path]}/build/ios/ipa/Runner.ipa",
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      changelog: ENV.fetch("TESTFLIGHT_CHANGELOG", "Automated build #{build_number}"),
+    )
+  end
+end

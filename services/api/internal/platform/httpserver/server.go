@@ -18,6 +18,7 @@ import (
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/idempotency"
 	"flashx/services/api/internal/pricing"
@@ -29,24 +30,25 @@ import (
 )
 
 type Dependencies struct {
-	AppEnv           string
-	Persistence      string
-	Trips            *trips.Service
-	Drivers          *drivers.Service
-	CustomerVehicles *customervehicles.Service
-	DriverDocuments  *driverdocs.Service
-	Dispatch         *dispatch.Engine
-	Ride             *ride.Service
-	Pricing          *pricing.Service
-	Payments         *payments.Service
-	Ratings          *ratings.Service
-	Idempotency      idempotency.Store
-	Auth             *auth.Service
-	Users            *users.Service
-	Admin            *admin.Service
-	Realtime         *realtime.Hub
-	AllowDevIdentity bool
-	ReadyCheck       func(context.Context) error
+	AppEnv              string
+	Persistence         string
+	Trips               *trips.Service
+	Drivers             *drivers.Service
+	CustomerVehicles    *customervehicles.Service
+	DriverDocuments     *driverdocs.Service
+	Dispatch            *dispatch.Engine
+	Ride                *ride.Service
+	Pricing             *pricing.Service
+	OperationalSettings *operationalsettings.Service
+	Payments            *payments.Service
+	Ratings             *ratings.Service
+	Idempotency         idempotency.Store
+	Auth                *auth.Service
+	Users               *users.Service
+	Admin               *admin.Service
+	Realtime            *realtime.Hub
+	AllowDevIdentity    bool
+	ReadyCheck          func(context.Context) error
 }
 
 type Server struct {
@@ -140,6 +142,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("PATCH /v1/admin/pricing/{serviceType}", s.adminUpdatePricing)
 	mux.HandleFunc("GET /v1/admin/audit", s.adminAudit)
 	mux.HandleFunc("GET /v1/admin/system", s.adminSystem)
+	mux.HandleFunc("PATCH /v1/admin/system/operational", s.adminUpdateOperationalSettings)
 	mux.HandleFunc("GET /v1/admin/dashboard", s.adminDashboard)
 
 	s.server = &http.Server{
@@ -196,6 +199,11 @@ func (s *Server) estimateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 	var req estimateTripRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.ServiceType = trips.NormalizeServiceType(req.ServiceType)
+	if s.deps.OperationalSettings != nil && !s.deps.OperationalSettings.IsServiceEnabled(req.ServiceType) {
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_TEMPORARILY_DISABLED", "Service is temporarily unavailable", nil)
 		return
 	}
 	estimate, err := s.deps.Pricing.Estimate(req.Pickup, req.Destination, req.ServiceType)
@@ -262,6 +270,10 @@ func (s *Server) createTrip(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, dataEnvelope{Data: trip})
+		return
+	}
+	if s.deps.OperationalSettings != nil && !s.deps.OperationalSettings.IsServiceEnabled(req.ServiceType) {
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_TEMPORARILY_DISABLED", "Service is temporarily unavailable", nil)
 		return
 	}
 

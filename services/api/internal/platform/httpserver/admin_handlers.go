@@ -9,6 +9,7 @@ import (
 	admindomain "flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/pricing"
 	"flashx/services/api/internal/trips"
 )
@@ -346,7 +347,7 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.activeAdminID(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{
+	data := map[string]any{
 		"app_env":            s.deps.AppEnv,
 		"persistence":        s.deps.Persistence,
 		"allow_dev_identity": s.deps.AllowDevIdentity,
@@ -357,7 +358,65 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 			"payments":         s.deps.Payments != nil,
 			"ratings":          s.deps.Ratings != nil,
 		},
-	}})
+	}
+	if s.deps.OperationalSettings != nil {
+		data["operational_settings"] = s.deps.OperationalSettings.Get()
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: data})
+}
+
+type adminOperationalSettingsRequest struct {
+	DesignatedDriverCarEnabled  bool   `json:"designated_driver_car_enabled"`
+	DesignatedDriverBikeEnabled bool   `json:"designated_driver_bike_enabled"`
+	VehicleInspectionEnabled    bool   `json:"vehicle_inspection_assist_enabled"`
+	DispatchMaxDistanceM        int64  `json:"dispatch_max_distance_m"`
+	DriverLocationMaxAgeSeconds int    `json:"driver_location_max_age_seconds"`
+	Reason                      string `json:"reason"`
+}
+
+func (s *Server) adminUpdateOperationalSettings(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireAdminRole(w, r, admindomain.RoleSuperAdmin)
+	if !ok {
+		return
+	}
+	if s.deps.OperationalSettings == nil {
+		writeError(w, http.StatusServiceUnavailable, "OPERATIONAL_SETTINGS_UNAVAILABLE", "Operational settings are unavailable", nil)
+		return
+	}
+	var req adminOperationalSettingsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusUnprocessableEntity, "SETTINGS_REASON_REQUIRED", "A reason is required when changing operational settings", nil)
+		return
+	}
+	before := s.deps.OperationalSettings.Get()
+	updated, err := s.deps.OperationalSettings.Update(operationalsettings.Config{
+		DesignatedDriverCarEnabled:  req.DesignatedDriverCarEnabled,
+		DesignatedDriverBikeEnabled: req.DesignatedDriverBikeEnabled,
+		VehicleInspectionEnabled:    req.VehicleInspectionEnabled,
+		DispatchMaxDistanceM:        req.DispatchMaxDistanceM,
+		DriverLocationMaxAgeSeconds: req.DriverLocationMaxAgeSeconds,
+	}, actor.ID)
+	if err != nil {
+		if errors.Is(err, operationalsettings.ErrInvalidConfig) {
+			writeError(w, http.StatusUnprocessableEntity, "OPERATIONAL_SETTINGS_INVALID", "Operational settings are invalid", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "OPERATIONAL_SETTINGS_UPDATE_FAILED", "Unable to update operational settings", nil)
+		return
+	}
+	if err := s.deps.Admin.Audit(actor.ID, "system.operational_settings_updated", "operational_settings", "default", map[string]any{
+		"previous": before,
+		"current":  updated,
+		"reason":   req.Reason,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Operational settings changed but audit write failed", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: updated})
 }
 
 type resolveIncidentRequest struct {

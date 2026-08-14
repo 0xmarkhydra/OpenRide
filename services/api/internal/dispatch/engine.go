@@ -45,15 +45,16 @@ type Offer struct {
 type Engine struct {
 	// mu protects one Engine instance. Production also uses Locker so separate
 	// API instances serialize mutations for the same trip.
-	mu          sync.Mutex
-	drivers     *drivers.Service
-	trips       *trips.Service
-	offers      OfferStore
-	locker      Locker
-	now         func() time.Time
-	offerTTL    time.Duration
-	lockTTL     time.Duration
-	maxDistance float64
+	mu             sync.Mutex
+	drivers        *drivers.Service
+	trips          *trips.Service
+	offers         OfferStore
+	locker         Locker
+	now            func() time.Time
+	offerTTL       time.Duration
+	lockTTL        time.Duration
+	maxDistance    float64
+	locationMaxAge time.Duration
 }
 
 func NewEngine(driverService *drivers.Service, tripService *trips.Service) *Engine {
@@ -68,15 +69,26 @@ func NewEngineWithStore(driverService *drivers.Service, tripService *trips.Servi
 		locker = NewMemoryLocker()
 	}
 	return &Engine{
-		drivers:     driverService,
-		trips:       tripService,
-		offers:      offers,
-		locker:      locker,
-		now:         func() time.Time { return time.Now().UTC() },
-		offerTTL:    12 * time.Second,
-		lockTTL:     3 * time.Second,
-		maxDistance: 5_000,
+		drivers:        driverService,
+		trips:          tripService,
+		offers:         offers,
+		locker:         locker,
+		now:            func() time.Time { return time.Now().UTC() },
+		offerTTL:       12 * time.Second,
+		lockTTL:        3 * time.Second,
+		maxDistance:    5_000,
+		locationMaxAge: 20 * time.Second,
 	}
+}
+
+func (e *Engine) UpdatePolicy(maxDistanceM int64, locationMaxAgeSeconds int) {
+	if maxDistanceM <= 0 || locationMaxAgeSeconds <= 0 {
+		return
+	}
+	e.mu.Lock()
+	e.maxDistance = float64(maxDistanceM)
+	e.locationMaxAge = time.Duration(locationMaxAgeSeconds) * time.Second
+	e.mu.Unlock()
 }
 
 func (e *Engine) CreateOffer(tripID string) (Offer, error) {
@@ -131,7 +143,7 @@ func (e *Engine) CreateOffer(tripID string) (Offer, error) {
 		trip.ServiceType,
 		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: now},
 		e.maxDistance,
-		20*time.Second,
+		e.locationMaxAge,
 		30,
 	)
 	if err != nil {
@@ -339,11 +351,15 @@ func (e *Engine) CandidatesForTrip(tripID string, limit int) ([]drivers.NearbyDr
 	if limit <= 0 || limit > 30 {
 		limit = 15
 	}
+	e.mu.Lock()
+	maxDistance := e.maxDistance
+	locationMaxAge := e.locationMaxAge
+	e.mu.Unlock()
 	return e.drivers.NearbyCandidates(
 		trip.ServiceType,
 		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
-		e.maxDistance,
-		20*time.Second,
+		maxDistance,
+		locationMaxAge,
 		limit,
 	)
 }
@@ -376,7 +392,7 @@ func (e *Engine) ManualAssign(tripID, driverID string) (trips.Trip, error) {
 		trip.ServiceType,
 		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
 		e.maxDistance,
-		20*time.Second,
+		e.locationMaxAge,
 		30,
 	)
 	if err != nil {

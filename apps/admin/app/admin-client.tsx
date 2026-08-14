@@ -121,12 +121,23 @@ type AuditEntry = {
   metadata?: Record<string, unknown>;
   created_at: string;
 };
+type OperationalSettings = {
+  designated_driver_car_enabled: boolean;
+  designated_driver_bike_enabled: boolean;
+  vehicle_inspection_assist_enabled: boolean;
+  dispatch_max_distance_m: number;
+  driver_location_max_age_seconds: number;
+  version: number;
+  updated_by?: string;
+  updated_at: string;
+};
 type SystemInfo = {
   app_env: string;
   persistence: string;
   allow_dev_identity: boolean;
   supported_services: string[];
   features: Record<string, boolean>;
+  operational_settings?: OperationalSettings;
 };
 type DriverDocument = {
   id: string;
@@ -231,10 +242,19 @@ const adminAccountSchema = z.object({
   display_name: z.string().trim().min(2, 'Tên hiển thị tối thiểu 2 ký tự'),
   role: z.enum(['operations', 'super_admin']),
 });
+const operationalSettingsSchema = z.object({
+  designated_driver_car_enabled: z.boolean(),
+  designated_driver_bike_enabled: z.boolean(),
+  vehicle_inspection_assist_enabled: z.boolean(),
+  dispatch_max_distance_m: z.number().min(1000, 'Tối thiểu 1 km').max(30000, 'Tối đa 30 km'),
+  driver_location_max_age_seconds: z.number().min(5, 'Tối thiểu 5 giây').max(120, 'Tối đa 120 giây'),
+  reason: z.string().trim().min(3, 'Nhập lý do thay đổi'),
+});
 type PhoneForm = z.infer<typeof phoneSchema>;
 type OTPForm = z.infer<typeof otpSchema>;
 type PricingForm = z.infer<typeof pricingSchema>;
 type AdminAccountForm = z.infer<typeof adminAccountSchema>;
+type OperationalSettingsForm = z.infer<typeof operationalSettingsSchema>;
 
 const navItems: NavItem[] = [
   { key: 'overview', label: 'Tổng quan', icon: LayoutDashboard },
@@ -594,6 +614,21 @@ export default function AdminClient() {
     }
   }
 
+  async function updateOperationalSettings(values: OperationalSettingsForm) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<OperationalSettings>('/v1/admin/system/operational', { method: 'PATCH', body: JSON.stringify(values) });
+      setSystemInfo(current => current ? { ...current, operational_settings: updated } : current);
+      await loadAudit();
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : 'Không thể cập nhật cấu hình vận hành');
+      throw settingsError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function logout() {
     if (refreshToken) {
       try { await api('/v1/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }); } catch {}
@@ -699,8 +734,12 @@ export default function AdminClient() {
       return <AdminAccountsView currentAdmin={currentAdmin} accounts={adminAccounts} busy={busy} onCreate={createAdminAccount} onUpdate={updateAdminAccount} />;
     }
     if (activeView === 'settings') {
-      return <Section title='Cài đặt hệ thống' description='Thông tin vận hành an toàn được backend công bố cho Admin; secret không được đưa xuống trình duyệt.'>
-        {systemInfo ? <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'><SystemCard icon={Database} title='Persistence' value={systemInfo.persistence} detail={`Môi trường: ${systemInfo.app_env}`} /><SystemCard icon={Wifi} title='Realtime' value={systemInfo.features.realtime ? 'Sẵn sàng' : 'Không khả dụng'} detail='Trạng thái công việc và kết nối realtime.' /><SystemCard icon={FileCheck2} title='KYC documents' value={systemInfo.features.driver_documents ? 'Sẵn sàng' : 'Không khả dụng'} detail='Upload trực tiếp object storage + review Admin.' /><SystemCard icon={BadgeDollarSign} title='Payments' value={systemInfo.features.payments ? 'Sẵn sàng' : 'Không khả dụng'} detail='Payment service hiện được backend khởi tạo.' /><SystemCard icon={SearchCheck} title='Ratings' value={systemInfo.features.ratings ? 'Sẵn sàng' : 'Không khả dụng'} detail='Đánh giá sau công việc.' /><SystemCard icon={ShieldCheck} title='Dev identity' value={systemInfo.allow_dev_identity ? 'Đang bật' : 'Đã tắt'} detail='Chỉ dùng cho môi trường phát triển/demo khi được cấu hình.' /></div> : <InfoState icon={Settings} title='Đang tải cấu hình' text='Thông tin hệ thống chưa được đồng bộ.' />}
+      const canEditSettings = currentAdmin?.role === 'super_admin';
+      return <Section title='Cài đặt hệ thống' description='Chỉ expose các cấu hình vận hành an toàn; secret, database credential và Redis không bao giờ được đưa xuống trình duyệt.'>
+        {systemInfo ? <div className='grid gap-5'>
+          {systemInfo.operational_settings ? canEditSettings ? <OperationalSettingsEditor key={systemInfo.operational_settings.version} settings={systemInfo.operational_settings} busy={busy} onSave={updateOperationalSettings} /> : <OperationalSettingsSummary settings={systemInfo.operational_settings} /> : <InfoState icon={Settings} title='Chưa có cấu hình vận hành' text='Backend chưa công bố operational settings.' />}
+          <div><div className='mb-3 text-sm font-semibold text-foreground'>Hạ tầng chỉ đọc</div><div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'><SystemCard icon={Database} title='Persistence' value={systemInfo.persistence} detail={`Môi trường: ${systemInfo.app_env}`} /><SystemCard icon={Wifi} title='Realtime' value={systemInfo.features.realtime ? 'Sẵn sàng' : 'Không khả dụng'} detail='Trạng thái công việc và kết nối realtime.' /><SystemCard icon={FileCheck2} title='KYC documents' value={systemInfo.features.driver_documents ? 'Sẵn sàng' : 'Không khả dụng'} detail='Upload trực tiếp object storage + review Admin.' /><SystemCard icon={BadgeDollarSign} title='Payments' value={systemInfo.features.payments ? 'Sẵn sàng' : 'Không khả dụng'} detail='Payment service hiện được backend khởi tạo.' /><SystemCard icon={SearchCheck} title='Ratings' value={systemInfo.features.ratings ? 'Sẵn sàng' : 'Không khả dụng'} detail='Đánh giá sau công việc.' /><SystemCard icon={ShieldCheck} title='Dev identity' value={systemInfo.allow_dev_identity ? 'Đang bật' : 'Đã tắt'} detail='Chỉ dùng cho môi trường phát triển/demo khi được cấu hình.' /></div></div>
+        </div> : <InfoState icon={Settings} title='Đang tải cấu hình' text='Thông tin hệ thống chưa được đồng bộ.' />}
       </Section>;
     }
 
@@ -876,6 +915,41 @@ function PricingEditor({ rule, busy, onSave }: { rule: PricingRule; busy: boolea
     <Button className='mt-2 w-full' type='submit' disabled={busy || form.formState.isSubmitting || !form.formState.isDirty}><BadgeDollarSign aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang lưu…' : 'Lưu version giá mới'}</Button>
   </form></CardContent></Card>;
 }
+function OperationalSettingsEditor({ settings, busy, onSave }: { settings: OperationalSettings; busy: boolean; onSave: (values: OperationalSettingsForm) => Promise<void> }) {
+  const form = useForm<OperationalSettingsForm>({
+    resolver: zodResolver(operationalSettingsSchema),
+    defaultValues: {
+      designated_driver_car_enabled: settings.designated_driver_car_enabled,
+      designated_driver_bike_enabled: settings.designated_driver_bike_enabled,
+      vehicle_inspection_assist_enabled: settings.vehicle_inspection_assist_enabled,
+      dispatch_max_distance_m: settings.dispatch_max_distance_m,
+      driver_location_max_age_seconds: settings.driver_location_max_age_seconds,
+      reason: '',
+    },
+  });
+  const values = form.watch();
+  const settingsChanged = values.designated_driver_car_enabled !== settings.designated_driver_car_enabled || values.designated_driver_bike_enabled !== settings.designated_driver_bike_enabled || values.vehicle_inspection_assist_enabled !== settings.vehicle_inspection_assist_enabled || Number(values.dispatch_max_distance_m) !== settings.dispatch_max_distance_m || Number(values.driver_location_max_age_seconds) !== settings.driver_location_max_age_seconds;
+  const submit = form.handleSubmit(async data => { if (!settingsChanged) return; try { await onSave(data); } catch {} });
+  const services = [
+    { key: 'designated_driver_car_enabled' as const, label: 'Lái hộ ô tô', detail: 'Ngừng nhận báo giá và booking ô tô mới khi tắt.' },
+    { key: 'designated_driver_bike_enabled' as const, label: 'Lái hộ xe máy', detail: 'Ngừng nhận báo giá và booking xe máy mới khi tắt.' },
+    { key: 'vehicle_inspection_assist_enabled' as const, label: 'Đăng kiểm hộ', detail: 'Ngừng nhận yêu cầu đăng kiểm hộ mới khi tắt.' },
+  ];
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-start'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Áp dụng ngay ở backend. Booking đang tồn tại không bị hủy khi tắt dịch vụ.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><form className='grid gap-5' onSubmit={submit}>
+    <div className='grid gap-3 lg:grid-cols-3'>{services.map(service => <label key={service.key} className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border p-4 transition-colors ${values[service.key] ? 'border-primary/20 bg-primary-soft/45' : 'border-border bg-surface-soft/50'}`}><div><div className='font-semibold text-foreground'>{service.label}</div><p className='mt-1 text-xs leading-5 text-muted'>{service.detail}</p></div><input type='checkbox' className='mt-0.5 size-5 shrink-0 accent-primary' {...form.register(service.key)} /></label>)}</div>
+    <div className='grid gap-4 md:grid-cols-2'><label className='text-sm font-semibold text-foreground'>Bán kính điều phối<Input className='mt-1.5' type='number' min={1000} max={30000} step={500} inputMode='numeric' {...form.register('dispatch_max_distance_m', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{((Number(values.dispatch_max_distance_m) || 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km quanh điểm nhận</span><span className='text-xs font-normal text-danger'>{form.formState.errors.dispatch_max_distance_m?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Độ mới vị trí tài xế<Input className='mt-1.5' type='number' min={5} max={120} step={5} inputMode='numeric' {...form.register('driver_location_max_age_seconds', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>Chỉ coi vị trí trong {Number(values.driver_location_max_age_seconds) || 0} giây gần nhất là hợp lệ</span><span className='text-xs font-normal text-danger'>{form.formState.errors.driver_location_max_age_seconds?.message || ''}</span></label></div>
+    <label className='text-sm font-semibold text-foreground'>Lý do thay đổi<Input className='mt-1.5' {...form.register('reason')} placeholder='Ví dụ: Mở rộng bán kính pilot Sầm Sơn ca tối' /><span className='mt-1 block text-xs font-normal text-danger'>{form.formState.errors.reason?.message || ''}</span></label>
+    <div className='flex flex-col justify-between gap-3 rounded-2xl bg-surface-soft p-4 sm:flex-row sm:items-center'><div className='text-xs leading-5 text-muted'>Cập nhật gần nhất {formatDate(settings.updated_at)}{settings.updated_by ? ` · ${settings.updated_by}` : ''}. Secret và hạ tầng không thể chỉnh ở đây.</div><Button type='submit' disabled={busy || form.formState.isSubmitting || !settingsChanged || !values.reason.trim()}><Settings aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang áp dụng…' : 'Áp dụng cấu hình'}</Button></div>
+  </form></CardContent></Card>;
+}
+function OperationalSettingsSummary({ settings }: { settings: OperationalSettings }) {
+  const serviceStates = [
+    ['Lái hộ ô tô', settings.designated_driver_car_enabled],
+    ['Lái hộ xe máy', settings.designated_driver_bike_enabled],
+    ['Đăng kiểm hộ', settings.vehicle_inspection_assist_enabled],
+  ] as const;
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Tài khoản Operations chỉ có quyền xem cấu hình đang áp dụng.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><div className='grid gap-3 md:grid-cols-3'>{serviceStates.map(([label, enabled]) => <div key={label} className='rounded-2xl border border-border p-4'><div className='flex items-center justify-between gap-3'><span className='font-semibold text-foreground'>{label}</span><Badge variant={enabled ? 'success' : 'secondary'}>{enabled ? 'Đang mở' : 'Tạm dừng'}</Badge></div></div>)}</div><div className='mt-4 grid gap-3 sm:grid-cols-2'><InfoCard label='Bán kính điều phối' value={`${(settings.dispatch_max_distance_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km`} icon={MapPin} /><InfoCard label='Độ mới vị trí' value={`${settings.driver_location_max_age_seconds} giây`} icon={Clock3} /></div></CardContent></Card>;
+}
 function SystemCard({ icon: Icon, title, value, detail }: { icon: LucideIcon; title: string; value: string; detail: string }) { return <div className='rounded-2xl border border-border bg-surface p-5'><div className='grid size-10 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 text-sm font-semibold text-muted'>{title}</div><div className='mt-1 text-xl font-bold tracking-tight text-foreground'>{value}</div><p className='mt-2 text-sm leading-6 text-muted'>{detail}</p></div>; }
 
 function Brand() { return <div className='flex items-center gap-3 px-2'><div className='grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm'><Zap aria-hidden='true' className='size-5 fill-current' /></div><div><div className='text-base font-bold tracking-tight text-foreground'>FlashX</div><div className='text-[11px] font-medium text-muted'>Operations</div></div></div>; }
@@ -904,5 +978,6 @@ function auditActionLabel(action: string) {
     'pricing.rule_updated': 'Cập nhật bảng giá',
     'admin.account_created': 'Thêm quản trị viên',
     'admin.account_updated': 'Cập nhật quản trị viên',
+    'system.operational_settings_updated': 'Cập nhật cấu hình vận hành',
   } as Record<string, string>)[action] || action;
 }

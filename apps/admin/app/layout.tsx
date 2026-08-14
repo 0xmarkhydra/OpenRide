@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import './tailwind.css';
 import './globals.css';
 

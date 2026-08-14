@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { DataTable, dataTableFeatures } from '../components/data-table';
 import { DetailPanel } from '../components/detail-panel';
+import { OperationsMap } from '../components/operations-map';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -751,6 +752,7 @@ export default function AdminClient() {
       trips={trips}
       customerMap={customerMap}
       driverMap={driverMap}
+      locationMaxAgeSeconds={systemInfo?.operational_settings?.driver_location_max_age_seconds ?? 20}
       onSelectView={selectView}
       onTrip={setSelectedTrip}
       onDriver={openDriver}
@@ -786,7 +788,7 @@ export default function AdminClient() {
   </div>;
 }
 
-function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, customerMap, driverMap, onSelectView, onTrip, onDriver }: {
+function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, customerMap, driverMap, locationMaxAgeSeconds, onSelectView, onTrip, onDriver }: {
   metrics: Metrics;
   initialLoading: boolean;
   incidents: Trip[];
@@ -794,6 +796,7 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
   trips: Trip[];
   customerMap: Map<string, Customer>;
   driverMap: Map<string, Driver>;
+  locationMaxAgeSeconds: number;
   onSelectView: (view: ViewKey) => void;
   onTrip: (trip: Trip) => void;
   onDriver: (driver: Driver) => void;
@@ -804,9 +807,30 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
     { label: 'Đang vận hành', value: metrics.trips_active || 0, foot: `${metrics.trips_searching || 0} đang tìm`, icon: Gauge },
     { label: 'Cần chú ý', value: metrics.trips_incident || 0, foot: `${metrics.drivers_pending || 0} tài xế chờ duyệt`, icon: AlertTriangle },
   ];
+  const now = Date.now();
+  const mapDrivers = Array.from(driverMap.values()).filter(driver => {
+    if (!driver.location || !['online', 'busy'].includes(driver.availability_status)) return false;
+    const capturedAt = driver.location.captured_at ? Date.parse(driver.location.captured_at) : Number.NaN;
+    return Number.isFinite(capturedAt) && now - capturedAt <= locationMaxAgeSeconds * 1000;
+  }).map(driver => ({
+    id: driver.id,
+    name: driver.full_name || driver.phone || driver.id,
+    availability: driver.availability_status,
+    lat: driver.location!.lat,
+    lng: driver.location!.lng,
+    capturedAt: driver.location!.captured_at,
+  }));
+  const mapTrips = trips.filter(trip => trip.pickup && !['scheduled', 'completed', 'cancelled'].includes(trip.status)).map(trip => ({
+    id: trip.id,
+    serviceLabel: serviceLabel(trip.service_type),
+    statusLabel: tripStatusLabel(trip.status),
+    incidentOpen: Boolean(trip.incident_open),
+    pickup: trip.pickup!,
+  }));
   return <div className='flex flex-col gap-5 fx-enter'>
     <section className='fx-flowline overflow-hidden rounded-[30px] border border-primary/10 bg-gradient-to-br from-surface via-surface to-primary-soft p-5 shadow-sm md:p-7'><div className='flex flex-col justify-between gap-6 lg:flex-row lg:items-end'><div className='max-w-2xl'><div className='mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.14em] text-primary'><Sparkles aria-hidden='true' className='size-4' /> Operations pulse</div><h2 className='text-3xl font-bold tracking-[-.045em] text-foreground md:text-4xl'>Việc cần xử lý nằm trước, số liệu nằm sau.</h2><p className='mt-3 max-w-xl text-sm leading-6 text-muted md:text-base'>Hiện có <strong className='text-foreground'>{incidents.length}</strong> sự cố mở, <strong className='text-foreground'>{pendingDrivers.length}</strong> hồ sơ tài xế chờ duyệt và <strong className='text-foreground'>{metrics.trips_active || 0}</strong> công việc đang vận hành.</p></div><div className='flex items-center gap-3'><div className='fx-pulse-dot size-2 rounded-full bg-primary' /><div><div className='text-xs font-semibold text-primary'>Dữ liệu vận hành</div><div className='text-xs text-muted'>Tự đồng bộ mỗi 5 giây</div></div></div></div></section>
     <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>{metricsCards.map(({ label, value, foot, icon: Icon }) => <Card key={label} className='transition-shadow duration-200 hover:shadow-md'><CardContent className='p-5'><div className='flex items-start justify-between gap-4'><div><p className='text-sm font-medium text-muted'>{label}</p>{initialLoading ? <div className='mt-3 h-9 w-20 animate-pulse rounded-lg bg-surface-soft motion-reduce:animate-none' /> : <p className='mt-2 text-3xl font-bold tracking-[-.04em] text-foreground'>{value}</p>}<p className='mt-1 text-xs text-muted'>{initialLoading ? 'Đang đồng bộ…' : foot}</p></div><div className='grid size-11 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div></div></CardContent></Card>)}</div>
+    <OperationsMap drivers={mapDrivers} trips={mapTrips} onDriver={id => { const driver = driverMap.get(id); if (driver) onDriver(driver); }} onTrip={id => { const trip = trips.find(item => item.id === id); if (trip) onTrip(trip); }} />
     <div className='grid gap-5 xl:grid-cols-[1.2fr_.8fr]'>
       <Card><CardHeader className='flex-row items-start justify-between'><div><CardTitle>Ưu tiên xử lý</CardTitle><CardDescription>Sự cố trước, hồ sơ tài xế sau.</CardDescription></div><Button size='sm' variant='ghost' onClick={() => onSelectView(incidents.length ? 'incidents' : 'drivers')}>Mở hàng đợi <ChevronRight aria-hidden='true' className='size-4' /></Button></CardHeader><CardContent className='grid gap-3'>{incidents.slice(0, 3).map(trip => <button key={trip.id} type='button' onClick={() => onTrip(trip)} className='flex min-h-16 items-center justify-between gap-3 rounded-2xl border border-danger/10 bg-danger-soft/60 p-4 text-left transition-colors hover:bg-danger-soft'><div><div className='font-semibold text-foreground'>{serviceLabel(trip.service_type)} · {trip.id}</div><div className='mt-1 text-xs text-muted'>{trip.incident_type || 'Sự cố cần kiểm tra'} · {customerMap.get(trip.rider_id)?.full_name || customerMap.get(trip.rider_id)?.phone || trip.rider_id}</div></div><ChevronRight aria-hidden='true' className='size-4 text-danger' /></button>)}{!incidents.length ? pendingDrivers.slice(0, 3).map(driver => <button key={driver.id} type='button' onClick={() => onDriver(driver)} className='flex min-h-16 items-center justify-between gap-3 rounded-2xl border border-warning/10 bg-warning-soft/50 p-4 text-left'><div><div className='font-semibold text-foreground'>{driver.full_name || driver.phone}</div><div className='mt-1 text-xs text-muted'>{serviceLabel(driver.service_type)} · Chờ duyệt KYC</div></div><ChevronRight aria-hidden='true' className='size-4 text-warning' /></button>) : null}{!incidents.length && !pendingDrivers.length ? <InfoState icon={CheckCircle2} title='Không có việc khẩn cấp' text='Hiện không có sự cố mở hoặc hồ sơ tài xế chờ duyệt.' /> : null}</CardContent></Card>
       <Card><CardHeader className='flex-row items-start justify-between'><div><CardTitle>Công việc gần đây</CardTitle><CardDescription>Mở nhanh chi tiết vòng đời.</CardDescription></div><Button size='sm' variant='ghost' onClick={() => onSelectView('trips')}>Tất cả <ChevronRight aria-hidden='true' className='size-4' /></Button></CardHeader><CardContent className='grid gap-2'>{trips.slice(0, 6).map(trip => <button key={trip.id} type='button' onClick={() => onTrip(trip)} className='flex min-h-14 items-center justify-between gap-3 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-surface-soft'><div className='min-w-0'><div className='truncate text-sm font-semibold text-foreground'>{serviceLabel(trip.service_type)} · {customerMap.get(trip.rider_id)?.full_name || customerMap.get(trip.rider_id)?.phone || trip.id}</div><div className='mt-1 text-xs text-muted'>{trip.driver_id ? driverMap.get(trip.driver_id)?.full_name || trip.driver_id : 'Chưa ghép tài xế'} · {formatDate(trip.created_at)}</div></div><Badge variant={statusVariant(trip.status, trip.incident_open)}>{trip.incident_open ? 'Sự cố' : tripStatusLabel(trip.status)}</Badge></button>)}</CardContent></Card>

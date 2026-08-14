@@ -10,6 +10,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
@@ -44,6 +45,7 @@ func newTestServer() *Server {
 	settingsService.SetApplyHook(func(settings operationalsettings.Config) {
 		dispatchEngine.UpdatePolicy(settings.DispatchMaxDistanceM, settings.DriverLocationMaxAgeSeconds)
 	})
+	custodyEvidenceService := custodyevidence.NewService(custodyevidence.NewMemoryStore(), nil, tripService)
 	return New(":0", Dependencies{
 		AppEnv:              "test",
 		Persistence:         "memory",
@@ -51,6 +53,7 @@ func newTestServer() *Server {
 		Trips:               tripService,
 		Drivers:             driverService,
 		CustomerVehicles:    vehicleService,
+		CustodyEvidence:     custodyEvidenceService,
 		Users:               userService,
 		Admin:               adminService,
 		Dispatch:            dispatchEngine,
@@ -405,6 +408,70 @@ func TestAdminOTPApprovesDriverThenDriverCanGoOnline(t *testing.T) {
 	})
 	if online.Code != http.StatusOK {
 		t.Fatalf("approved driver online status=%d body=%s", online.Code, online.Body.String())
+	}
+}
+
+func TestCustodyEvidenceHTTPContract(t *testing.T) {
+	s := newTestServer()
+	_, adminHeaders := adminSession(t, s)
+
+	customer, _, err := s.deps.Users.FindOrCreateByPhone("0911000111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := s.deps.Drivers.RegisterApproved("driver-custody-http", "Driver Custody", trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := s.deps.Trips.Create(trips.CreateInput{
+		RiderID:            customer.ID,
+		ServiceType:        trips.ServiceDesignatedDriverCar,
+		Pickup:             trips.Point{Lat: 19.807, Lng: 105.776},
+		Destination:        trips.Point{Lat: 19.82, Lng: 105.79},
+		EstimatedDistanceM: 5000,
+		EstimatedDurationS: 900,
+		FareBreakdown:      trips.FareBreakdown{TotalMinor: 180000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.AssignDriver(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArriving(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArrived(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	driverHeaders := map[string]string{"X-Dev-Driver-ID": driver.ID}
+	riderHeaders := map[string]string{"X-Dev-Rider-ID": customer.ID}
+	updated := perform(t, s, http.MethodPut, "/v1/driver/trips/"+trip.ID+"/custody/pickup", []byte(`{"condition_note":"Ngoại thất bình thường, có vết xước cũ ở cản sau","odometer_km":18342,"fuel_percent":72}`), driverHeaders)
+	if updated.Code != http.StatusOK || !bytes.Contains(updated.Body.Bytes(), []byte(`"condition_note":"Ngoại thất bình thường`)) {
+		t.Fatalf("update custody status=%d body=%s", updated.Code, updated.Body.String())
+	}
+
+	riderView := perform(t, s, http.MethodGet, "/v1/trips/"+trip.ID+"/custody", nil, riderHeaders)
+	if riderView.Code != http.StatusOK || !bytes.Contains(riderView.Body.Bytes(), []byte(`"stage":"pickup"`)) {
+		t.Fatalf("rider custody status=%d body=%s", riderView.Code, riderView.Body.String())
+	}
+	adminView := perform(t, s, http.MethodGet, "/v1/admin/trips/"+trip.ID+"/custody", nil, adminHeaders)
+	if adminView.Code != http.StatusOK || !bytes.Contains(adminView.Body.Bytes(), []byte(`"odometer_km":18342`)) {
+		t.Fatalf("admin custody status=%d body=%s", adminView.Code, adminView.Body.String())
+	}
+
+	confirmTooSoon := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/custody/pickup/confirm", nil, driverHeaders)
+	if confirmTooSoon.Code != http.StatusConflict || !bytes.Contains(confirmTooSoon.Body.Bytes(), []byte("CUSTODY_EVIDENCE_NOT_READY")) {
+		t.Fatalf("confirm without photos status=%d body=%s", confirmTooSoon.Code, confirmTooSoon.Body.String())
+	}
+	uploadWithoutStorage := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/custody/pickup/photos/upload-url", []byte(`{"photo_type":"front","filename":"front.jpg","content_type":"image/jpeg","size_bytes":1024}`), driverHeaders)
+	if uploadWithoutStorage.Code != http.StatusServiceUnavailable || !bytes.Contains(uploadWithoutStorage.Body.Bytes(), []byte("OBJECT_STORAGE_UNAVAILABLE")) {
+		t.Fatalf("upload without storage status=%d body=%s", uploadWithoutStorage.Code, uploadWithoutStorage.Body.String())
+	}
+	forbidden := perform(t, s, http.MethodGet, "/v1/trips/"+trip.ID+"/custody", nil, map[string]string{"X-Dev-Rider-ID": "other-rider"})
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("wrong rider custody status=%d body=%s", forbidden.Code, forbidden.Body.String())
 	}
 }
 

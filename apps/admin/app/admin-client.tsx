@@ -155,6 +155,33 @@ type DriverDocumentWithURL = {
   document: DriverDocument;
   view: { method: string; url: string; expires_at: string };
 };
+type CustodyEvidenceSnapshot = {
+  evidence: {
+    id: string;
+    trip_id: string;
+    stage: 'pickup' | 'return';
+    condition_note: string;
+    odometer_km?: number;
+    fuel_percent?: number;
+    battery_percent?: number;
+    driver_confirmed_at?: string;
+    rider_confirmed_at?: string;
+    created_at: string;
+    updated_at: string;
+  };
+  photos: Array<{
+    photo: {
+      id: string;
+      photo_type: string;
+      filename: string;
+      content_type: string;
+      size_bytes: number;
+      created_at: string;
+    };
+    view?: { method: string; url: string; expires_at: string };
+  }>;
+  ready: boolean;
+};
 type Metrics = Record<string, number>;
 type ApiError = { error?: { message?: string; code?: string } };
 type ViewKey = 'overview' | 'trips' | 'drivers' | 'customers' | 'vehicles' | 'pricing' | 'incidents' | 'audit' | 'accounts' | 'settings';
@@ -305,6 +332,8 @@ export default function AdminClient() {
   const [driverDocsLoading, setDriverDocsLoading] = useState(false);
   const [driverCandidates, setDriverCandidates] = useState<DriverCandidate[]>([]);
   const [driverCandidatesLoading, setDriverCandidatesLoading] = useState(false);
+  const [custodyEvidence, setCustodyEvidence] = useState<CustodyEvidenceSnapshot[]>([]);
+  const [custodyEvidenceLoading, setCustodyEvidenceLoading] = useState(false);
   const [assignmentReason, setAssignmentReason] = useState('');
   const [driverReason, setDriverReason] = useState('');
   const [documentNote, setDocumentNote] = useState('');
@@ -327,6 +356,7 @@ export default function AdminClient() {
     setAdminAccounts([]);
     setTripList([]);
     setTripListLoaded(false);
+    setCustodyEvidence([]);
     setHasLoaded(false);
   }, []);
 
@@ -453,6 +483,23 @@ export default function AdminClient() {
     }
   }, [authedApi]);
 
+  const loadCustodyEvidence = useCallback(async (trip: Trip | null) => {
+    if (!trip) {
+      setCustodyEvidence([]);
+      setCustodyEvidenceLoading(false);
+      return;
+    }
+    setCustodyEvidenceLoading(true);
+    try {
+      setCustodyEvidence(await authedApi<CustodyEvidenceSnapshot[]>(`/v1/admin/trips/${trip.id}/custody`));
+    } catch (evidenceError) {
+      setCustodyEvidence([]);
+      setError(evidenceError instanceof Error ? evidenceError.message : 'Không thể tải bằng chứng nhận bàn giao xe');
+    } finally {
+      setCustodyEvidenceLoading(false);
+    }
+  }, [authedApi]);
+
   useEffect(() => {
     if (!token) return;
     void loadCore(token);
@@ -472,6 +519,16 @@ export default function AdminClient() {
     setAssignmentReason('');
     void loadDriverCandidates(selectedTrip);
   }, [selectedTrip?.id, selectedTrip?.status, selectedTrip?.driver_id, selectedTrip?.incident_open, loadDriverCandidates]);
+
+  useEffect(() => {
+    if (!selectedTrip) {
+      setCustodyEvidence([]);
+      return;
+    }
+    void loadCustodyEvidence(selectedTrip);
+    const timer = window.setInterval(() => void loadCustodyEvidence(selectedTrip), 5000);
+    return () => window.clearInterval(timer);
+  }, [selectedTrip?.id, loadCustodyEvidence]);
 
   const requestOtp = phoneForm.handleSubmit(async ({ phone }) => {
     setBusy(true);
@@ -829,7 +886,7 @@ export default function AdminClient() {
     <main className='min-w-0'><header className='sticky top-0 z-30 border-b border-border/80 bg-surface/80 backdrop-blur-xl'><div className='flex h-16 items-center justify-between px-4 md:px-6'><div className='flex items-center gap-3'><Button size='icon' variant='ghost' className='lg:hidden' onClick={() => setMobileNavOpen(true)} aria-label='Mở menu'><Menu aria-hidden='true' className='size-5' /></Button><div><div className='text-[11px] font-semibold uppercase tracking-[.13em] text-primary'>FlashX Operations</div><h1 className='text-lg font-semibold tracking-tight text-foreground'>{activeLabel}</h1></div></div><div className='flex items-center gap-2'><Badge variant={error ? 'destructive' : busy ? 'secondary' : 'success'}><span className={`mr-1.5 size-1.5 rounded-full ${error ? 'bg-danger' : busy ? 'bg-muted-soft' : 'bg-success'}`} />{error ? 'Cần kiểm tra' : busy ? 'Đang đồng bộ' : 'Đã đồng bộ'}</Badge><Button size='icon' variant='ghost' onClick={() => { void loadCore(); void loadReference(); }} disabled={busy} aria-label='Làm mới'><RefreshCw aria-hidden='true' className={`size-4 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /></Button><Button size='icon' variant='ghost' onClick={() => void logout()} aria-label='Đăng xuất'><LogOut aria-hidden='true' className='size-4' /></Button></div></div></header><div className='mx-auto max-w-[1500px] p-4 md:p-6 lg:p-7'>{error ? <div role='alert' className='mb-4 flex items-start justify-between gap-3 rounded-2xl border border-danger/15 bg-danger-soft p-4 text-sm text-danger'><span>{error}</span><button type='button' className='font-semibold' onClick={() => setError('')}>Đóng</button></div> : null}{renderView()}</div></main>
 
     <DetailPanel open={Boolean(selectedTrip)} title={selectedTrip ? `Công việc ${selectedTrip.id}` : 'Chi tiết công việc'} description={selectedTrip ? `${serviceLabel(selectedTrip.service_type)} · ${tripStatusLabel(selectedTrip.status)}` : undefined} onClose={() => setSelectedTrip(null)}>
-      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} /> : null}
+      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} custodyEvidence={custodyEvidence} custodyEvidenceLoading={custodyEvidenceLoading} /> : null}
     </DetailPanel>
 
     <DetailPanel open={Boolean(selectedDriver)} title={selectedDriver ? selectedDriver.full_name || selectedDriver.phone || selectedDriver.id : 'Chi tiết tài xế'} description={selectedDriver ? `${serviceLabel(selectedDriver.service_type)} · ${approvalLabel(selectedDriver.approval_status)}` : undefined} onClose={() => { setSelectedDriver(null); setDriverDocs([]); }}>
@@ -896,7 +953,7 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
   </div>;
 }
 
-function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign }: {
+function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign, custodyEvidence, custodyEvidenceLoading }: {
   trip: Trip;
   customer?: Customer;
   driver?: Driver;
@@ -910,16 +967,42 @@ function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, set
   assignmentReason: string;
   setAssignmentReason: (value: string) => void;
   onAssign: (candidate: DriverCandidate) => void;
+  custodyEvidence: CustodyEvidenceSnapshot[];
+  custodyEvidenceLoading: boolean;
 }) {
   const steps = tripSteps(trip);
   const manageable = canManageDriver(trip);
+  const pickupEvidence = custodyEvidence.find(item => item.evidence.stage === 'pickup');
+  const returnEvidence = custodyEvidence.find(item => item.evidence.stage === 'return');
   return <div className='grid gap-5'>
     {trip.incident_open ? <div className='rounded-2xl border border-danger/15 bg-danger-soft p-4'><div className='flex items-start gap-3'><AlertTriangle aria-hidden='true' className='mt-0.5 size-5 text-danger' /><div><div className='font-semibold text-danger'>{trip.incident_type || 'Sự cố đang mở'}</div><p className='mt-1 text-sm leading-6 text-foreground'>{trip.incident_note || 'Tài xế chưa để lại ghi chú chi tiết.'}</p></div></div><label className='mt-4 block text-sm font-semibold text-foreground'>Ghi chú xử lý<Input className='mt-1.5' value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} placeholder='Ví dụ: Đã gọi xác nhận với khách và tài xế' /></label><Button className='mt-3 w-full sm:w-auto' disabled={busy} onClick={onResolve}>Đóng sự cố</Button></div> : null}
     <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều phối tài xế</CardTitle><CardDescription>{manageable ? 'Chỉ hiển thị tài xế đã duyệt, online, đúng năng lực và có vị trí mới gần điểm nhận.' : 'Điều phối thủ công đã khóa ở trạng thái hiện tại để bảo vệ chuỗi bàn giao xe.'}</CardDescription></div><Badge variant={manageable ? 'success' : 'secondary'}>{manageable ? 'Có thể điều phối' : 'Đã khóa'}</Badge></div></CardHeader><CardContent>{manageable ? <div className='grid gap-3'>{trip.driver_id ? <label className='block text-sm font-semibold text-foreground'>Lý do đổi tài xế<Input className='mt-1.5' value={assignmentReason} onChange={event => setAssignmentReason(event.target.value)} placeholder='Bắt buộc khi thay tài xế đang nhận việc' /></label> : null}{candidatesLoading ? Array.from({ length: 3 }, (_, index) => <div key={index} className='h-16 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />) : candidates.length ? candidates.map(candidate => <div key={candidate.driver.id} className='flex flex-col gap-3 rounded-2xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between'><div className='min-w-0'><div className='font-semibold text-foreground'>{candidate.driver.full_name || candidate.driver.phone || candidate.driver.id}</div><div className='mt-1 text-xs text-muted'>{candidate.driver.phone || candidate.driver.id} · {Math.max(0.1, candidate.distance_to_pickup_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km tới điểm nhận</div></div><Button size='sm' disabled={busy || Boolean(trip.driver_id && !assignmentReason.trim())} onClick={() => onAssign(candidate)}>{trip.driver_id ? 'Đổi tài xế' : 'Gán tài xế'}</Button></div>) : <InfoState icon={UserRound} title='Chưa có tài xế phù hợp' text='Không có tài xế online đủ năng lực với vị trí mới trong bán kính điều phối hiện tại.' />}</div> : <div className='rounded-2xl bg-surface-soft p-4 text-sm leading-6 text-muted'>{trip.status === 'vehicle_received' || !['scheduled', 'searching', 'completed', 'cancelled'].includes(trip.status) ? 'Từ lúc tài xế xác nhận đã nhận xe, FlashX không cho phép đổi tài xế theo luồng thông thường. Nếu bắt buộc phải chuyển người giữ xe, Operations phải xử lý theo quy trình sự cố/bàn giao có ghi nhận.' : 'Công việc này không ở trạng thái cho phép điều phối thủ công.'}</div>}</CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Khách hàng' value={customer?.full_name || customer?.phone || trip.rider_id} detail={customer?.phone} icon={UsersRound} /><InfoCard label='Tài xế' value={driver?.full_name || (trip.driver_id ? trip.driver_id : 'Chưa ghép')} detail={driver?.phone} icon={UserRound} /><InfoCard label='Xe khách' value={vehicle?.license_plate || trip.customer_vehicle_id || 'Chưa gắn xe'} detail={vehicle ? [vehicle.brand, vehicle.model].filter(Boolean).join(' ') : undefined} icon={CarFront} /><InfoCard label='Giá hiện tại' value={money(trip.final_fare_minor || trip.estimated_fare_minor)} detail={trip.booking_mode === 'scheduled' ? `Hẹn ${formatDate(trip.scheduled_at)}` : 'Đặt ngay'} icon={BadgeDollarSign} /></div>
+    <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Bằng chứng nhận & bàn giao xe</CardTitle><CardDescription>Ảnh và xác nhận hai bên tạo ranh giới trách nhiệm với phương tiện của khách.</CardDescription></div><Badge variant={pickupEvidence?.ready && returnEvidence?.ready ? 'success' : 'secondary'}>{pickupEvidence?.ready && returnEvidence?.ready ? 'Đủ 2 đầu' : 'Đang thu thập'}</Badge></div></CardHeader><CardContent>{custodyEvidenceLoading ? <div className='grid gap-3 sm:grid-cols-2'>{Array.from({ length: 2 }, (_, index) => <div key={index} className='h-48 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />)}</div> : <div className='grid gap-3 sm:grid-cols-2'><CustodyEvidenceCard stage='pickup' snapshot={pickupEvidence} /><CustodyEvidenceCard stage='return' snapshot={returnEvidence} /></div>}</CardContent></Card>
     <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>FlashX Flowline</CardTitle><CardDescription>Vòng đời thực tế của {serviceLabel(trip.service_type).toLocaleLowerCase('vi')}.</CardDescription></CardHeader><CardContent><div className='grid gap-0'>{steps.map((step, index) => <div key={step.status} className='grid grid-cols-[24px_1fr] gap-3'><div className='relative flex justify-center'>{index < steps.length - 1 ? <span className={`absolute top-5 h-full w-px ${step.done ? 'bg-primary' : 'bg-border'}`} /> : null}<span className={`relative mt-1 size-3 rounded-full border-2 ${step.active ? 'fx-pulse-dot border-primary bg-surface' : step.done ? 'border-primary bg-primary' : 'border-border bg-surface'}`} /></div><div className='pb-5'><div className={`text-sm font-semibold ${step.active ? 'text-primary' : step.done ? 'text-foreground' : 'text-muted'}`}>{step.label}</div>{step.active ? <div className='mt-1 text-xs text-muted'>Trạng thái hiện tại</div> : null}</div></div>)}</div></CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Điểm nhận' value={coordinate(trip.pickup)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Điểm đến / trả xe' value={coordinate(trip.destination)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Quãng đường dự kiến' value={km(trip.estimated_distance_m)} icon={Gauge} /><InfoCard label='Thời gian dự kiến' value={duration(trip.estimated_duration_s)} icon={Clock3} /></div>
     {trip.service_type === 'vehicle_inspection_assist' ? <InfoCard label='Kết quả đăng kiểm' value={trip.inspection_result || 'Chưa có kết quả'} detail='Kết quả đăng kiểm độc lập với trạng thái hoàn thành dịch vụ.' icon={FileCheck2} /> : null}
+  </div>;
+}
+
+function CustodyEvidenceCard({ stage, snapshot }: { stage: 'pickup' | 'return'; snapshot?: CustodyEvidenceSnapshot }) {
+  const title = stage === 'pickup' ? 'Bằng chứng nhận xe' : 'Bằng chứng trả xe';
+  const description = stage === 'pickup' ? 'Mốc bắt đầu trách nhiệm giữ phương tiện.' : 'Mốc kết thúc trách nhiệm giữ phương tiện.';
+  if (!snapshot) {
+    return <div className='rounded-2xl border border-dashed border-border bg-surface-soft/55 p-4'><div className='flex items-start justify-between gap-3'><div><div className='font-semibold text-foreground'>{title}</div><p className='mt-1 text-xs leading-5 text-muted'>{description}</p></div><Badge variant='secondary'>Chưa có</Badge></div><p className='mt-5 text-sm leading-6 text-muted'>Chưa có tình trạng xe/ảnh/xác nhận được ghi nhận cho mốc này.</p></div>;
+  }
+  const evidence = snapshot.evidence;
+  const metrics = [
+    evidence.odometer_km !== undefined ? `${evidence.odometer_km.toLocaleString('vi-VN')} km` : '',
+    evidence.fuel_percent !== undefined ? `Xăng ${evidence.fuel_percent}%` : '',
+    evidence.battery_percent !== undefined ? `Pin ${evidence.battery_percent}%` : '',
+  ].filter(Boolean);
+  return <div className={`rounded-2xl border p-4 ${snapshot.ready ? 'border-primary/15 bg-primary-soft/35' : 'border-border bg-surface'}`}>
+    <div className='flex items-start justify-between gap-3'><div><div className='font-semibold text-foreground'>{title}</div><p className='mt-1 text-xs leading-5 text-muted'>{description}</p></div><Badge variant={snapshot.ready ? 'success' : 'warning'}>{snapshot.ready ? 'Đã xác nhận đủ' : 'Chưa hoàn tất'}</Badge></div>
+    <div className='mt-4 rounded-xl bg-surface-soft p-3'><div className='text-[11px] font-semibold uppercase tracking-[.08em] text-muted'>Tình trạng xe</div><p className='mt-1.5 text-sm leading-6 text-foreground'>{evidence.condition_note || 'Chưa có ghi chú tình trạng.'}</p>{metrics.length ? <div className='mt-2 flex flex-wrap gap-1.5'>{metrics.map(metric => <Badge key={metric} variant='outline'>{metric}</Badge>)}</div> : null}</div>
+    <div className='mt-4'><div className='flex items-center justify-between gap-2'><span className='text-xs font-semibold text-muted'>Ảnh bằng chứng</span><span className='text-xs text-muted'>{snapshot.photos.length} ảnh</span></div>{snapshot.photos.length ? <div className='mt-2 grid grid-cols-2 gap-2'>{snapshot.photos.map(item => item.view?.url ? <a key={item.photo.id} href={item.view.url} target='_blank' rel='noreferrer' className='group overflow-hidden rounded-xl border border-border bg-surface'><img src={item.view.url} alt={`Bằng chứng ${item.photo.photo_type}`} loading='lazy' className='aspect-[4/3] w-full object-cover transition duration-200 group-hover:scale-[1.02]' /><div className='truncate px-2 py-1.5 text-[10px] font-medium text-muted'>{item.photo.photo_type} · {item.photo.filename}</div></a> : <div key={item.photo.id} className='rounded-xl border border-border bg-surface p-3'><FileCheck2 aria-hidden='true' className='size-4 text-primary' /><div className='mt-2 truncate text-[10px] font-medium text-muted'>{item.photo.photo_type} · {item.photo.filename}</div></div>)}</div> : <p className='mt-2 text-xs text-muted'>Chưa có ảnh được hoàn tất upload.</p>}</div>
+    <div className='mt-4 grid gap-2 sm:grid-cols-2'><div className='rounded-xl border border-border bg-surface p-3'><div className='text-[10px] font-semibold uppercase tracking-[.08em] text-muted'>Tài xế</div><div className={`mt-1.5 text-xs font-semibold ${evidence.driver_confirmed_at ? 'text-primary' : 'text-muted'}`}>{evidence.driver_confirmed_at ? `Đã xác nhận · ${formatDate(evidence.driver_confirmed_at)}` : 'Chưa xác nhận'}</div></div><div className='rounded-xl border border-border bg-surface p-3'><div className='text-[10px] font-semibold uppercase tracking-[.08em] text-muted'>Khách hàng</div><div className={`mt-1.5 text-xs font-semibold ${evidence.rider_confirmed_at ? 'text-primary' : 'text-muted'}`}>{evidence.rider_confirmed_at ? `Đã xác nhận · ${formatDate(evidence.rider_confirmed_at)}` : 'Chưa xác nhận'}</div></div></div>
+    <div className='mt-3 text-[10px] leading-5 text-muted'>Cập nhật {formatDate(evidence.updated_at)}. Nếu tình trạng hoặc ảnh thay đổi sau khi xác nhận, backend tự reset xác nhận hai bên.</div>
   </div>;
 }
 

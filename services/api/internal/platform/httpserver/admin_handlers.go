@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"flashx/services/api/internal/auth"
@@ -57,6 +58,22 @@ func (s *Server) adminDrivers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
 }
 
+func (s *Server) activeAdminID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	adminID, ok := s.actorID(w, r, auth.RoleAdmin, "X-Dev-Admin-ID")
+	if !ok {
+		return "", false
+	}
+	if s.deps.Admin == nil {
+		writeError(w, http.StatusServiceUnavailable, "ADMIN_UNAVAILABLE", "Admin service is unavailable", nil)
+		return "", false
+	}
+	if _, err := s.deps.Admin.Get(adminID); err != nil {
+		writeError(w, http.StatusForbidden, "ADMIN_FORBIDDEN", "Admin account is not active", nil)
+		return "", false
+	}
+	return adminID, true
+}
+
 type driverApprovalRequest struct {
 	Status drivers.ApprovalStatus `json:"status"`
 	Reason string                 `json:"reason"`
@@ -81,6 +98,110 @@ func (s *Server) adminTrips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminCustomers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	if s.deps.Users == nil {
+		writeError(w, http.StatusServiceUnavailable, "CUSTOMERS_UNAVAILABLE", "Customer service is unavailable", nil)
+		return
+	}
+	items, err := s.deps.Users.ListAll(300)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to list customers", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminVehicles(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	if s.deps.CustomerVehicles == nil {
+		writeError(w, http.StatusServiceUnavailable, "VEHICLES_UNAVAILABLE", "Customer vehicle service is unavailable", nil)
+		return
+	}
+	items, err := s.deps.CustomerVehicles.ListAll(300)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to list customer vehicles", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminPricing(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	if s.deps.Pricing == nil {
+		writeError(w, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Pricing service is unavailable", nil)
+		return
+	}
+	items := s.deps.Pricing.Rules()
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.deps.Admin.ListAudit(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Unable to list audit logs", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{
+		"app_env":            s.deps.AppEnv,
+		"persistence":        s.deps.Persistence,
+		"allow_dev_identity": s.deps.AllowDevIdentity,
+		"supported_services": []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection},
+		"features": map[string]bool{
+			"realtime":         s.deps.Realtime != nil,
+			"driver_documents": s.deps.DriverDocuments != nil,
+			"payments":         s.deps.Payments != nil,
+			"ratings":          s.deps.Ratings != nil,
+		},
+	}})
+}
+
+type resolveIncidentRequest struct {
+	Note string `json:"note"`
+}
+
+func (s *Server) adminResolveIncident(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := s.activeAdminID(w, r)
+	if !ok {
+		return
+	}
+	var req resolveIncidentRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	trip, err := s.deps.Trips.ResolveIncident(r.PathValue("id"))
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	if err := s.deps.Admin.Audit(adminID, "trip.incident_resolved", "trip", trip.ID, map[string]any{
+		"incident_type": trip.IncidentType,
+		"note":          strings.TrimSpace(req.Note),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Incident was resolved but audit write failed", nil)
+		return
+	}
+	s.publishTrip(trip, "trip.incident_resolved", trip)
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: trip})
 }
 
 func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {

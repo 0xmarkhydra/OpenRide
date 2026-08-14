@@ -15,6 +15,7 @@ type Store interface {
 	Create(Vehicle) error
 	Get(id string) (Vehicle, error)
 	ListByOwner(ownerUserID string) ([]Vehicle, error)
+	ListAll(limit int) ([]Vehicle, error)
 }
 
 type MemoryStore struct {
@@ -59,5 +60,22 @@ func (s *MemoryStore) ListByOwner(ownerUserID string) ([]Vehicle, error) {
 		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	return items, nil
+}
+
+func (s *MemoryStore) ListAll(limit int) ([]Vehicle, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	items := make([]Vehicle, 0, len(s.vehicles))
+	for _, vehicle := range s.vehicles {
+		items = append(items, vehicle)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	if len(items) > limit {
+		items = items[:limit]
+	}
 	return items, nil
 }

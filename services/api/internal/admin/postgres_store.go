@@ -58,6 +58,35 @@ func (s *PostgresStore) AppendAudit(entry AuditEntry) error {
 	return err
 }
 
+func (s *PostgresStore) ListAudit(limit int) ([]AuditEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT actor_type, COALESCE(actor_id,''), action, resource_type, COALESCE(resource_id,''), metadata, created_at
+		FROM audit_logs ORDER BY created_at DESC LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]AuditEntry, 0)
+	for rows.Next() {
+		var entry AuditEntry
+		var rawMetadata []byte
+		if err := rows.Scan(&entry.ActorType, &entry.ActorID, &entry.Action, &entry.ResourceType, &entry.ResourceID, &rawMetadata, &entry.CreatedAt); err != nil {
+			return nil, err
+		}
+		if len(rawMetadata) > 0 {
+			_ = json.Unmarshal(rawMetadata, &entry.Metadata)
+		}
+		items = append(items, entry)
+	}
+	return items, rows.Err()
+}
+
 const adminSelect = `
 	SELECT id, COALESCE(phone,''), email, display_name, role, status, created_at, updated_at
 	FROM admin_users`

@@ -2,6 +2,7 @@ package users
 
 import (
 	"errors"
+	"sort"
 	"sync"
 )
 
@@ -14,6 +15,7 @@ type Store interface {
 	Create(User) error
 	Get(id string) (User, error)
 	GetByPhone(phone string) (User, error)
+	ListAll(limit int) ([]User, error)
 	Save(User) error
 }
 
@@ -59,6 +61,23 @@ func (s *MemoryStore) GetByPhone(phone string) (User, error) {
 		return User{}, ErrNotFound
 	}
 	return s.users[id], nil
+}
+
+func (s *MemoryStore) ListAll(limit int) ([]User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	items := make([]User, 0, len(s.users))
+	for _, user := range s.users {
+		items = append(items, user)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
 }
 
 func (s *MemoryStore) Save(user User) error {

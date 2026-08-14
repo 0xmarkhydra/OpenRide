@@ -32,6 +32,16 @@ type rule struct {
 	minimumMinor  int64
 }
 
+type RuleSnapshot struct {
+	ServiceType    string `json:"service_type"`
+	BaseFareMinor  int64  `json:"base_fare_minor"`
+	PerKMMinor     int64  `json:"per_km_minor"`
+	ServiceMinor   int64  `json:"service_minor"`
+	MinimumMinor   int64  `json:"minimum_minor"`
+	Currency       string `json:"currency"`
+	PricingVersion string `json:"pricing_version"`
+}
+
 type Service struct {
 	rules   map[string]rule
 	routing routing.Provider
@@ -51,6 +61,23 @@ func NewServiceWithRouting(provider routing.Provider) *Service {
 			trips.ServiceVehicleInspection:    {baseFareMinor: 0, perKMMinor: 5_000, serviceMinor: 299_000, minimumMinor: 299_000},
 		},
 	}
+}
+
+func (s *Service) Rules() []RuleSnapshot {
+	order := []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection}
+	items := make([]RuleSnapshot, 0, len(order))
+	for _, serviceType := range order {
+		rule, ok := s.rules[serviceType]
+		if !ok {
+			continue
+		}
+		items = append(items, RuleSnapshot{
+			ServiceType: serviceType, BaseFareMinor: rule.baseFareMinor, PerKMMinor: rule.perKMMinor,
+			ServiceMinor: rule.serviceMinor, MinimumMinor: rule.minimumMinor, Currency: "VND",
+			PricingVersion: "marketplace-demo-v1",
+		})
+	}
+	return items
 }
 
 func (s *Service) Estimate(pickup, destination trips.Point, serviceType string) (Estimate, error) {

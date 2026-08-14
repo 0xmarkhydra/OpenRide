@@ -128,6 +128,12 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/admin/drivers/{id}/documents", s.adminDriverDocuments)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/documents/{documentID}/review", s.adminReviewDriverDocument)
 	mux.HandleFunc("GET /v1/admin/trips", s.adminTrips)
+	mux.HandleFunc("POST /v1/admin/trips/{id}/incident/resolve", s.adminResolveIncident)
+	mux.HandleFunc("GET /v1/admin/customers", s.adminCustomers)
+	mux.HandleFunc("GET /v1/admin/vehicles", s.adminVehicles)
+	mux.HandleFunc("GET /v1/admin/pricing", s.adminPricing)
+	mux.HandleFunc("GET /v1/admin/audit", s.adminAudit)
+	mux.HandleFunc("GET /v1/admin/system", s.adminSystem)
 	mux.HandleFunc("GET /v1/admin/dashboard", s.adminDashboard)
 
 	s.server = &http.Server{

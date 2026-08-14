@@ -14,6 +14,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
@@ -36,6 +37,7 @@ type Dependencies struct {
 	Drivers             *drivers.Service
 	CustomerVehicles    *customervehicles.Service
 	DriverDocuments     *driverdocs.Service
+	CustodyEvidence     *custodyevidence.Service
 	Dispatch            *dispatch.Engine
 	Ride                *ride.Service
 	Pricing             *pricing.Service
@@ -96,6 +98,8 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/trips/{id}/rating", s.getTripRating)
 	mux.HandleFunc("POST /v1/trips/{id}/rating", s.createTripRating)
 	mux.HandleFunc("POST /v1/trips/{id}/cancel", s.cancelTrip)
+	mux.HandleFunc("GET /v1/trips/{id}/custody", s.riderTripCustodyEvidence)
+	mux.HandleFunc("POST /v1/trips/{id}/custody/{stage}/confirm", s.riderConfirmCustodyEvidence)
 
 	mux.HandleFunc("POST /v1/dev/drivers", s.registerDevDriver)
 	mux.HandleFunc("GET /v1/driver/me", s.driverMe)
@@ -109,6 +113,11 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/driver/offers/current", s.currentDriverOffer)
 	mux.HandleFunc("GET /v1/driver/trips", s.driverTrips)
 	mux.HandleFunc("GET /v1/driver/trips/{id}", s.driverTripDetail)
+	mux.HandleFunc("GET /v1/driver/trips/{id}/custody", s.driverTripCustodyEvidence)
+	mux.HandleFunc("PUT /v1/driver/trips/{id}/custody/{stage}", s.driverUpdateCustodyEvidence)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/photos/upload-url", s.driverPrepareCustodyPhotoUpload)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/photos/complete", s.driverCompleteCustodyPhotoUpload)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/confirm", s.driverConfirmCustodyEvidence)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/accept", s.acceptDriverOffer)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/reject", s.rejectDriverOffer)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arriving", s.driverTripArriving)
@@ -133,6 +142,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/admin/drivers/{id}/documents", s.adminDriverDocuments)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/documents/{documentID}/review", s.adminReviewDriverDocument)
 	mux.HandleFunc("GET /v1/admin/trips", s.adminTrips)
+	mux.HandleFunc("GET /v1/admin/trips/{id}/custody", s.adminTripCustodyEvidence)
 	mux.HandleFunc("GET /v1/admin/trips/{id}/driver-candidates", s.adminTripDriverCandidates)
 	mux.HandleFunc("POST /v1/admin/trips/{id}/assign-driver", s.adminAssignTripDriver)
 	mux.HandleFunc("POST /v1/admin/trips/{id}/incident/resolve", s.adminResolveIncident)
@@ -389,6 +399,8 @@ func (s *Server) writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "TRIP_NOT_FOUND", "Trip was not found", nil)
 	case errors.Is(err, trips.ErrForbidden):
 		writeError(w, http.StatusForbidden, "TRIP_FORBIDDEN", "Trip is not accessible by this actor", nil)
+	case errors.Is(err, custodyevidence.ErrNotReady):
+		writeError(w, http.StatusConflict, "CUSTODY_EVIDENCE_REQUIRED", "Both driver and customer must confirm the required vehicle custody evidence before this action", nil)
 	case errors.Is(err, trips.ErrInvalidState):
 		writeError(w, http.StatusConflict, "TRIP_INVALID_STATE", "Trip cannot perform this action from its current state", nil)
 	case errors.Is(err, trips.ErrInvalidInput):

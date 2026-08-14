@@ -2,17 +2,21 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/objectstorage"
 	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/idempotency"
@@ -22,6 +26,20 @@ import (
 	"flashx/services/api/internal/trips"
 	"flashx/services/api/internal/users"
 )
+
+type testStorageSigner struct{}
+
+func (testStorageSigner) SignPut(_ context.Context, key, contentType string, contentLength int64) (objectstorage.SignedRequest, error) {
+	return objectstorage.SignedRequest{Method: "PUT", URL: "https://storage.test/put/" + key, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (testStorageSigner) SignGet(_ context.Context, key string) (objectstorage.SignedRequest, error) {
+	return objectstorage.SignedRequest{Method: "GET", URL: "https://storage.test/get/" + key, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (testStorageSigner) SignDelete(_ context.Context, key string) (objectstorage.SignedRequest, error) {
+	return objectstorage.SignedRequest{Method: "DELETE", URL: "https://storage.test/delete/" + key, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
 
 func newTestServer() *Server {
 	tripService := trips.NewService(trips.NewMemoryStore())
@@ -44,6 +62,7 @@ func newTestServer() *Server {
 	settingsService.SetApplyHook(func(settings operationalsettings.Config) {
 		dispatchEngine.UpdatePolicy(settings.DispatchMaxDistanceM, settings.DriverLocationMaxAgeSeconds)
 	})
+	custodyEvidenceService := custodyevidence.NewService(custodyevidence.NewMemoryStore(), nil, tripService)
 	return New(":0", Dependencies{
 		AppEnv:              "test",
 		Persistence:         "memory",
@@ -51,6 +70,7 @@ func newTestServer() *Server {
 		Trips:               tripService,
 		Drivers:             driverService,
 		CustomerVehicles:    vehicleService,
+		CustodyEvidence:     custodyEvidenceService,
 		Users:               userService,
 		Admin:               adminService,
 		Dispatch:            dispatchEngine,
@@ -405,6 +425,167 @@ func TestAdminOTPApprovesDriverThenDriverCanGoOnline(t *testing.T) {
 	})
 	if online.Code != http.StatusOK {
 		t.Fatalf("approved driver online status=%d body=%s", online.Code, online.Body.String())
+	}
+}
+
+func TestCustodyEvidenceHTTPContract(t *testing.T) {
+	s := newTestServer()
+	_, adminHeaders := adminSession(t, s)
+
+	customer, _, err := s.deps.Users.FindOrCreateByPhone("0911000111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := s.deps.Drivers.RegisterApproved("driver-custody-http", "Driver Custody", trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := s.deps.Trips.Create(trips.CreateInput{
+		RiderID:            customer.ID,
+		ServiceType:        trips.ServiceDesignatedDriverCar,
+		Pickup:             trips.Point{Lat: 19.807, Lng: 105.776},
+		Destination:        trips.Point{Lat: 19.82, Lng: 105.79},
+		EstimatedDistanceM: 5000,
+		EstimatedDurationS: 900,
+		FareBreakdown:      trips.FareBreakdown{TotalMinor: 180000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.AssignDriver(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArriving(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArrived(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	driverHeaders := map[string]string{"X-Dev-Driver-ID": driver.ID}
+	riderHeaders := map[string]string{"X-Dev-Rider-ID": customer.ID}
+	updated := perform(t, s, http.MethodPut, "/v1/driver/trips/"+trip.ID+"/custody/pickup", []byte(`{"condition_note":"Ngoại thất bình thường, có vết xước cũ ở cản sau","odometer_km":18342,"fuel_percent":72}`), driverHeaders)
+	if updated.Code != http.StatusOK || !bytes.Contains(updated.Body.Bytes(), []byte(`"condition_note":"Ngoại thất bình thường`)) {
+		t.Fatalf("update custody status=%d body=%s", updated.Code, updated.Body.String())
+	}
+
+	riderView := perform(t, s, http.MethodGet, "/v1/trips/"+trip.ID+"/custody", nil, riderHeaders)
+	if riderView.Code != http.StatusOK || !bytes.Contains(riderView.Body.Bytes(), []byte(`"stage":"pickup"`)) {
+		t.Fatalf("rider custody status=%d body=%s", riderView.Code, riderView.Body.String())
+	}
+	adminView := perform(t, s, http.MethodGet, "/v1/admin/trips/"+trip.ID+"/custody", nil, adminHeaders)
+	if adminView.Code != http.StatusOK || !bytes.Contains(adminView.Body.Bytes(), []byte(`"odometer_km":18342`)) {
+		t.Fatalf("admin custody status=%d body=%s", adminView.Code, adminView.Body.String())
+	}
+
+	confirmTooSoon := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/custody/pickup/confirm", nil, driverHeaders)
+	if confirmTooSoon.Code != http.StatusConflict || !bytes.Contains(confirmTooSoon.Body.Bytes(), []byte("CUSTODY_EVIDENCE_NOT_READY")) {
+		t.Fatalf("confirm without photos status=%d body=%s", confirmTooSoon.Code, confirmTooSoon.Body.String())
+	}
+	uploadWithoutStorage := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/custody/pickup/photos/upload-url", []byte(`{"photo_type":"front","filename":"front.jpg","content_type":"image/jpeg","size_bytes":1024}`), driverHeaders)
+	if uploadWithoutStorage.Code != http.StatusServiceUnavailable || !bytes.Contains(uploadWithoutStorage.Body.Bytes(), []byte("OBJECT_STORAGE_UNAVAILABLE")) {
+		t.Fatalf("upload without storage status=%d body=%s", uploadWithoutStorage.Code, uploadWithoutStorage.Body.String())
+	}
+	forbidden := perform(t, s, http.MethodGet, "/v1/trips/"+trip.ID+"/custody", nil, map[string]string{"X-Dev-Rider-ID": "other-rider"})
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("wrong rider custody status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func TestCustodyEvidenceEnforcesLifecycleWhenStorageEnabled(t *testing.T) {
+	s := newTestServer()
+	s.deps.CustodyEvidence = custodyevidence.NewService(
+		custodyevidence.NewMemoryStore(), testStorageSigner{}, s.deps.Trips,
+	)
+
+	customer, _, err := s.deps.Users.FindOrCreateByPhone("0911000222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := s.deps.Drivers.RegisterApproved("driver-custody-gate", "Driver Custody Gate", trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := s.deps.Trips.Create(trips.CreateInput{
+		RiderID:            customer.ID,
+		ServiceType:        trips.ServiceDesignatedDriverCar,
+		Pickup:             trips.Point{Lat: 19.807, Lng: 105.776},
+		Destination:        trips.Point{Lat: 19.82, Lng: 105.79},
+		EstimatedDistanceM: 5000,
+		EstimatedDurationS: 900,
+		FareBreakdown:      trips.FareBreakdown{TotalMinor: 180000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.AssignDriver(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArriving(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArrived(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	driverHeaders := map[string]string{"X-Dev-Driver-ID": driver.ID}
+	blockedPickup := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/vehicle-received", nil, driverHeaders)
+	if blockedPickup.Code != http.StatusConflict || !bytes.Contains(blockedPickup.Body.Bytes(), []byte("CUSTODY_EVIDENCE_REQUIRED")) {
+		t.Fatalf("pickup gate status=%d body=%s", blockedPickup.Code, blockedPickup.Body.String())
+	}
+
+	prepareStage := func(stage custodyevidence.Stage, note string) {
+		t.Helper()
+		if _, err := s.deps.CustodyEvidence.UpdateByDriver(trip.ID, driver.ID, stage, custodyevidence.EvidenceInput{ConditionNote: note}); err != nil {
+			t.Fatal(err)
+		}
+		for _, photoType := range []string{"front", "rear"} {
+			ticket, err := s.deps.CustodyEvidence.PreparePhotoUpload(context.Background(), trip.ID, driver.ID, stage, custodyevidence.PhotoUploadInput{
+				PhotoType: photoType, Filename: photoType + ".jpg", ContentType: "image/jpeg", SizeBytes: 1024,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.deps.CustodyEvidence.CompletePhotoUpload(trip.ID, driver.ID, stage, custodyevidence.CompletePhotoInput{
+				PhotoID: ticket.PhotoID, PhotoType: ticket.PhotoType, ObjectKey: ticket.ObjectKey,
+				Filename: photoType + ".jpg", ContentType: "image/jpeg", SizeBytes: 1024,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.deps.CustodyEvidence.ConfirmDriver(trip.ID, driver.ID, stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prepareStage(custodyevidence.StagePickup, "Xe bình thường khi nhận")
+	stillBlockedPickup := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/vehicle-received", nil, driverHeaders)
+	if stillBlockedPickup.Code != http.StatusConflict {
+		t.Fatalf("pickup must wait rider confirmation: status=%d body=%s", stillBlockedPickup.Code, stillBlockedPickup.Body.String())
+	}
+	if _, err := s.deps.CustodyEvidence.ConfirmRider(trip.ID, customer.ID, custodyevidence.StagePickup); err != nil {
+		t.Fatal(err)
+	}
+	acceptedPickup := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/vehicle-received", nil, driverHeaders)
+	if acceptedPickup.Code != http.StatusOK {
+		t.Fatalf("pickup after bilateral confirmation status=%d body=%s", acceptedPickup.Code, acceptedPickup.Body.String())
+	}
+	started := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/start", nil, driverHeaders)
+	if started.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", started.Code, started.Body.String())
+	}
+
+	prepareStage(custodyevidence.StageReturn, "Xe bình thường khi trả")
+	blockedReturn := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/handover", nil, driverHeaders)
+	if blockedReturn.Code != http.StatusConflict || !bytes.Contains(blockedReturn.Body.Bytes(), []byte("CUSTODY_EVIDENCE_REQUIRED")) {
+		t.Fatalf("return gate status=%d body=%s", blockedReturn.Code, blockedReturn.Body.String())
+	}
+	if _, err := s.deps.CustodyEvidence.ConfirmRider(trip.ID, customer.ID, custodyevidence.StageReturn); err != nil {
+		t.Fatal(err)
+	}
+	acceptedReturn := perform(t, s, http.MethodPost, "/v1/driver/trips/"+trip.ID+"/handover", nil, driverHeaders)
+	if acceptedReturn.Code != http.StatusOK {
+		t.Fatalf("handover after bilateral confirmation status=%d body=%s", acceptedReturn.Code, acceptedReturn.Body.String())
 	}
 }
 

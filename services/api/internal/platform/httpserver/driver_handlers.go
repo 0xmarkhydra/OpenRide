@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/trips"
@@ -207,6 +208,9 @@ func (s *Server) driverTripArrived(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) driverTripVehicleReceived(w http.ResponseWriter, r *http.Request) {
 	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		if err := s.requireCustodyReady(id, custodyevidence.StagePickup); err != nil {
+			return trips.Trip{}, err
+		}
 		return s.deps.Ride.MarkVehicleReceived(id, driverID)
 	})
 }
@@ -265,6 +269,9 @@ func (s *Server) driverTripArrivedReturn(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) driverTripHandover(w http.ResponseWriter, r *http.Request) {
 	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
+		if err := s.requireCustodyReady(id, custodyevidence.StageReturn); err != nil {
+			return trips.Trip{}, err
+		}
 		return s.deps.Ride.MarkHandover(id, driverID)
 	})
 }

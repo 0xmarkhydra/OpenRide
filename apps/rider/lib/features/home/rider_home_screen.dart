@@ -237,7 +237,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
           )
         else
           DropdownButtonFormField<String>(
-            value: selectedID,
+            initialValue: selectedID,
             decoration:
                 const InputDecoration(prefixIcon: Icon(Icons.key_rounded)),
             hint: const Text('Chọn phương tiện'),
@@ -251,7 +251,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
           ),
         const SizedBox(height: 14),
         DropdownButtonFormField<String>(
-          value: _destinationName,
+          initialValue: _destinationName,
           decoration: InputDecoration(
             labelText: _serviceType == 'vehicle_inspection_assist'
                 ? 'Nơi đăng kiểm'
@@ -508,7 +508,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
                 if (!isBike) ...[
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: transmission,
+                    initialValue: transmission,
                     decoration: const InputDecoration(labelText: 'Hộp số'),
                     items: const [
                       DropdownMenuItem(
@@ -554,6 +554,8 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     final status = trip['status']?.toString() ?? '';
     final service = trip['service_type']?.toString() ?? '';
     final incidentOpen = trip['incident_open'] == true;
+    final pickupEvidence = trips.custodyFor('pickup');
+    final returnEvidence = trips.custodyFor('return');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -616,6 +618,24 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
               style: TextStyle(
                   color: FlashXTheme.success, fontWeight: FontWeight.w700)),
         ],
+        if (pickupEvidence != null) ...[
+          const SizedBox(height: 12),
+          _RiderCustodyCard(
+            stage: 'pickup',
+            snapshot: pickupEvidence,
+            busy: trips.busy,
+            onReview: () => _reviewCustodyEvidence('pickup', pickupEvidence),
+          ),
+        ],
+        if (returnEvidence != null) ...[
+          const SizedBox(height: 12),
+          _RiderCustodyCard(
+            stage: 'return',
+            snapshot: returnEvidence,
+            busy: trips.busy,
+            onReview: () => _reviewCustodyEvidence('return', returnEvidence),
+          ),
+        ],
         if (trips.canCancel) ...[
           const SizedBox(height: 14),
           OutlinedButton.icon(
@@ -626,6 +646,271 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
         ],
       ],
     );
+  }
+
+  Future<void> _reviewCustodyEvidence(
+      String stage, Map<String, dynamic> snapshot) async {
+    final evidence = Map<String, dynamic>.from(
+      snapshot['evidence'] as Map? ?? const {},
+    );
+    final photos = (snapshot['photos'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final driverConfirmed = evidence['driver_confirmed_at'] != null;
+    final riderConfirmed = evidence['rider_confirmed_at'] != null;
+    final canConfirm = driverConfirmed && !riderConfirmed;
+    final metrics = <String>[
+      if (evidence['odometer_km'] != null) '${evidence['odometer_km']} km',
+      if (evidence['fuel_percent'] != null) 'Xăng ${evidence['fuel_percent']}%',
+      if (evidence['battery_percent'] != null)
+        'Pin ${evidence['battery_percent']}%',
+    ];
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            4,
+            20,
+            24 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF3),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    stage == 'pickup'
+                        ? Icons.key_rounded
+                        : Icons.handshake_rounded,
+                    color: FlashXTheme.success,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        stage == 'pickup'
+                            ? 'Xác nhận tình trạng khi nhận xe'
+                            : 'Xác nhận tình trạng khi trả xe',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        riderConfirmed
+                            ? 'Bạn đã xác nhận bộ bằng chứng này.'
+                            : driverConfirmed
+                                ? 'Tài xế đã xác nhận. Hãy kiểm tra trước khi đồng ý.'
+                                : 'Tài xế chưa hoàn tất xác nhận.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F8FA),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Tình trạng phương tiện',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 6),
+                      Text(
+                        evidence['condition_note']
+                                    ?.toString()
+                                    .trim()
+                                    .isNotEmpty ==
+                                true
+                            ? evidence['condition_note'].toString()
+                            : 'Chưa có mô tả tình trạng xe.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      if (metrics.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: metrics
+                              .map((metric) => Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    label: Text(metric),
+                                  ))
+                              .toList(),
+                        ),
+                      ],
+                    ]),
+              ),
+              const SizedBox(height: 16),
+              Row(children: [
+                Text('Ảnh bằng chứng',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const Spacer(),
+                Text('${photos.length} ảnh',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ]),
+              const SizedBox(height: 9),
+              if (photos.isEmpty)
+                const _InfoBox(
+                  icon: Icons.photo_library_outlined,
+                  text: 'Chưa có ảnh bằng chứng được tải lên.',
+                )
+              else
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 1.12,
+                  ),
+                  itemCount: photos.length,
+                  itemBuilder: (context, index) {
+                    final item = photos[index];
+                    final photo = Map<String, dynamic>.from(
+                      item['photo'] as Map? ?? const {},
+                    );
+                    final view = Map<String, dynamic>.from(
+                      item['view'] as Map? ?? const {},
+                    );
+                    final url = view['url']?.toString() ?? '';
+                    final contentType = photo['content_type']?.toString() ?? '';
+                    final previewable = url.isNotEmpty &&
+                        const {'image/jpeg', 'image/png', 'image/webp'}
+                            .contains(contentType);
+                    return Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F3F7),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: FlashXTheme.border),
+                      ),
+                      child: previewable
+                          ? Stack(fit: StackFit.expand, children: [
+                              Image.network(
+                                url,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Center(
+                                  child: Icon(Icons.broken_image_outlined),
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  width: double.infinity,
+                                  color: const Color(0xAA0B132B),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 5),
+                                  child: Text(
+                                    photo['photo_type']?.toString() ?? 'Ảnh xe',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ])
+                          : Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.image_outlined,
+                                      color: FlashXTheme.navy),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    photo['filename']?.toString() ??
+                                        'Ảnh bằng chứng',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                  if (contentType == 'image/heic' ||
+                                      contentType == 'image/heif')
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 3),
+                                      child: Text('HEIC/HEIF',
+                                          style: TextStyle(
+                                              fontSize: 9,
+                                              color:
+                                                  FlashXTheme.textSecondary)),
+                                    ),
+                                ],
+                              ),
+                            ),
+                    );
+                  },
+                ),
+              const SizedBox(height: 16),
+              _InfoBox(
+                icon: Icons.verified_user_outlined,
+                text: riderConfirmed
+                    ? 'Bạn đã xác nhận mốc này. Nếu tài xế thay đổi ghi chú hoặc thêm ảnh, backend sẽ tự yêu cầu xác nhận lại.'
+                    : canConfirm
+                        ? 'Khi bấm xác nhận, bạn đồng ý bộ ảnh và tình trạng trên phản ánh phương tiện tại mốc ${stage == 'pickup' ? 'nhận xe' : 'trả xe'}.'
+                        : 'Chờ tài xế hoàn tất tối thiểu 2 ảnh và xác nhận trước.',
+              ),
+              const SizedBox(height: 14),
+              if (canConfirm)
+                FilledButton.icon(
+                  onPressed: trips.busy
+                      ? null
+                      : () => Navigator.pop(sheetContext, true),
+                  icon: const Icon(Icons.verified_rounded),
+                  label: Text(stage == 'pickup'
+                      ? 'Tôi xác nhận tình trạng khi nhận xe'
+                      : 'Tôi xác nhận tình trạng khi trả xe'),
+                )
+              else
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(sheetContext, false),
+                  child: const Text('Đóng'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final ok = await trips.confirmCustody(stage);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(ok
+              ? 'Đã xác nhận tình trạng phương tiện.'
+              : trips.error ?? 'Không thể xác nhận bằng chứng.'),
+        ));
+    }
   }
 
   Widget _activity() {
@@ -817,10 +1102,12 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     if (status == 'inspection_completed') {
       return 'Kết quả đăng kiểm được lưu riêng; FlashX tiếp tục đưa xe về và bàn giao cho bạn.';
     }
-    if (status == 'scheduled')
+    if (status == 'scheduled') {
       return 'FlashX sẽ bắt đầu tìm người thực hiện gần giờ hẹn.';
-    if (status == 'searching')
+    }
+    if (status == 'searching') {
       return 'Hệ thống đang kết nối với tài xế/đối tác đủ điều kiện.';
+    }
     if (status == 'completed') return 'Cảm ơn bạn đã sử dụng FlashX.';
     return service == 'vehicle_inspection_assist'
         ? 'Theo dõi từng bước nhận xe, đăng kiểm và trả xe tại đây.'
@@ -957,6 +1244,112 @@ class _ServiceCard extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _RiderCustodyCard extends StatelessWidget {
+  const _RiderCustodyCard({
+    required this.stage,
+    required this.snapshot,
+    required this.busy,
+    required this.onReview,
+  });
+
+  final String stage;
+  final Map<String, dynamic> snapshot;
+  final bool busy;
+  final VoidCallback onReview;
+
+  @override
+  Widget build(BuildContext context) {
+    final evidence = Map<String, dynamic>.from(
+      snapshot['evidence'] as Map? ?? const {},
+    );
+    final photos = snapshot['photos'] as List? ?? const [];
+    final driverConfirmed = evidence['driver_confirmed_at'] != null;
+    final riderConfirmed = evidence['rider_confirmed_at'] != null;
+    final ready = snapshot['ready'] == true;
+    final needsAction = driverConfirmed && !riderConfirmed;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: needsAction
+            ? const Color(0xFFFFF8E8)
+            : ready
+                ? const Color(0xFFECFDF3)
+                : const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: needsAction
+              ? const Color(0xFFFEC84B)
+              : ready
+                  ? const Color(0xFFABEFC6)
+                  : FlashXTheme.border,
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(
+              stage == 'pickup' ? Icons.key_rounded : Icons.handshake_rounded,
+              color: needsAction ? FlashXTheme.warning : FlashXTheme.success,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                stage == 'pickup' ? 'Bằng chứng nhận xe' : 'Bằng chứng trả xe',
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                ready
+                    ? 'Hai bên đã xác nhận'
+                    : needsAction
+                        ? 'Tài xế đã xác nhận · đến lượt bạn'
+                        : 'Đang được tài xế hoàn thiện',
+                style: TextStyle(
+                  color: needsAction
+                      ? FlashXTheme.warning
+                      : ready
+                          ? FlashXTheme.success
+                          : FlashXTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ]),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              '${photos.length} ảnh',
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: busy ? null : onReview,
+          icon: Icon(needsAction
+              ? Icons.verified_user_outlined
+              : Icons.visibility_outlined),
+          label: Text(needsAction ? 'Kiểm tra & xác nhận' : 'Xem bằng chứng'),
+        ),
+      ]),
+    );
+  }
 }
 
 class _InfoBox extends StatelessWidget {

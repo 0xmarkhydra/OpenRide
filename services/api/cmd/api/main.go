@@ -11,6 +11,7 @@ import (
 
 	"flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
+	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
@@ -49,6 +50,7 @@ func main() {
 		paymentStore             payments.Store
 		ratingStore              ratings.Store
 		documentStore            driverdocs.Store
+		custodyEvidenceStore     custodyevidence.Store
 		pricingStore             pricing.Store
 		operationalSettingsStore operationalsettings.Store
 		dispatchOffers           dispatch.OfferStore
@@ -70,6 +72,7 @@ func main() {
 		paymentStore = payments.NewMemoryStore()
 		ratingStore = ratings.NewMemoryStore()
 		documentStore = driverdocs.NewMemoryStore()
+		custodyEvidenceStore = custodyevidence.NewMemoryStore()
 		pricingStore = pricing.NewMemoryStore()
 		operationalSettingsStore = operationalsettings.NewMemoryStore()
 		dispatchOffers = dispatch.NewMemoryOfferStore()
@@ -94,6 +97,7 @@ func main() {
 		paymentStore = payments.NewPostgresStore(resources.Postgres)
 		ratingStore = ratings.NewPostgresStore(resources.Postgres)
 		documentStore = driverdocs.NewPostgresStore(resources.Postgres)
+		custodyEvidenceStore = custodyevidence.NewPostgresStore(resources.Postgres)
 		pricingStore = pricing.NewPostgresStore(resources.Postgres)
 		operationalSettingsStore = operationalsettings.NewPostgresStore(resources.Postgres)
 		dispatchOffers = dispatch.NewRedisOfferStore(resources.Redis, "flashx")
@@ -183,6 +187,7 @@ func main() {
 	paymentService := payments.NewService(paymentStore)
 	ratingService := ratings.NewService(ratingStore, tripService)
 	driverDocumentService := driverdocs.NewService(documentStore, storageSigner)
+	custodyEvidenceService := custodyevidence.NewService(custodyEvidenceStore, storageSigner, tripService)
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	operationalSettingsService, err := operationalsettings.NewService(operationalSettingsStore)
 	if err != nil {
@@ -201,6 +206,7 @@ func main() {
 		Drivers:             driverService,
 		CustomerVehicles:    vehicleService,
 		DriverDocuments:     driverDocumentService,
+		CustodyEvidence:     custodyEvidenceService,
 		Users:               userService,
 		Admin:               adminService,
 		Dispatch:            dispatchEngine,

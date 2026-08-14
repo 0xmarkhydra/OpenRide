@@ -406,6 +406,7 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 		"features": map[string]bool{
 			"realtime":         s.deps.Realtime != nil,
 			"driver_documents": s.deps.DriverDocuments != nil,
+			"custody_evidence": s.deps.CustodyEvidence != nil,
 			"payments":         s.deps.Payments != nil,
 			"ratings":          s.deps.Ratings != nil,
 		},

@@ -41,8 +41,8 @@ func setupDispatch(t *testing.T) (*Engine, *drivers.Service, *trips.Service, tri
 
 	trip, err := tripService.Create(trips.CreateInput{
 		RiderID: "rider-1", ServiceType: "bike",
-		Pickup: trips.Point{Lat: 21.0285, Lng: 105.8542},
-		Destination: trips.Point{Lat: 21.0350, Lng: 105.8100},
+		Pickup:        trips.Point{Lat: 21.0285, Lng: 105.8542},
+		Destination:   trips.Point{Lat: 21.0350, Lng: 105.8100},
 		FareBreakdown: trips.FareBreakdown{TotalMinor: 40000},
 	})
 	if err != nil {
@@ -144,5 +144,65 @@ func TestNoCandidateWhenDriversOffline(t *testing.T) {
 	engine := NewEngine(driverService, tripService)
 	if _, err := engine.CreateOffer(trip.ID); !errors.Is(err, ErrNoCandidate) {
 		t.Fatalf("error = %v, want ErrNoCandidate", err)
+	}
+}
+
+func TestManualAssignUsesEligibleDriverAndInvalidatesOffer(t *testing.T) {
+	engine, driverService, tripService, trip := setupDispatch(t)
+	pending, err := engine.CreateOffer(trip.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.DriverID != "driver-near" {
+		t.Fatalf("pending driver = %s, want driver-near", pending.DriverID)
+	}
+
+	assigned, err := engine.ManualAssign(trip.ID, "driver-far")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assigned.DriverID != "driver-far" || assigned.Status != trips.StatusAccepted {
+		t.Fatalf("unexpected manually assigned trip: %+v", assigned)
+	}
+	far, err := driverService.Get("driver-far")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if far.Availability != drivers.AvailabilityBusy {
+		t.Fatalf("driver-far availability = %s, want busy", far.Availability)
+	}
+	storedOffer, err := engine.offers.Get(pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedOffer.Status != OfferInvalid {
+		t.Fatalf("offer status = %s, want invalidated", storedOffer.Status)
+	}
+	storedTrip, err := tripService.Get(trip.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedTrip.DriverID != "driver-far" {
+		t.Fatalf("stored driver = %s, want driver-far", storedTrip.DriverID)
+	}
+}
+
+func TestManualReassignBlockedAfterVehicleReceived(t *testing.T) {
+	engine, _, tripService, trip := setupDispatch(t)
+	assigned, err := engine.ManualAssign(trip.ID, "driver-near")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tripService.MarkArriving(assigned.ID, "driver-near"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tripService.MarkArrived(assigned.ID, "driver-near"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tripService.MarkVehicleReceived(assigned.ID, "driver-near"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.ManualAssign(assigned.ID, "driver-far"); !errors.Is(err, trips.ErrInvalidState) {
+		t.Fatalf("error = %v, want trips.ErrInvalidState", err)
 	}
 }

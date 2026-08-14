@@ -18,8 +18,8 @@ var (
 )
 
 type NearbyDriver struct {
-	Driver    Driver
-	DistanceM float64
+	Driver    Driver  `json:"driver"`
+	DistanceM float64 `json:"distance_to_pickup_m"`
 }
 
 type Service struct {

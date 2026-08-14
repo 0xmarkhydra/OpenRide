@@ -16,6 +16,7 @@ import (
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/objectstorage"
+	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/config"
 	"flashx/services/api/internal/platform/httpserver"
@@ -37,21 +38,23 @@ func main() {
 	defer stop()
 
 	var (
-		tripStore        trips.Store
-		driverStore      drivers.Store
-		vehicleStore     customervehicles.Store
-		userStore        users.Store
-		locationIndex    drivers.LocationIndex
-		idempotencyStore idempotency.Store
-		authStore        auth.Store
-		adminStore       admin.Store
-		paymentStore     payments.Store
-		ratingStore      ratings.Store
-		documentStore    driverdocs.Store
-		dispatchOffers   dispatch.OfferStore
-		dispatchLocker   dispatch.Locker
-		resources        *persistence.Resources
-		readyCheck       func(context.Context) error
+		tripStore                trips.Store
+		driverStore              drivers.Store
+		vehicleStore             customervehicles.Store
+		userStore                users.Store
+		locationIndex            drivers.LocationIndex
+		idempotencyStore         idempotency.Store
+		authStore                auth.Store
+		adminStore               admin.Store
+		paymentStore             payments.Store
+		ratingStore              ratings.Store
+		documentStore            driverdocs.Store
+		pricingStore             pricing.Store
+		operationalSettingsStore operationalsettings.Store
+		dispatchOffers           dispatch.OfferStore
+		dispatchLocker           dispatch.Locker
+		resources                *persistence.Resources
+		readyCheck               func(context.Context) error
 	)
 
 	switch cfg.Persistence {
@@ -67,6 +70,8 @@ func main() {
 		paymentStore = payments.NewMemoryStore()
 		ratingStore = ratings.NewMemoryStore()
 		documentStore = driverdocs.NewMemoryStore()
+		pricingStore = pricing.NewMemoryStore()
+		operationalSettingsStore = operationalsettings.NewMemoryStore()
 		dispatchOffers = dispatch.NewMemoryOfferStore()
 		dispatchLocker = dispatch.NewMemoryLocker()
 	case "postgres", "persistent":
@@ -89,6 +94,8 @@ func main() {
 		paymentStore = payments.NewPostgresStore(resources.Postgres)
 		ratingStore = ratings.NewPostgresStore(resources.Postgres)
 		documentStore = driverdocs.NewPostgresStore(resources.Postgres)
+		pricingStore = pricing.NewPostgresStore(resources.Postgres)
+		operationalSettingsStore = operationalsettings.NewPostgresStore(resources.Postgres)
 		dispatchOffers = dispatch.NewRedisOfferStore(resources.Redis, "flashx")
 		dispatchLocker = dispatch.NewRedisLocker(resources.Redis, "flashx")
 		readyCheck = resources.Ready
@@ -169,33 +176,44 @@ func main() {
 	default:
 		log.Fatalf("unsupported MAPS_PROVIDER %q", cfg.MapsProvider)
 	}
-	pricingService := pricing.NewServiceWithRouting(routeProvider)
+	pricingService, err := pricing.NewServiceWithStore(routeProvider, pricingStore)
+	if err != nil {
+		log.Fatalf("configure pricing: %v", err)
+	}
 	paymentService := payments.NewService(paymentStore)
 	ratingService := ratings.NewService(ratingStore, tripService)
 	driverDocumentService := driverdocs.NewService(documentStore, storageSigner)
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
+	operationalSettingsService, err := operationalsettings.NewService(operationalSettingsStore)
+	if err != nil {
+		log.Fatalf("configure operational settings: %v", err)
+	}
+	operationalSettingsService.SetApplyHook(func(settings operationalsettings.Config) {
+		dispatchEngine.UpdatePolicy(settings.DispatchMaxDistanceM, settings.DriverLocationMaxAgeSeconds)
+	})
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
 
 	server := httpserver.New(cfg.HTTPAddr, httpserver.Dependencies{
-		AppEnv:           cfg.AppEnv,
-		Persistence:      cfg.Persistence,
-		Trips:            tripService,
-		Drivers:          driverService,
-		CustomerVehicles: vehicleService,
-		DriverDocuments:  driverDocumentService,
-		Users:            userService,
-		Admin:            adminService,
-		Dispatch:         dispatchEngine,
-		Ride:             rideService,
-		Pricing:          pricingService,
-		Payments:         paymentService,
-		Ratings:          ratingService,
-		Idempotency:      idempotencyStore,
-		Auth:             authService,
-		Realtime:         realtimeHub,
-		AllowDevIdentity: cfg.AllowDevIdentity,
-		ReadyCheck:       readyCheck,
+		AppEnv:              cfg.AppEnv,
+		Persistence:         cfg.Persistence,
+		Trips:               tripService,
+		Drivers:             driverService,
+		CustomerVehicles:    vehicleService,
+		DriverDocuments:     driverDocumentService,
+		Users:               userService,
+		Admin:               adminService,
+		Dispatch:            dispatchEngine,
+		Ride:                rideService,
+		Pricing:             pricingService,
+		OperationalSettings: operationalSettingsService,
+		Payments:            paymentService,
+		Ratings:             ratingService,
+		Idempotency:         idempotencyStore,
+		Auth:                authService,
+		Realtime:            realtimeHub,
+		AllowDevIdentity:    cfg.AllowDevIdentity,
+		ReadyCheck:          readyCheck,
 	})
 
 	errCh := make(chan error, 1)

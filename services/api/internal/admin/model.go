@@ -2,6 +2,13 @@ package admin
 
 import "time"
 
+const (
+	RoleSuperAdmin = "super_admin"
+	RoleOperations = "operations"
+	StatusActive   = "active"
+	StatusDisabled = "disabled"
+)
+
 type User struct {
 	ID          string    `json:"id"`
 	Phone       string    `json:"phone"`

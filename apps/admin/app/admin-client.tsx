@@ -44,6 +44,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 
 type TokenPair = { access_token: string; refresh_token: string; expires_at: string };
+type AdminUser = {
+  id: string;
+  phone: string;
+  email: string;
+  display_name: string;
+  role: 'super_admin' | 'operations';
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+};
 type Driver = {
   id: string;
   phone?: string;
@@ -55,6 +65,7 @@ type Driver = {
   location?: { lat: number; lng: number; captured_at?: string };
   created_at?: string;
 };
+type DriverCandidate = { driver: Driver; distance_to_pickup_m: number };
 type Trip = {
   id: string;
   rider_id: string;
@@ -110,12 +121,23 @@ type AuditEntry = {
   metadata?: Record<string, unknown>;
   created_at: string;
 };
+type OperationalSettings = {
+  designated_driver_car_enabled: boolean;
+  designated_driver_bike_enabled: boolean;
+  vehicle_inspection_assist_enabled: boolean;
+  dispatch_max_distance_m: number;
+  driver_location_max_age_seconds: number;
+  version: number;
+  updated_by?: string;
+  updated_at: string;
+};
 type SystemInfo = {
   app_env: string;
   persistence: string;
   allow_dev_identity: boolean;
   supported_services: string[];
   features: Record<string, boolean>;
+  operational_settings?: OperationalSettings;
 };
 type DriverDocument = {
   id: string;
@@ -134,8 +156,8 @@ type DriverDocumentWithURL = {
 };
 type Metrics = Record<string, number>;
 type ApiError = { error?: { message?: string; code?: string } };
-type ViewKey = 'overview' | 'trips' | 'drivers' | 'customers' | 'vehicles' | 'pricing' | 'incidents' | 'audit' | 'settings';
-type NavItem = { key: ViewKey; label: string; icon: LucideIcon };
+type ViewKey = 'overview' | 'trips' | 'drivers' | 'customers' | 'vehicles' | 'pricing' | 'incidents' | 'audit' | 'accounts' | 'settings';
+type NavItem = { key: ViewKey; label: string; icon: LucideIcon; superOnly?: boolean };
 
 class ApiHttpError extends Error {
   constructor(public status: number, message: string) {
@@ -187,6 +209,7 @@ function statusVariant(status: string, incident?: boolean): 'success' | 'warning
 function approvalLabel(status: string) {
   return ({ pending: 'Chờ duyệt', approved: 'Đã duyệt', rejected: 'Từ chối', suspended: 'Tạm khóa' } as Record<string, string>)[status] || status;
 }
+function adminRoleLabel(role: string) { return role === 'super_admin' ? 'Super Admin' : role === 'operations' ? 'Operations' : role; }
 function approvalVariant(status: string): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'approved') return 'success';
   if (status === 'rejected' || status === 'suspended') return 'destructive';
@@ -202,11 +225,36 @@ function vehicleTypeLabel(value: string) { return value === 'motorbike' ? 'Xe m�
 function km(value?: number) { return value ? `${(value / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km` : '—'; }
 function duration(value?: number) { return value ? `${Math.max(1, Math.round(value / 60))} phút` : '—'; }
 function coordinate(point?: { lat: number; lng: number }) { return point ? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` : '—'; }
+function canManageDriver(trip: Trip) {
+  return !trip.incident_open && ['searching', 'accepted', 'arriving', 'arrived', 'arriving_for_pickup', 'arrived_for_pickup'].includes(trip.status);
+}
 
 const phoneSchema = z.object({ phone: z.string().trim().min(9, 'Nhập số điện thoại Admin') });
 const otpSchema = z.object({ code: z.string().regex(/^\d{6}$/, 'OTP phải gồm 6 chữ số') });
+const pricingSchema = z.object({
+  base_fare_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  per_km_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  service_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+  minimum_minor: z.number().min(0, 'Không được âm').max(100_000_000, 'Giá trị quá lớn'),
+}).refine(values => Object.values(values).some(value => value > 0), { message: 'Ít nhất một thành phần giá phải lớn hơn 0', path: ['minimum_minor'] });
+const adminAccountSchema = z.object({
+  phone: z.string().trim().min(9, 'Nhập số điện thoại quản trị viên'),
+  display_name: z.string().trim().min(2, 'Tên hiển thị tối thiểu 2 ký tự'),
+  role: z.enum(['operations', 'super_admin']),
+});
+const operationalSettingsSchema = z.object({
+  designated_driver_car_enabled: z.boolean(),
+  designated_driver_bike_enabled: z.boolean(),
+  vehicle_inspection_assist_enabled: z.boolean(),
+  dispatch_max_distance_m: z.number().min(1000, 'Tối thiểu 1 km').max(30000, 'Tối đa 30 km'),
+  driver_location_max_age_seconds: z.number().min(5, 'Tối thiểu 5 giây').max(120, 'Tối đa 120 giây'),
+  reason: z.string().trim().min(3, 'Nhập lý do thay đổi'),
+});
 type PhoneForm = z.infer<typeof phoneSchema>;
 type OTPForm = z.infer<typeof otpSchema>;
+type PricingForm = z.infer<typeof pricingSchema>;
+type AdminAccountForm = z.infer<typeof adminAccountSchema>;
+type OperationalSettingsForm = z.infer<typeof operationalSettingsSchema>;
 
 const navItems: NavItem[] = [
   { key: 'overview', label: 'Tổng quan', icon: LayoutDashboard },
@@ -217,6 +265,7 @@ const navItems: NavItem[] = [
   { key: 'pricing', label: 'Bảng giá', icon: BadgeDollarSign },
   { key: 'incidents', label: 'Sự cố', icon: AlertTriangle },
   { key: 'audit', label: 'Nhật ký', icon: ListChecks },
+  { key: 'accounts', label: 'Quản trị viên', icon: ShieldCheck, superOnly: true },
   { key: 'settings', label: 'Cài đặt', icon: Settings },
 ];
 
@@ -232,6 +281,8 @@ export default function AdminClient() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [pricing, setPricing] = useState<PricingRule[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
+  const [adminAccounts, setAdminAccounts] = useState<AdminUser[]>([]);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -244,6 +295,9 @@ export default function AdminClient() {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [driverDocs, setDriverDocs] = useState<DriverDocumentWithURL[]>([]);
   const [driverDocsLoading, setDriverDocsLoading] = useState(false);
+  const [driverCandidates, setDriverCandidates] = useState<DriverCandidate[]>([]);
+  const [driverCandidatesLoading, setDriverCandidatesLoading] = useState(false);
+  const [assignmentReason, setAssignmentReason] = useState('');
   const [driverReason, setDriverReason] = useState('');
   const [documentNote, setDocumentNote] = useState('');
   const [incidentResolutionNote, setIncidentResolutionNote] = useState('');
@@ -261,6 +315,8 @@ export default function AdminClient() {
     localStorage.removeItem('flashx_admin_refresh_token');
     setToken(null);
     setRefreshToken(null);
+    setCurrentAdmin(null);
+    setAdminAccounts([]);
     setHasLoaded(false);
   }, []);
 
@@ -318,18 +374,26 @@ export default function AdminClient() {
   const loadReference = useCallback(async (access = token) => {
     if (!access) return;
     try {
-      const [customerData, vehicleData, pricingData, auditData, systemData] = await Promise.all([
+      const [adminData, customerData, vehicleData, pricingData, auditData, systemData] = await Promise.all([
+        authedApi<AdminUser>('/v1/admin/me', {}, access),
         authedApi<Customer[]>('/v1/admin/customers', {}, access),
         authedApi<Vehicle[]>('/v1/admin/vehicles', {}, access),
         authedApi<PricingRule[]>('/v1/admin/pricing', {}, access),
         authedApi<AuditEntry[]>('/v1/admin/audit?limit=150', {}, access),
         authedApi<SystemInfo>('/v1/admin/system', {}, access),
       ]);
+      setCurrentAdmin(adminData);
       setCustomers(customerData);
       setVehicles(vehicleData);
       setPricing(pricingData);
       setAudit(auditData);
       setSystemInfo(systemData);
+      if (adminData.role === 'super_admin') {
+        setAdminAccounts(await authedApi<AdminUser[]>('/v1/admin/accounts?limit=200', {}, access));
+      } else {
+        setAdminAccounts([]);
+        setActiveView(current => current === 'accounts' ? 'overview' : current);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Không thể tải dữ liệu quản trị');
     }
@@ -341,6 +405,24 @@ export default function AdminClient() {
     setAudit(items);
   }, [authedApi, token]);
 
+  const loadDriverCandidates = useCallback(async (trip: Trip | null) => {
+    if (!trip || !canManageDriver(trip)) {
+      setDriverCandidates([]);
+      setDriverCandidatesLoading(false);
+      return;
+    }
+    setDriverCandidatesLoading(true);
+    try {
+      setDriverCandidates(await authedApi<DriverCandidate[]>(`/v1/admin/trips/${trip.id}/driver-candidates?limit=15`));
+    } catch (candidateError) {
+      setDriverCandidates([]);
+      if (candidateError instanceof ApiHttpError && candidateError.status === 409) return;
+      setError(candidateError instanceof Error ? candidateError.message : 'Không thể tải tài xế phù hợp');
+    } finally {
+      setDriverCandidatesLoading(false);
+    }
+  }, [authedApi]);
+
   useEffect(() => {
     if (!token) return;
     void loadCore(token);
@@ -348,6 +430,11 @@ export default function AdminClient() {
     const timer = window.setInterval(() => void loadCore(token), 5000);
     return () => window.clearInterval(timer);
   }, [token, loadCore, loadReference]);
+
+  useEffect(() => {
+    setAssignmentReason('');
+    void loadDriverCandidates(selectedTrip);
+  }, [selectedTrip?.id, selectedTrip?.status, selectedTrip?.driver_id, selectedTrip?.incident_open, loadDriverCandidates]);
 
   const requestOtp = phoneForm.handleSubmit(async ({ phone }) => {
     setBusy(true);
@@ -455,6 +542,93 @@ export default function AdminClient() {
     }
   }
 
+  async function assignTripDriver(candidate: DriverCandidate) {
+    if (!selectedTrip) return;
+    const reason = assignmentReason.trim();
+    if (selectedTrip.driver_id && !reason) {
+      setError('Nhập lý do trước khi đổi tài xế cho công việc đang được nhận.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<Trip>(`/v1/admin/trips/${selectedTrip.id}/assign-driver`, {
+        method: 'POST', body: JSON.stringify({ driver_id: candidate.driver.id, reason }),
+      });
+      setTrips(items => items.map(item => item.id === updated.id ? updated : item));
+      setSelectedTrip(updated);
+      setAssignmentReason('');
+      await Promise.all([loadCore(), loadAudit(), loadDriverCandidates(updated)]);
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : 'Không thể điều phối tài xế');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updatePricingRule(serviceType: string, values: PricingForm) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<PricingRule>(`/v1/admin/pricing/${encodeURIComponent(serviceType)}`, {
+        method: 'PATCH', body: JSON.stringify(values),
+      });
+      setPricing(items => items.map(item => item.service_type === updated.service_type ? updated : item));
+      await loadAudit();
+    } catch (pricingError) {
+      setError(pricingError instanceof Error ? pricingError.message : 'Không thể cập nhật bảng giá');
+      throw pricingError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createAdminAccount(values: AdminAccountForm) {
+    setBusy(true);
+    setError('');
+    try {
+      const created = await authedApi<AdminUser>('/v1/admin/accounts', { method: 'POST', body: JSON.stringify(values) });
+      setAdminAccounts(items => [created, ...items]);
+      await loadAudit();
+    } catch (accountError) {
+      setError(accountError instanceof Error ? accountError.message : 'Không thể tạo quản trị viên');
+      throw accountError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateAdminAccount(account: AdminUser, values: { display_name: string; role: AdminUser['role']; status: AdminUser['status']; reason: string }) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<AdminUser>(`/v1/admin/accounts/${account.id}`, { method: 'PATCH', body: JSON.stringify(values) });
+      setAdminAccounts(items => items.map(item => item.id === updated.id ? updated : item));
+      if (currentAdmin?.id === updated.id) setCurrentAdmin(updated);
+      await loadAudit();
+    } catch (accountError) {
+      setError(accountError instanceof Error ? accountError.message : 'Không thể cập nhật quản trị viên');
+      throw accountError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateOperationalSettings(values: OperationalSettingsForm) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<OperationalSettings>('/v1/admin/system/operational', { method: 'PATCH', body: JSON.stringify(values) });
+      setSystemInfo(current => current ? { ...current, operational_settings: updated } : current);
+      await loadAudit();
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : 'Không thể cập nhật cấu hình vận hành');
+      throw settingsError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function logout() {
     if (refreshToken) {
       try { await api('/v1/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }); } catch {}
@@ -467,6 +641,7 @@ export default function AdminClient() {
   const customerMap = useMemo(() => new Map(customers.map(customer => [customer.id, customer])), [customers]);
   const driverMap = useMemo(() => new Map(drivers.map(driver => [driver.id, driver])), [drivers]);
   const vehicleMap = useMemo(() => new Map(vehicles.map(vehicle => [vehicle.id, vehicle])), [vehicles]);
+  const visibleNavItems = useMemo(() => navItems.filter(item => !item.superOnly || currentAdmin?.role === 'super_admin'), [currentAdmin?.role]);
 
   const tripColumns = useMemo<Array<ColumnDef<typeof dataTableFeatures, Trip>>>(() => [
     { accessorKey: 'id', header: 'Mã việc', cell: ({ row }) => <span className='font-mono text-xs font-semibold text-foreground'>{row.original.id}</span> },
@@ -511,7 +686,7 @@ export default function AdminClient() {
     return <LoginScreen challenge={challenge} debugCode={debugCode} busy={busy} error={error} phoneForm={phoneForm} otpForm={otpForm} requestOtp={requestOtp} verifyOtp={verifyOtp} resetChallenge={() => { setChallenge(''); setDebugCode(''); }} />;
   }
 
-  const activeLabel = navItems.find(item => item.key === activeView)?.label || 'Tổng quan';
+  const activeLabel = visibleNavItems.find(item => item.key === activeView)?.label || 'Tổng quan';
   const selectView = (view: ViewKey) => { setActiveView(view); setMobileNavOpen(false); };
   const initialLoading = busy && !hasLoaded;
 
@@ -544,9 +719,10 @@ export default function AdminClient() {
       </Section>;
     }
     if (activeView === 'pricing') {
-      return <Section title='Bảng giá' description='Cấu hình giá đang được backend sử dụng cho ba dịch vụ MVP.'>
-        <div className='grid gap-4 lg:grid-cols-3'>{pricing.map(rule => <Card key={rule.service_type} className='rounded-2xl shadow-none'><CardContent className='p-5'><div className='flex items-start justify-between gap-3'><div><div className='text-sm font-semibold text-primary'>{serviceLabel(rule.service_type)}</div><div className='mt-1 text-xs text-muted'>{rule.pricing_version}</div></div><Badge variant='outline'>{rule.currency}</Badge></div><div className='mt-5 grid gap-3'><PriceRow label='Giá mở cửa' value={money(rule.base_fare_minor)} /><PriceRow label='Theo km' value={`${money(rule.per_km_minor)} / km`} /><PriceRow label='Phí dịch vụ' value={money(rule.service_minor)} /><PriceRow label='Tối thiểu' value={money(rule.minimum_minor)} strong /></div></CardContent></Card>)}</div>
-        <p className='mt-4 text-sm leading-6 text-muted'>Màn này hiển thị đúng rule hiện hành. Chỉnh giá chưa được mở trên Admin vì backend hiện dùng cấu hình version cố định; không hiển thị nút chỉnh sửa giả.</p>
+      const canEditPricing = currentAdmin?.role === 'super_admin';
+      return <Section title='Bảng giá' description={canEditPricing ? 'Quản lý rule giá đang dùng thật cho ba dịch vụ MVP. Mỗi lần lưu tạo một version mới và được ghi audit.' : 'Theo dõi rule giá hiện hành. Tài khoản Operations chỉ có quyền xem.'}>
+        <div className='mb-4 rounded-2xl border border-primary/10 bg-primary-soft/55 p-4 text-sm leading-6 text-muted'><strong className='text-primary'>{canEditPricing ? 'An toàn tài chính:' : 'Quyền truy cập:'}</strong> {canEditPricing ? 'thay đổi chỉ áp dụng cho báo giá/công việc tạo sau khi lưu. Công việc đã tạo giữ nguyên fare snapshot trước đó.' : 'chỉ Super Admin mới được tạo version giá mới; quyền này cũng được backend kiểm tra, không chỉ ẩn ở giao diện.'}</div>
+        <div className='grid gap-4 xl:grid-cols-3'>{pricing.map(rule => canEditPricing ? <PricingEditor key={`${rule.service_type}:${rule.pricing_version}`} rule={rule} busy={busy} onSave={values => updatePricingRule(rule.service_type, values)} /> : <PricingSummary key={`${rule.service_type}:${rule.pricing_version}`} rule={rule} />)}</div>
       </Section>;
     }
     if (activeView === 'audit') {
@@ -554,9 +730,16 @@ export default function AdminClient() {
         <DataTable columns={auditColumns} data={audit} loading={initialLoading} searchPlaceholder='Tìm hành động, đối tượng, admin...' mobileRow={entry => <AuditMobileRow entry={entry} />} />
       </Section>;
     }
+    if (activeView === 'accounts' && currentAdmin?.role === 'super_admin') {
+      return <AdminAccountsView currentAdmin={currentAdmin} accounts={adminAccounts} busy={busy} onCreate={createAdminAccount} onUpdate={updateAdminAccount} />;
+    }
     if (activeView === 'settings') {
-      return <Section title='Cài đặt hệ thống' description='Thông tin vận hành an toàn được backend công bố cho Admin; secret không được đưa xuống trình duyệt.'>
-        {systemInfo ? <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'><SystemCard icon={Database} title='Persistence' value={systemInfo.persistence} detail={`Môi trường: ${systemInfo.app_env}`} /><SystemCard icon={Wifi} title='Realtime' value={systemInfo.features.realtime ? 'Sẵn sàng' : 'Không khả dụng'} detail='Trạng thái công việc và kết nối realtime.' /><SystemCard icon={FileCheck2} title='KYC documents' value={systemInfo.features.driver_documents ? 'Sẵn sàng' : 'Không khả dụng'} detail='Upload trực tiếp object storage + review Admin.' /><SystemCard icon={BadgeDollarSign} title='Payments' value={systemInfo.features.payments ? 'Sẵn sàng' : 'Không khả dụng'} detail='Payment service hiện được backend khởi tạo.' /><SystemCard icon={SearchCheck} title='Ratings' value={systemInfo.features.ratings ? 'Sẵn sàng' : 'Không khả dụng'} detail='Đánh giá sau công việc.' /><SystemCard icon={ShieldCheck} title='Dev identity' value={systemInfo.allow_dev_identity ? 'Đang bật' : 'Đã tắt'} detail='Chỉ dùng cho môi trường phát triển/demo khi được cấu hình.' /></div> : <InfoState icon={Settings} title='Đang tải cấu hình' text='Thông tin hệ thống chưa được đồng bộ.' />}
+      const canEditSettings = currentAdmin?.role === 'super_admin';
+      return <Section title='Cài đặt hệ thống' description='Chỉ expose các cấu hình vận hành an toàn; secret, database credential và Redis không bao giờ được đưa xuống trình duyệt.'>
+        {systemInfo ? <div className='grid gap-5'>
+          {systemInfo.operational_settings ? canEditSettings ? <OperationalSettingsEditor key={systemInfo.operational_settings.version} settings={systemInfo.operational_settings} busy={busy} onSave={updateOperationalSettings} /> : <OperationalSettingsSummary settings={systemInfo.operational_settings} /> : <InfoState icon={Settings} title='Chưa có cấu hình vận hành' text='Backend chưa công bố operational settings.' />}
+          <div><div className='mb-3 text-sm font-semibold text-foreground'>Hạ tầng chỉ đọc</div><div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'><SystemCard icon={Database} title='Persistence' value={systemInfo.persistence} detail={`Môi trường: ${systemInfo.app_env}`} /><SystemCard icon={Wifi} title='Realtime' value={systemInfo.features.realtime ? 'Sẵn sàng' : 'Không khả dụng'} detail='Trạng thái công việc và kết nối realtime.' /><SystemCard icon={FileCheck2} title='KYC documents' value={systemInfo.features.driver_documents ? 'Sẵn sàng' : 'Không khả dụng'} detail='Upload trực tiếp object storage + review Admin.' /><SystemCard icon={BadgeDollarSign} title='Payments' value={systemInfo.features.payments ? 'Sẵn sàng' : 'Không khả dụng'} detail='Payment service hiện được backend khởi tạo.' /><SystemCard icon={SearchCheck} title='Ratings' value={systemInfo.features.ratings ? 'Sẵn sàng' : 'Không khả dụng'} detail='Đánh giá sau công việc.' /><SystemCard icon={ShieldCheck} title='Dev identity' value={systemInfo.allow_dev_identity ? 'Đang bật' : 'Đã tắt'} detail='Chỉ dùng cho môi trường phát triển/demo khi được cấu hình.' /></div></div>
+        </div> : <InfoState icon={Settings} title='Đang tải cấu hình' text='Thông tin hệ thống chưa được đồng bộ.' />}
       </Section>;
     }
 
@@ -579,14 +762,14 @@ export default function AdminClient() {
   const selectedTripVehicle = selectedTrip?.customer_vehicle_id ? vehicleMap.get(selectedTrip.customer_vehicle_id) : undefined;
 
   return <div className='min-h-screen lg:grid lg:grid-cols-[264px_1fr]'>
-    <aside className='hidden border-r border-border bg-surface/80 p-4 backdrop-blur-xl lg:flex lg:min-h-screen lg:flex-col'><Brand /><nav className='mt-7 flex flex-col gap-1'>{navItems.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectView(key)} className={`flex min-h-11 items-center gap-3 rounded-2xl px-3.5 text-left text-sm font-medium transition-colors ${activeView === key ? 'bg-primary-soft text-primary' : 'text-muted hover:bg-surface-soft hover:text-foreground'}`}><Icon aria-hidden='true' className='size-[18px]' /><span>{label}</span>{activeView === key ? <span className='ml-auto size-1.5 rounded-full bg-primary' /> : null}</button>)}</nav><div className='mt-auto rounded-2xl border border-primary/10 bg-primary-soft/55 p-4'><div className='flex items-center gap-2 text-sm font-semibold text-primary'><ShieldCheck aria-hidden='true' className='size-4' /> FlashX Operations</div><p className='mt-2 text-xs leading-5 text-muted'>Ba dịch vụ MVP dùng chung một trung tâm vận hành, sự cố được ưu tiên trước.</p></div></aside>
+    <aside className='hidden border-r border-border bg-surface/80 p-4 backdrop-blur-xl lg:flex lg:min-h-screen lg:flex-col'><Brand /><nav className='mt-7 flex flex-col gap-1'>{visibleNavItems.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectView(key)} className={`flex min-h-11 items-center gap-3 rounded-2xl px-3.5 text-left text-sm font-medium transition-colors ${activeView === key ? 'bg-primary-soft text-primary' : 'text-muted hover:bg-surface-soft hover:text-foreground'}`}><Icon aria-hidden='true' className='size-[18px]' /><span>{label}</span>{activeView === key ? <span className='ml-auto size-1.5 rounded-full bg-primary' /> : null}</button>)}</nav><div className='mt-auto rounded-2xl border border-primary/10 bg-primary-soft/55 p-4'><div className='flex items-center gap-2 text-sm font-semibold text-primary'><ShieldCheck aria-hidden='true' className='size-4' /> {currentAdmin?.display_name || 'FlashX Admin'}</div><p className='mt-2 text-xs leading-5 text-muted'>{currentAdmin ? `${adminRoleLabel(currentAdmin.role)} · ${currentAdmin.phone}` : 'Đang đồng bộ quyền quản trị…'}</p></div></aside>
 
-    {mobileNavOpen ? <div className='fixed inset-0 z-50 bg-foreground/20 p-3 backdrop-blur-sm lg:hidden' onClick={() => setMobileNavOpen(false)}><div role='dialog' aria-modal='true' aria-label='Điều hướng quản trị' className='fx-glass ml-auto flex h-full w-[min(88vw,340px)] flex-col rounded-[28px] p-4' onClick={event => event.stopPropagation()}><div className='flex items-center justify-between'><Brand /><Button size='icon' variant='ghost' onClick={() => setMobileNavOpen(false)} aria-label='Đóng menu'><X aria-hidden='true' className='size-5' /></Button></div><nav className='mt-6 flex flex-col gap-1'>{navItems.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectView(key)} className={`flex min-h-12 items-center gap-3 rounded-2xl px-4 text-left text-sm font-semibold ${activeView === key ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-surface-soft'}`}><Icon aria-hidden='true' className='size-5' />{label}</button>)}</nav></div></div> : null}
+    {mobileNavOpen ? <div className='fixed inset-0 z-50 bg-foreground/20 p-3 backdrop-blur-sm lg:hidden' onClick={() => setMobileNavOpen(false)}><div role='dialog' aria-modal='true' aria-label='Điều hướng quản trị' className='fx-glass ml-auto flex h-full w-[min(88vw,340px)] flex-col rounded-[28px] p-4' onClick={event => event.stopPropagation()}><div className='flex items-center justify-between'><Brand /><Button size='icon' variant='ghost' onClick={() => setMobileNavOpen(false)} aria-label='Đóng menu'><X aria-hidden='true' className='size-5' /></Button></div><nav className='mt-6 flex flex-col gap-1'>{visibleNavItems.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => selectView(key)} className={`flex min-h-12 items-center gap-3 rounded-2xl px-4 text-left text-sm font-semibold ${activeView === key ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-surface-soft'}`}><Icon aria-hidden='true' className='size-5' />{label}</button>)}</nav></div></div> : null}
 
     <main className='min-w-0'><header className='sticky top-0 z-30 border-b border-border/80 bg-surface/80 backdrop-blur-xl'><div className='flex h-16 items-center justify-between px-4 md:px-6'><div className='flex items-center gap-3'><Button size='icon' variant='ghost' className='lg:hidden' onClick={() => setMobileNavOpen(true)} aria-label='Mở menu'><Menu aria-hidden='true' className='size-5' /></Button><div><div className='text-[11px] font-semibold uppercase tracking-[.13em] text-primary'>FlashX Operations</div><h1 className='text-lg font-semibold tracking-tight text-foreground'>{activeLabel}</h1></div></div><div className='flex items-center gap-2'><Badge variant={error ? 'destructive' : busy ? 'secondary' : 'success'}><span className={`mr-1.5 size-1.5 rounded-full ${error ? 'bg-danger' : busy ? 'bg-muted-soft' : 'bg-success'}`} />{error ? 'Cần kiểm tra' : busy ? 'Đang đồng bộ' : 'Đã đồng bộ'}</Badge><Button size='icon' variant='ghost' onClick={() => { void loadCore(); void loadReference(); }} disabled={busy} aria-label='Làm mới'><RefreshCw aria-hidden='true' className={`size-4 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /></Button><Button size='icon' variant='ghost' onClick={() => void logout()} aria-label='Đăng xuất'><LogOut aria-hidden='true' className='size-4' /></Button></div></div></header><div className='mx-auto max-w-[1500px] p-4 md:p-6 lg:p-7'>{error ? <div role='alert' className='mb-4 flex items-start justify-between gap-3 rounded-2xl border border-danger/15 bg-danger-soft p-4 text-sm text-danger'><span>{error}</span><button type='button' className='font-semibold' onClick={() => setError('')}>Đóng</button></div> : null}{renderView()}</div></main>
 
     <DetailPanel open={Boolean(selectedTrip)} title={selectedTrip ? `Công việc ${selectedTrip.id}` : 'Chi tiết công việc'} description={selectedTrip ? `${serviceLabel(selectedTrip.service_type)} · ${tripStatusLabel(selectedTrip.status)}` : undefined} onClose={() => setSelectedTrip(null)}>
-      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} /> : null}
+      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} /> : null}
     </DetailPanel>
 
     <DetailPanel open={Boolean(selectedDriver)} title={selectedDriver ? selectedDriver.full_name || selectedDriver.phone || selectedDriver.id : 'Chi tiết tài xế'} description={selectedDriver ? `${serviceLabel(selectedDriver.service_type)} · ${approvalLabel(selectedDriver.approval_status)}` : undefined} onClose={() => { setSelectedDriver(null); setDriverDocs([]); }}>
@@ -631,7 +814,7 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
   </div>;
 }
 
-function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve }: {
+function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign }: {
   trip: Trip;
   customer?: Customer;
   driver?: Driver;
@@ -640,10 +823,17 @@ function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, set
   resolutionNote: string;
   setResolutionNote: (value: string) => void;
   onResolve: () => void;
+  candidates: DriverCandidate[];
+  candidatesLoading: boolean;
+  assignmentReason: string;
+  setAssignmentReason: (value: string) => void;
+  onAssign: (candidate: DriverCandidate) => void;
 }) {
   const steps = tripSteps(trip);
+  const manageable = canManageDriver(trip);
   return <div className='grid gap-5'>
     {trip.incident_open ? <div className='rounded-2xl border border-danger/15 bg-danger-soft p-4'><div className='flex items-start gap-3'><AlertTriangle aria-hidden='true' className='mt-0.5 size-5 text-danger' /><div><div className='font-semibold text-danger'>{trip.incident_type || 'Sự cố đang mở'}</div><p className='mt-1 text-sm leading-6 text-foreground'>{trip.incident_note || 'Tài xế chưa để lại ghi chú chi tiết.'}</p></div></div><label className='mt-4 block text-sm font-semibold text-foreground'>Ghi chú xử lý<Input className='mt-1.5' value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} placeholder='Ví dụ: Đã gọi xác nhận với khách và tài xế' /></label><Button className='mt-3 w-full sm:w-auto' disabled={busy} onClick={onResolve}>Đóng sự cố</Button></div> : null}
+    <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều phối tài xế</CardTitle><CardDescription>{manageable ? 'Chỉ hiển thị tài xế đã duyệt, online, đúng năng lực và có vị trí mới gần điểm nhận.' : 'Điều phối thủ công đã khóa ở trạng thái hiện tại để bảo vệ chuỗi bàn giao xe.'}</CardDescription></div><Badge variant={manageable ? 'success' : 'secondary'}>{manageable ? 'Có thể điều phối' : 'Đã khóa'}</Badge></div></CardHeader><CardContent>{manageable ? <div className='grid gap-3'>{trip.driver_id ? <label className='block text-sm font-semibold text-foreground'>Lý do đổi tài xế<Input className='mt-1.5' value={assignmentReason} onChange={event => setAssignmentReason(event.target.value)} placeholder='Bắt buộc khi thay tài xế đang nhận việc' /></label> : null}{candidatesLoading ? Array.from({ length: 3 }, (_, index) => <div key={index} className='h-16 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />) : candidates.length ? candidates.map(candidate => <div key={candidate.driver.id} className='flex flex-col gap-3 rounded-2xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between'><div className='min-w-0'><div className='font-semibold text-foreground'>{candidate.driver.full_name || candidate.driver.phone || candidate.driver.id}</div><div className='mt-1 text-xs text-muted'>{candidate.driver.phone || candidate.driver.id} · {Math.max(0.1, candidate.distance_to_pickup_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km tới điểm nhận</div></div><Button size='sm' disabled={busy || Boolean(trip.driver_id && !assignmentReason.trim())} onClick={() => onAssign(candidate)}>{trip.driver_id ? 'Đổi tài xế' : 'Gán tài xế'}</Button></div>) : <InfoState icon={UserRound} title='Chưa có tài xế phù hợp' text='Không có tài xế online đủ năng lực với vị trí mới trong bán kính điều phối hiện tại.' />}</div> : <div className='rounded-2xl bg-surface-soft p-4 text-sm leading-6 text-muted'>{trip.status === 'vehicle_received' || !['scheduled', 'searching', 'completed', 'cancelled'].includes(trip.status) ? 'Từ lúc tài xế xác nhận đã nhận xe, FlashX không cho phép đổi tài xế theo luồng thông thường. Nếu bắt buộc phải chuyển người giữ xe, Operations phải xử lý theo quy trình sự cố/bàn giao có ghi nhận.' : 'Công việc này không ở trạng thái cho phép điều phối thủ công.'}</div>}</CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Khách hàng' value={customer?.full_name || customer?.phone || trip.rider_id} detail={customer?.phone} icon={UsersRound} /><InfoCard label='Tài xế' value={driver?.full_name || (trip.driver_id ? trip.driver_id : 'Chưa ghép')} detail={driver?.phone} icon={UserRound} /><InfoCard label='Xe khách' value={vehicle?.license_plate || trip.customer_vehicle_id || 'Chưa gắn xe'} detail={vehicle ? [vehicle.brand, vehicle.model].filter(Boolean).join(' ') : undefined} icon={CarFront} /><InfoCard label='Giá hiện tại' value={money(trip.final_fare_minor || trip.estimated_fare_minor)} detail={trip.booking_mode === 'scheduled' ? `Hẹn ${formatDate(trip.scheduled_at)}` : 'Đặt ngay'} icon={BadgeDollarSign} /></div>
     <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>FlashX Flowline</CardTitle><CardDescription>Vòng đời thực tế của {serviceLabel(trip.service_type).toLocaleLowerCase('vi')}.</CardDescription></CardHeader><CardContent><div className='grid gap-0'>{steps.map((step, index) => <div key={step.status} className='grid grid-cols-[24px_1fr] gap-3'><div className='relative flex justify-center'>{index < steps.length - 1 ? <span className={`absolute top-5 h-full w-px ${step.done ? 'bg-primary' : 'bg-border'}`} /> : null}<span className={`relative mt-1 size-3 rounded-full border-2 ${step.active ? 'fx-pulse-dot border-primary bg-surface' : step.done ? 'border-primary bg-primary' : 'border-border bg-surface'}`} /></div><div className='pb-5'><div className={`text-sm font-semibold ${step.active ? 'text-primary' : step.done ? 'text-foreground' : 'text-muted'}`}>{step.label}</div>{step.active ? <div className='mt-1 text-xs text-muted'>Trạng thái hiện tại</div> : null}</div></div>)}</div></CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Điểm nhận' value={coordinate(trip.pickup)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Điểm đến / trả xe' value={coordinate(trip.destination)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Quãng đường dự kiến' value={km(trip.estimated_distance_m)} icon={Gauge} /><InfoCard label='Thời gian dự kiến' value={duration(trip.estimated_duration_s)} icon={Clock3} /></div>
@@ -690,7 +880,76 @@ function Section({ title, description, children }: { title: string; description:
 function InfoState({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) { return <div className='rounded-3xl border border-dashed border-border bg-surface-soft/60 p-7 text-center'><div className='mx-auto grid size-12 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 font-semibold text-foreground'>{title}</div><p className='mx-auto mt-1 max-w-md text-sm leading-6 text-muted'>{text}</p></div>; }
 function InfoCard({ label, value, detail, icon: Icon }: { label: string; value: string; detail?: string; icon: LucideIcon }) { return <div className='rounded-2xl border border-border bg-surface p-4'><div className='flex items-start gap-3'><div className='grid size-10 shrink-0 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-4' /></div><div className='min-w-0'><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 break-words font-semibold text-foreground'>{value}</div>{detail ? <div className='mt-1 text-xs leading-5 text-muted'>{detail}</div> : null}</div></div></div>; }
 function MiniMetric({ label, value, tone }: { label: string; value: number; tone?: 'warning' }) { return <div className={`rounded-2xl border p-4 ${tone === 'warning' && value ? 'border-warning/15 bg-warning-soft/40' : 'border-border bg-surface-soft/45'}`}><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 text-2xl font-bold tracking-tight text-foreground'>{value}</div></div>; }
-function PriceRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) { return <div className='flex items-center justify-between gap-3 border-b border-border pb-3 last:border-0 last:pb-0'><span className='text-sm text-muted'>{label}</span><span className={strong ? 'font-bold text-foreground' : 'font-semibold text-foreground'}>{value}</span></div>; }
+function AdminAccountsView({ currentAdmin, accounts, busy, onCreate, onUpdate }: { currentAdmin: AdminUser; accounts: AdminUser[]; busy: boolean; onCreate: (values: AdminAccountForm) => Promise<void>; onUpdate: (account: AdminUser, values: { display_name: string; role: AdminUser['role']; status: AdminUser['status']; reason: string }) => Promise<void> }) {
+  const form = useForm<AdminAccountForm>({ resolver: zodResolver(adminAccountSchema), defaultValues: { phone: '', display_name: '', role: 'operations' } });
+  const submit = form.handleSubmit(async values => { try { await onCreate(values); form.reset({ phone: '', display_name: '', role: 'operations' }); } catch {} });
+  const active = accounts.filter(item => item.status === 'active').length;
+  const superAdmins = accounts.filter(item => item.status === 'active' && item.role === 'super_admin').length;
+  return <Section title='Quản trị viên' description='Tài khoản Admin dùng số điện thoại + OTP. Quyền nhạy cảm được backend kiểm tra theo role.'>
+    <div className='grid gap-3 sm:grid-cols-3'><MiniMetric label='Đang hoạt động' value={active} /><MiniMetric label='Super Admin' value={superAdmins} /><MiniMetric label='Operations' value={accounts.filter(item => item.role === 'operations').length} /></div>
+    <div className='mt-5 grid gap-5 xl:grid-cols-[380px_1fr]'>
+      <Card className='h-fit rounded-3xl shadow-none'><CardHeader><CardTitle className='text-base'>Thêm quản trị viên</CardTitle><CardDescription>Người mới đăng nhập bằng OTP gửi tới số điện thoại này.</CardDescription></CardHeader><CardContent><form className='grid gap-3' onSubmit={submit}><label className='text-sm font-semibold text-foreground'>Tên hiển thị<Input className='mt-1.5' {...form.register('display_name')} placeholder='Ví dụ: Vận hành Thanh Hóa' /><span className='mt-1 block text-xs font-normal text-danger'>{form.formState.errors.display_name?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Số điện thoại<Input className='mt-1.5' {...form.register('phone')} inputMode='tel' autoComplete='tel' placeholder='0912345678' /><span className='mt-1 block text-xs font-normal text-danger'>{form.formState.errors.phone?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Vai trò<select className='mt-1.5 min-h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15' {...form.register('role')}><option value='operations'>Operations</option><option value='super_admin'>Super Admin</option></select></label><Button className='mt-2 w-full' type='submit' disabled={busy || form.formState.isSubmitting}><UserCheck aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang tạo…' : 'Thêm quản trị viên'}</Button></form><div className='mt-4 rounded-2xl bg-surface-soft p-3 text-xs leading-5 text-muted'><strong className='text-foreground'>Operations</strong> xử lý công việc, tài xế, KYC và sự cố. <strong className='text-foreground'>Super Admin</strong> có thêm quyền bảng giá và quản trị tài khoản.</div></CardContent></Card>
+      <div className='grid gap-3'>{accounts.map(account => <AdminAccountCard key={account.id} account={account} current={account.id === currentAdmin.id} busy={busy} onUpdate={onUpdate} />)}{!accounts.length ? <InfoState icon={ShieldCheck} title='Chưa có dữ liệu tài khoản' text='Danh sách quản trị viên chưa được đồng bộ.' /> : null}</div>
+    </div>
+  </Section>;
+}
+function AdminAccountCard({ account, current, busy, onUpdate }: { account: AdminUser; current: boolean; busy: boolean; onUpdate: (account: AdminUser, values: { display_name: string; role: AdminUser['role']; status: AdminUser['status']; reason: string }) => Promise<void> }) {
+  const [reason, setReason] = useState('');
+  const apply = async (role: AdminUser['role'], status: AdminUser['status']) => { if (!reason.trim()) return; try { await onUpdate(account, { display_name: account.display_name, role, status, reason: reason.trim() }); setReason(''); } catch {} };
+  return <Card className='rounded-3xl shadow-none'><CardContent className='p-5'><div className='flex flex-col justify-between gap-4 md:flex-row md:items-start'><div className='min-w-0'><div className='flex flex-wrap items-center gap-2'><div className='font-semibold text-foreground'>{account.display_name || account.phone}</div>{current ? <Badge variant='success'>Phiên hiện tại</Badge> : null}<Badge variant={account.status === 'active' ? 'success' : 'secondary'}>{account.status === 'active' ? 'Đang hoạt động' : 'Đã vô hiệu hóa'}</Badge></div><div className='mt-1 text-sm text-muted'>{account.phone} · {adminRoleLabel(account.role)}</div><div className='mt-1 text-xs text-muted'>Tạo {formatDate(account.created_at)}</div></div><div className='flex shrink-0 flex-wrap gap-2'>{account.role === 'operations' ? <Button size='sm' variant='outline' disabled={busy || !reason.trim()} onClick={() => void apply('super_admin', account.status)}>Nâng Super Admin</Button> : <Button size='sm' variant='outline' disabled={busy || !reason.trim()} onClick={() => void apply('operations', account.status)}>Chuyển Operations</Button>}{account.status === 'active' ? <Button size='sm' variant='destructive' disabled={busy || !reason.trim()} onClick={() => void apply(account.role, 'disabled')}>Vô hiệu hóa</Button> : <Button size='sm' disabled={busy || !reason.trim()} onClick={() => void apply(account.role, 'active')}>Kích hoạt</Button>}</div></div><label className='mt-4 block text-sm font-semibold text-foreground'>Lý do thay đổi<Input className='mt-1.5' value={reason} onChange={event => setReason(event.target.value)} placeholder='Bắt buộc trước khi đổi role hoặc trạng thái' /></label>{account.role === 'super_admin' && account.status === 'active' ? <p className='mt-2 text-xs leading-5 text-muted'>Backend luôn bắt buộc còn ít nhất một Super Admin đang hoạt động.</p> : null}</CardContent></Card>;
+}
+function PricingSummary({ rule }: { rule: PricingRule }) { return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>{serviceLabel(rule.service_type)}</CardTitle><CardDescription className='mt-1 break-all text-xs'>Version: {rule.pricing_version}</CardDescription></div><Badge variant='outline'>{rule.currency}</Badge></div></CardHeader><CardContent className='grid gap-3'><PriceMetric label='Giá mở cửa' value={money(rule.base_fare_minor)} /><PriceMetric label='Giá mỗi km' value={`${money(rule.per_km_minor)} / km`} /><PriceMetric label='Phí dịch vụ' value={money(rule.service_minor)} /><PriceMetric label='Giá tối thiểu' value={money(rule.minimum_minor)} /></CardContent></Card>; }
+function PriceMetric({ label, value }: { label: string; value: string }) { return <div className='flex items-center justify-between gap-3 border-b border-border pb-3 last:border-0 last:pb-0'><span className='text-sm text-muted'>{label}</span><strong className='text-sm font-semibold text-foreground'>{value}</strong></div>; }
+function PricingEditor({ rule, busy, onSave }: { rule: PricingRule; busy: boolean; onSave: (values: PricingForm) => Promise<void> }) {
+  const form = useForm<PricingForm>({
+    resolver: zodResolver(pricingSchema),
+    defaultValues: { base_fare_minor: rule.base_fare_minor, per_km_minor: rule.per_km_minor, service_minor: rule.service_minor, minimum_minor: rule.minimum_minor },
+  });
+  const values = form.watch();
+  const submit = form.handleSubmit(async data => { try { await onSave(data); } catch {} });
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>{serviceLabel(rule.service_type)}</CardTitle><CardDescription className='mt-1 break-all text-xs'>Version: {rule.pricing_version}</CardDescription></div><Badge variant='outline'>{rule.currency}</Badge></div></CardHeader><CardContent><form onSubmit={submit} className='grid gap-3'>
+    <label className='text-sm font-semibold text-foreground'>Giá mở cửa<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('base_fare_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.base_fare_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.base_fare_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Giá mỗi km<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('per_km_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.per_km_minor) || 0)} / km</span><span className='text-xs font-normal text-danger'>{form.formState.errors.per_km_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Phí dịch vụ<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('service_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.service_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.service_minor?.message || ''}</span></label>
+    <label className='text-sm font-semibold text-foreground'>Giá tối thiểu<Input className='mt-1.5' type='number' min={0} max={100000000} step={1000} inputMode='numeric' {...form.register('minimum_minor', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{money(Number(values.minimum_minor) || 0)}</span><span className='text-xs font-normal text-danger'>{form.formState.errors.minimum_minor?.message || ''}</span></label>
+    <Button className='mt-2 w-full' type='submit' disabled={busy || form.formState.isSubmitting || !form.formState.isDirty}><BadgeDollarSign aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang lưu…' : 'Lưu version giá mới'}</Button>
+  </form></CardContent></Card>;
+}
+function OperationalSettingsEditor({ settings, busy, onSave }: { settings: OperationalSettings; busy: boolean; onSave: (values: OperationalSettingsForm) => Promise<void> }) {
+  const form = useForm<OperationalSettingsForm>({
+    resolver: zodResolver(operationalSettingsSchema),
+    defaultValues: {
+      designated_driver_car_enabled: settings.designated_driver_car_enabled,
+      designated_driver_bike_enabled: settings.designated_driver_bike_enabled,
+      vehicle_inspection_assist_enabled: settings.vehicle_inspection_assist_enabled,
+      dispatch_max_distance_m: settings.dispatch_max_distance_m,
+      driver_location_max_age_seconds: settings.driver_location_max_age_seconds,
+      reason: '',
+    },
+  });
+  const values = form.watch();
+  const settingsChanged = values.designated_driver_car_enabled !== settings.designated_driver_car_enabled || values.designated_driver_bike_enabled !== settings.designated_driver_bike_enabled || values.vehicle_inspection_assist_enabled !== settings.vehicle_inspection_assist_enabled || Number(values.dispatch_max_distance_m) !== settings.dispatch_max_distance_m || Number(values.driver_location_max_age_seconds) !== settings.driver_location_max_age_seconds;
+  const submit = form.handleSubmit(async data => { if (!settingsChanged) return; try { await onSave(data); } catch {} });
+  const services = [
+    { key: 'designated_driver_car_enabled' as const, label: 'Lái hộ ô tô', detail: 'Ngừng nhận báo giá và booking ô tô mới khi tắt.' },
+    { key: 'designated_driver_bike_enabled' as const, label: 'Lái hộ xe máy', detail: 'Ngừng nhận báo giá và booking xe máy mới khi tắt.' },
+    { key: 'vehicle_inspection_assist_enabled' as const, label: 'Đăng kiểm hộ', detail: 'Ngừng nhận yêu cầu đăng kiểm hộ mới khi tắt.' },
+  ];
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-start'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Áp dụng ngay ở backend. Booking đang tồn tại không bị hủy khi tắt dịch vụ.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><form className='grid gap-5' onSubmit={submit}>
+    <div className='grid gap-3 lg:grid-cols-3'>{services.map(service => <label key={service.key} className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border p-4 transition-colors ${values[service.key] ? 'border-primary/20 bg-primary-soft/45' : 'border-border bg-surface-soft/50'}`}><div><div className='font-semibold text-foreground'>{service.label}</div><p className='mt-1 text-xs leading-5 text-muted'>{service.detail}</p></div><input type='checkbox' className='mt-0.5 size-5 shrink-0 accent-primary' {...form.register(service.key)} /></label>)}</div>
+    <div className='grid gap-4 md:grid-cols-2'><label className='text-sm font-semibold text-foreground'>Bán kính điều phối<Input className='mt-1.5' type='number' min={1000} max={30000} step={500} inputMode='numeric' {...form.register('dispatch_max_distance_m', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{((Number(values.dispatch_max_distance_m) || 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km quanh điểm nhận</span><span className='text-xs font-normal text-danger'>{form.formState.errors.dispatch_max_distance_m?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Độ mới vị trí tài xế<Input className='mt-1.5' type='number' min={5} max={120} step={5} inputMode='numeric' {...form.register('driver_location_max_age_seconds', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>Chỉ coi vị trí trong {Number(values.driver_location_max_age_seconds) || 0} giây gần nhất là hợp lệ</span><span className='text-xs font-normal text-danger'>{form.formState.errors.driver_location_max_age_seconds?.message || ''}</span></label></div>
+    <label className='text-sm font-semibold text-foreground'>Lý do thay đổi<Input className='mt-1.5' {...form.register('reason')} placeholder='Ví dụ: Mở rộng bán kính pilot Sầm Sơn ca tối' /><span className='mt-1 block text-xs font-normal text-danger'>{form.formState.errors.reason?.message || ''}</span></label>
+    <div className='flex flex-col justify-between gap-3 rounded-2xl bg-surface-soft p-4 sm:flex-row sm:items-center'><div className='text-xs leading-5 text-muted'>Cập nhật gần nhất {formatDate(settings.updated_at)}{settings.updated_by ? ` · ${settings.updated_by}` : ''}. Secret và hạ tầng không thể chỉnh ở đây.</div><Button type='submit' disabled={busy || form.formState.isSubmitting || !settingsChanged || !values.reason.trim()}><Settings aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang áp dụng…' : 'Áp dụng cấu hình'}</Button></div>
+  </form></CardContent></Card>;
+}
+function OperationalSettingsSummary({ settings }: { settings: OperationalSettings }) {
+  const serviceStates = [
+    ['Lái hộ ô tô', settings.designated_driver_car_enabled],
+    ['Lái hộ xe máy', settings.designated_driver_bike_enabled],
+    ['Đăng kiểm hộ', settings.vehicle_inspection_assist_enabled],
+  ] as const;
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Tài khoản Operations chỉ có quyền xem cấu hình đang áp dụng.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><div className='grid gap-3 md:grid-cols-3'>{serviceStates.map(([label, enabled]) => <div key={label} className='rounded-2xl border border-border p-4'><div className='flex items-center justify-between gap-3'><span className='font-semibold text-foreground'>{label}</span><Badge variant={enabled ? 'success' : 'secondary'}>{enabled ? 'Đang mở' : 'Tạm dừng'}</Badge></div></div>)}</div><div className='mt-4 grid gap-3 sm:grid-cols-2'><InfoCard label='Bán kính điều phối' value={`${(settings.dispatch_max_distance_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km`} icon={MapPin} /><InfoCard label='Độ mới vị trí' value={`${settings.driver_location_max_age_seconds} giây`} icon={Clock3} /></div></CardContent></Card>;
+}
 function SystemCard({ icon: Icon, title, value, detail }: { icon: LucideIcon; title: string; value: string; detail: string }) { return <div className='rounded-2xl border border-border bg-surface p-5'><div className='grid size-10 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 text-sm font-semibold text-muted'>{title}</div><div className='mt-1 text-xl font-bold tracking-tight text-foreground'>{value}</div><p className='mt-2 text-sm leading-6 text-muted'>{detail}</p></div>; }
 
 function Brand() { return <div className='flex items-center gap-3 px-2'><div className='grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm'><Zap aria-hidden='true' className='size-5 fill-current' /></div><div><div className='text-base font-bold tracking-tight text-foreground'>FlashX</div><div className='text-[11px] font-medium text-muted'>Operations</div></div></div>; }
@@ -714,5 +973,11 @@ function auditActionLabel(action: string) {
     'driver.approval_changed': 'Đổi trạng thái tài xế',
     'driver.document_reviewed': 'Duyệt tài liệu KYC',
     'trip.incident_resolved': 'Đóng sự cố công việc',
+    'trip.driver_assigned': 'Gán tài xế thủ công',
+    'trip.driver_reassigned': 'Đổi tài xế thủ công',
+    'pricing.rule_updated': 'Cập nhật bảng giá',
+    'admin.account_created': 'Thêm quản trị viên',
+    'admin.account_updated': 'Cập nhật quản trị viên',
+    'system.operational_settings_updated': 'Cập nhật cấu hình vận hành',
   } as Record<string, string>)[action] || action;
 }

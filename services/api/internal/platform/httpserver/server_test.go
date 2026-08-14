@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"flashx/services/api/internal/admin"
@@ -12,6 +13,7 @@ import (
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/idempotency"
 	"flashx/services/api/internal/pricing"
@@ -34,22 +36,31 @@ func newTestServer() *Server {
 	if err != nil {
 		panic(err)
 	}
+	settingsService, err := operationalsettings.NewService(operationalsettings.NewMemoryStore())
+	if err != nil {
+		panic(err)
+	}
+	dispatchEngine := dispatch.NewEngine(driverService, tripService)
+	settingsService.SetApplyHook(func(settings operationalsettings.Config) {
+		dispatchEngine.UpdatePolicy(settings.DispatchMaxDistanceM, settings.DriverLocationMaxAgeSeconds)
+	})
 	return New(":0", Dependencies{
-		AppEnv:           "test",
-		Persistence:      "memory",
-		AllowDevIdentity: true,
-		Trips:            tripService,
-		Drivers:          driverService,
-		CustomerVehicles: vehicleService,
-		Users:            userService,
-		Admin:            adminService,
-		Dispatch:         dispatch.NewEngine(driverService, tripService),
-		Ride:             ride.NewService(tripService, driverService),
-		Pricing:          pricing.NewService(),
-		Payments:         payments.NewService(payments.NewMemoryStore()),
-		Ratings:          ratings.NewService(ratings.NewMemoryStore(), tripService),
-		Idempotency:      idempotency.NewMemoryStore(),
-		Auth:             authService,
+		AppEnv:              "test",
+		Persistence:         "memory",
+		AllowDevIdentity:    true,
+		Trips:               tripService,
+		Drivers:             driverService,
+		CustomerVehicles:    vehicleService,
+		Users:               userService,
+		Admin:               adminService,
+		Dispatch:            dispatchEngine,
+		Ride:                ride.NewService(tripService, driverService),
+		Pricing:             pricing.NewService(),
+		OperationalSettings: settingsService,
+		Payments:            payments.NewService(payments.NewMemoryStore()),
+		Ratings:             ratings.NewService(ratings.NewMemoryStore(), tripService),
+		Idempotency:         idempotency.NewMemoryStore(),
+		Auth:                authService,
 	})
 }
 
@@ -463,7 +474,7 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 		{"/v1/admin/customers", customer.ID},
 		{"/v1/admin/vehicles", vehicle.ID},
 		{"/v1/admin/pricing", trips.ServiceDesignatedDriverCar},
-		{"/v1/admin/system", `"persistence":"memory"`},
+		{"/v1/admin/system", `"operational_settings"`},
 	}
 	for _, check := range checks {
 		rr := perform(t, s, http.MethodGet, check.path, nil, adminHeaders)
@@ -473,6 +484,37 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 		if !bytes.Contains(rr.Body.Bytes(), []byte(check.contains)) {
 			t.Fatalf("GET %s missing %q: %s", check.path, check.contains, rr.Body.String())
 		}
+	}
+
+	pricingUpdate := perform(t, s, http.MethodPatch, "/v1/admin/pricing/"+trips.ServiceDesignatedDriverCar, []byte(`{"base_fare_minor":100000,"per_km_minor":20000,"service_minor":5000,"minimum_minor":140000}`), adminHeaders)
+	if pricingUpdate.Code != http.StatusOK {
+		t.Fatalf("pricing update status=%d body=%s", pricingUpdate.Code, pricingUpdate.Body.String())
+	}
+	if !bytes.Contains(pricingUpdate.Body.Bytes(), []byte(`"base_fare_minor":100000`)) || !bytes.Contains(pricingUpdate.Body.Bytes(), []byte(`"pricing_version":"admin-`)) {
+		t.Fatalf("pricing update missing new version: %s", pricingUpdate.Body.String())
+	}
+	estimate, err := s.deps.Pricing.Estimate(trips.Point{Lat: 19.807, Lng: 105.776}, trips.Point{Lat: 19.82, Lng: 105.79}, trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimate.Fare.BaseFareMinor != 100000 || estimate.Fare.ServiceMinor != 5000 || !strings.HasPrefix(estimate.PricingVer, "admin-") {
+		t.Fatalf("estimate did not use admin pricing: %+v", estimate)
+	}
+
+	settingsUpdate := perform(t, s, http.MethodPatch, "/v1/admin/system/operational", []byte(`{"designated_driver_car_enabled":false,"designated_driver_bike_enabled":true,"vehicle_inspection_assist_enabled":true,"dispatch_max_distance_m":8000,"driver_location_max_age_seconds":30,"reason":"Bảo trì dịch vụ ô tô trong test"}`), adminHeaders)
+	if settingsUpdate.Code != http.StatusOK {
+		t.Fatalf("operational settings status=%d body=%s", settingsUpdate.Code, settingsUpdate.Body.String())
+	}
+	if !bytes.Contains(settingsUpdate.Body.Bytes(), []byte(`"designated_driver_car_enabled":false`)) || !bytes.Contains(settingsUpdate.Body.Bytes(), []byte(`"dispatch_max_distance_m":8000`)) {
+		t.Fatalf("operational settings missing update: %s", settingsUpdate.Body.String())
+	}
+	carEstimate := perform(t, s, http.MethodPost, "/v1/trips/estimate", []byte(`{"pickup":{"lat":19.807,"lng":105.776},"destination":{"lat":19.82,"lng":105.79},"service_type":"designated_driver_car"}`), map[string]string{"X-Dev-Rider-ID": customer.ID})
+	if carEstimate.Code != http.StatusServiceUnavailable || !bytes.Contains(carEstimate.Body.Bytes(), []byte("SERVICE_TEMPORARILY_DISABLED")) {
+		t.Fatalf("disabled car estimate status=%d body=%s", carEstimate.Code, carEstimate.Body.String())
+	}
+	bikeEstimate := perform(t, s, http.MethodPost, "/v1/trips/estimate", []byte(`{"pickup":{"lat":19.807,"lng":105.776},"destination":{"lat":19.82,"lng":105.79},"service_type":"designated_driver_bike"}`), map[string]string{"X-Dev-Rider-ID": customer.ID})
+	if bikeEstimate.Code != http.StatusOK {
+		t.Fatalf("enabled bike estimate status=%d body=%s", bikeEstimate.Code, bikeEstimate.Body.String())
 	}
 
 	resolved := perform(t, s, http.MethodPost, "/v1/admin/trips/"+trip.ID+"/incident/resolve", []byte(`{"note":"Đã xác minh với khách và tài xế"}`), adminHeaders)
@@ -487,14 +529,82 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 	if audit.Code != http.StatusOK {
 		t.Fatalf("audit status=%d body=%s", audit.Code, audit.Body.String())
 	}
-	if !bytes.Contains(audit.Body.Bytes(), []byte("trip.incident_resolved")) || !bytes.Contains(audit.Body.Bytes(), []byte(adminID)) {
-		t.Fatalf("audit missing incident resolution: %s", audit.Body.String())
+	if !bytes.Contains(audit.Body.Bytes(), []byte("trip.incident_resolved")) || !bytes.Contains(audit.Body.Bytes(), []byte("pricing.rule_updated")) || !bytes.Contains(audit.Body.Bytes(), []byte("system.operational_settings_updated")) || !bytes.Contains(audit.Body.Bytes(), []byte(adminID)) {
+		t.Fatalf("audit missing operations actions: %s", audit.Body.String())
+	}
+}
+
+func TestAdminRBAC(t *testing.T) {
+	s := newTestServer()
+	superID, superHeaders := adminSession(t, s)
+
+	created := perform(t, s, http.MethodPost, "/v1/admin/accounts", []byte(`{"phone":"0912345678","display_name":"Operations One","role":"operations"}`), superHeaders)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create operations admin status=%d body=%s", created.Code, created.Body.String())
+	}
+	var createdPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdPayload); err != nil {
+		t.Fatal(err)
+	}
+	operationsID, operationsHeaders := adminSessionForPhone(t, s, "0912345678")
+	if operationsID != createdPayload.Data.ID {
+		t.Fatalf("operations id=%s want=%s", operationsID, createdPayload.Data.ID)
+	}
+
+	me := perform(t, s, http.MethodGet, "/v1/admin/me", nil, operationsHeaders)
+	if me.Code != http.StatusOK || !bytes.Contains(me.Body.Bytes(), []byte(`"role":"operations"`)) {
+		t.Fatalf("operations me status=%d body=%s", me.Code, me.Body.String())
+	}
+	tripsList := perform(t, s, http.MethodGet, "/v1/admin/trips", nil, operationsHeaders)
+	if tripsList.Code != http.StatusOK {
+		t.Fatalf("operations trips status=%d body=%s", tripsList.Code, tripsList.Body.String())
+	}
+	pricingDenied := perform(t, s, http.MethodPatch, "/v1/admin/pricing/"+trips.ServiceDesignatedDriverCar, []byte(`{"base_fare_minor":100000,"per_km_minor":20000,"service_minor":0,"minimum_minor":140000}`), operationsHeaders)
+	if pricingDenied.Code != http.StatusForbidden {
+		t.Fatalf("operations pricing status=%d body=%s", pricingDenied.Code, pricingDenied.Body.String())
+	}
+	settingsDenied := perform(t, s, http.MethodPatch, "/v1/admin/system/operational", []byte(`{"designated_driver_car_enabled":true,"designated_driver_bike_enabled":true,"vehicle_inspection_assist_enabled":true,"dispatch_max_distance_m":5000,"driver_location_max_age_seconds":20,"reason":"forbidden test"}`), operationsHeaders)
+	if settingsDenied.Code != http.StatusForbidden {
+		t.Fatalf("operations settings status=%d body=%s", settingsDenied.Code, settingsDenied.Body.String())
+	}
+	accountsDenied := perform(t, s, http.MethodGet, "/v1/admin/accounts", nil, operationsHeaders)
+	if accountsDenied.Code != http.StatusForbidden {
+		t.Fatalf("operations accounts status=%d body=%s", accountsDenied.Code, accountsDenied.Body.String())
+	}
+
+	lastSuperDenied := perform(t, s, http.MethodPatch, "/v1/admin/accounts/"+superID, []byte(`{"display_name":"Test Admin","role":"operations","status":"active","reason":"test downgrade"}`), superHeaders)
+	if lastSuperDenied.Code != http.StatusConflict {
+		t.Fatalf("last super admin downgrade status=%d body=%s", lastSuperDenied.Code, lastSuperDenied.Body.String())
+	}
+
+	disabled := perform(t, s, http.MethodPatch, "/v1/admin/accounts/"+operationsID, []byte(`{"display_name":"Operations One","role":"operations","status":"disabled","reason":"offboard test"}`), superHeaders)
+	if disabled.Code != http.StatusOK || !bytes.Contains(disabled.Body.Bytes(), []byte(`"status":"disabled"`)) {
+		t.Fatalf("disable operations status=%d body=%s", disabled.Code, disabled.Body.String())
+	}
+	otpDenied := perform(t, s, http.MethodPost, "/v1/auth/otp/request", []byte(`{"phone":"0912345678","role":"admin"}`), nil)
+	if otpDenied.Code != http.StatusForbidden {
+		t.Fatalf("disabled admin otp status=%d body=%s", otpDenied.Code, otpDenied.Body.String())
+	}
+
+	audit := perform(t, s, http.MethodGet, "/v1/admin/audit?limit=50", nil, superHeaders)
+	if audit.Code != http.StatusOK || !bytes.Contains(audit.Body.Bytes(), []byte("admin.account_created")) || !bytes.Contains(audit.Body.Bytes(), []byte("admin.account_updated")) {
+		t.Fatalf("rbac audit missing actions status=%d body=%s", audit.Code, audit.Body.String())
 	}
 }
 
 func adminSession(t *testing.T, s *Server) (string, map[string]string) {
 	t.Helper()
-	request := perform(t, s, http.MethodPost, "/v1/auth/otp/request", []byte(`{"phone":"0900000001","role":"admin"}`), nil)
+	return adminSessionForPhone(t, s, "0900000001")
+}
+
+func adminSessionForPhone(t *testing.T, s *Server, phone string) (string, map[string]string) {
+	t.Helper()
+	requestBody, _ := json.Marshal(map[string]any{"phone": phone, "role": "admin"})
+	request := perform(t, s, http.MethodPost, "/v1/auth/otp/request", requestBody, nil)
 	if request.Code != http.StatusAccepted {
 		t.Fatalf("admin otp status=%d body=%s", request.Code, request.Body.String())
 	}

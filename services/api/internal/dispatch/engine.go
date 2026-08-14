@@ -45,15 +45,16 @@ type Offer struct {
 type Engine struct {
 	// mu protects one Engine instance. Production also uses Locker so separate
 	// API instances serialize mutations for the same trip.
-	mu          sync.Mutex
-	drivers     *drivers.Service
-	trips       *trips.Service
-	offers      OfferStore
-	locker      Locker
-	now         func() time.Time
-	offerTTL    time.Duration
-	lockTTL     time.Duration
-	maxDistance float64
+	mu             sync.Mutex
+	drivers        *drivers.Service
+	trips          *trips.Service
+	offers         OfferStore
+	locker         Locker
+	now            func() time.Time
+	offerTTL       time.Duration
+	lockTTL        time.Duration
+	maxDistance    float64
+	locationMaxAge time.Duration
 }
 
 func NewEngine(driverService *drivers.Service, tripService *trips.Service) *Engine {
@@ -68,15 +69,26 @@ func NewEngineWithStore(driverService *drivers.Service, tripService *trips.Servi
 		locker = NewMemoryLocker()
 	}
 	return &Engine{
-		drivers:     driverService,
-		trips:       tripService,
-		offers:      offers,
-		locker:      locker,
-		now:         func() time.Time { return time.Now().UTC() },
-		offerTTL:    12 * time.Second,
-		lockTTL:     3 * time.Second,
-		maxDistance: 5_000,
+		drivers:        driverService,
+		trips:          tripService,
+		offers:         offers,
+		locker:         locker,
+		now:            func() time.Time { return time.Now().UTC() },
+		offerTTL:       12 * time.Second,
+		lockTTL:        3 * time.Second,
+		maxDistance:    5_000,
+		locationMaxAge: 20 * time.Second,
 	}
+}
+
+func (e *Engine) UpdatePolicy(maxDistanceM int64, locationMaxAgeSeconds int) {
+	if maxDistanceM <= 0 || locationMaxAgeSeconds <= 0 {
+		return
+	}
+	e.mu.Lock()
+	e.maxDistance = float64(maxDistanceM)
+	e.locationMaxAge = time.Duration(locationMaxAgeSeconds) * time.Second
+	e.mu.Unlock()
 }
 
 func (e *Engine) CreateOffer(tripID string) (Offer, error) {
@@ -131,7 +143,7 @@ func (e *Engine) CreateOffer(tripID string) (Offer, error) {
 		trip.ServiceType,
 		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: now},
 		e.maxDistance,
-		20*time.Second,
+		e.locationMaxAge,
 		30,
 	)
 	if err != nil {
@@ -324,6 +336,105 @@ func (e *Engine) DispatchWaiting(limit int) []Offer {
 		}
 	}
 	return created
+}
+
+// CandidatesForTrip uses the same eligibility rules as automated dispatch:
+// approved, online, capability-compatible and recently located near pickup.
+func (e *Engine) CandidatesForTrip(tripID string, limit int) ([]drivers.NearbyDriver, error) {
+	trip, err := e.trips.Get(tripID)
+	if err != nil {
+		return nil, err
+	}
+	if trip.IncidentOpen || (trip.Status != trips.StatusSearching && !trips.CanReassignBeforeCustody(trip.Status)) {
+		return nil, trips.ErrInvalidState
+	}
+	if limit <= 0 || limit > 30 {
+		limit = 15
+	}
+	e.mu.Lock()
+	maxDistance := e.maxDistance
+	locationMaxAge := e.locationMaxAge
+	e.mu.Unlock()
+	return e.drivers.NearbyCandidates(
+		trip.ServiceType,
+		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
+		maxDistance,
+		locationMaxAge,
+		limit,
+	)
+}
+
+// ManualAssign serializes with normal offer acceptance using the same trip
+// lock. It supports first assignment while searching and safe reassignment
+// before vehicle custody, then invalidates any stale pending offers.
+func (e *Engine) ManualAssign(tripID, driverID string) (trips.Trip, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	unlock, acquired, err := e.locker.TryLock("trip:"+tripID, e.lockTTL)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	if !acquired {
+		return trips.Trip{}, ErrOfferUnavailable
+	}
+	defer unlock()
+
+	trip, err := e.trips.Get(tripID)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	if driverID == "" || trip.IncidentOpen || (trip.Status != trips.StatusSearching && !trips.CanReassignBeforeCustody(trip.Status)) || trip.DriverID == driverID {
+		return trips.Trip{}, trips.ErrInvalidState
+	}
+
+	candidates, err := e.drivers.NearbyCandidates(
+		trip.ServiceType,
+		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
+		e.maxDistance,
+		e.locationMaxAge,
+		30,
+	)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	eligible := false
+	for _, candidate := range candidates {
+		if candidate.Driver.ID == driverID {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		return trips.Trip{}, drivers.ErrDriverUnavailable
+	}
+
+	if _, err := e.drivers.TryMarkBusy(driverID); err != nil {
+		return trips.Trip{}, err
+	}
+	oldDriverID := trip.DriverID
+	var updated trips.Trip
+	if trip.Status == trips.StatusSearching {
+		updated, err = e.trips.AssignDriver(tripID, driverID)
+	} else {
+		updated, err = e.trips.ReassignDriver(tripID, driverID)
+	}
+	if err != nil {
+		_, _ = e.drivers.MarkAvailable(driverID)
+		return trips.Trip{}, err
+	}
+	if oldDriverID != "" && oldDriverID != driverID {
+		// Best effort: suspended/rejected drivers intentionally remain unavailable.
+		_, _ = e.drivers.MarkAvailable(oldDriverID)
+	}
+	items, _ := e.offers.ListByTrip(tripID)
+	for _, offer := range items {
+		if offer.Status == OfferPending {
+			offer.Status = OfferInvalid
+			_ = e.offers.Save(offer)
+		}
+	}
+	return updated, nil
 }
 
 func (e *Engine) pendingOfferForTrip(tripID string, now time.Time) (Offer, bool, error) {

@@ -201,6 +201,25 @@ func (s *Service) AssignDriver(id, driverID string) (Trip, error) {
 	return s.persist(trip)
 }
 
+// ReassignDriver is reserved for Operations. It only replaces a driver before
+// vehicle custody and resets the lifecycle to accepted so the replacement
+// driver must perform arrival and vehicle-receipt steps explicitly.
+func (s *Service) ReassignDriver(id, driverID string) (Trip, error) {
+	trip, err := s.store.Get(id)
+	if err != nil {
+		return Trip{}, err
+	}
+	if driverID == "" || trip.DriverID == "" || trip.DriverID == driverID || trip.IncidentOpen || !CanReassignBeforeCustody(trip.Status) {
+		return Trip{}, ErrInvalidState
+	}
+	now := s.now()
+	trip.DriverID = driverID
+	trip.Status = StatusAccepted
+	trip.AcceptedAt = &now
+	trip.ArrivedAt = nil
+	return s.persist(trip)
+}
+
 func (s *Service) MarkArriving(id, driverID string) (Trip, error) {
 	trip, err := s.driverTrip(id, driverID)
 	if err != nil {

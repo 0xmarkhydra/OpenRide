@@ -126,6 +126,18 @@ func IsDriverOccupiedStatus(status Status) bool {
 	return status != StatusScheduled && status != StatusSearching && !IsTerminalStatus(status)
 }
 
+// CanReassignBeforeCustody defines the only states where Operations may swap
+// an assigned driver. Once vehicle_received is reached, custody has changed
+// hands and normal reassignment is intentionally forbidden.
+func CanReassignBeforeCustody(status Status) bool {
+	switch status {
+	case StatusAccepted, StatusArriving, StatusArrived, StatusArrivingForPickup, StatusArrivedForPickup:
+		return true
+	default:
+		return false
+	}
+}
+
 func (t Trip) CanCancel() bool {
 	if t.IncidentOpen {
 		return false

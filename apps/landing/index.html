@@ -2,90 +2,212 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="description" content="FlashX - Tài xế của bạn, khi bạn cần. Lái hộ ô tô, lái hộ xe máy và đăng kiểm hộ." />
-  <meta name="theme-color" content="#ffffff" />
-  <title>FlashX - Tài xế của bạn, khi bạn cần</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="description" content="FlashX - Tài xế của bạn, khi bạn cần. Lái hộ ô tô, lái hộ xe máy và đăng kiểm hộ trên chính phương tiện của khách." />
+  <meta name="theme-color" content="#079455" />
+  <meta name="color-scheme" content="light" />
+  <title>FlashX — Tài xế của bạn, khi bạn cần</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <a class="skip-link" href="#top">Bỏ qua điều hướng</a>
-  <header class="nav">
-    <div class="container nav-inner">
-      <a class="brand" href="#top" aria-label="FlashX trang chủ"><span class="brand-mark" aria-hidden="true">F</span><span>FlashX</span></a>
-      <nav class="nav-links" aria-label="Điều hướng chính">
-        <a href="#services">Dịch vụ</a><a href="#how">Cách hoạt động</a><a href="#trust">An toàn</a><a href="#pilot">Thanh Hóa</a>
+  <a class="skip-link" href="#main">Bỏ qua điều hướng</a>
+
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="#top" aria-label="FlashX trang chủ">
+        <span class="brand-mark" aria-hidden="true"><span>F</span></span>
+        <span class="brand-copy"><strong>FlashX</strong><small>Mobility, theo cách của bạn</small></span>
+      </a>
+      <nav class="desktop-nav" aria-label="Điều hướng chính">
+        <a href="#services">Dịch vụ</a>
+        <a href="#flow">Cách hoạt động</a>
+        <a href="#operations">Vận hành</a>
+        <a href="#thanhhoa">Thanh Hóa</a>
       </nav>
-      <a class="nav-cta" href="#services">Xem dịch vụ</a>
+      <a class="header-cta" href="#services">Khám phá dịch vụ <span aria-hidden="true">→</span></a>
     </div>
   </header>
 
-  <main id="top" tabindex="-1">
-    <section class="hero">
-      <div class="hero-glow glow-a"></div><div class="hero-glow glow-b"></div>
-      <div class="container hero-grid">
-        <div class="hero-copy reveal">
-          <div class="pill"><span class="live-dot"></span>Pilot tại Thanh Hóa</div>
-          <h1>Tài xế của bạn,<br><span>khi bạn cần.</span></h1>
-          <p class="lead">Bạn có phương tiện. FlashX tìm người phù hợp để lái chính chiếc xe của bạn hoặc hỗ trợ đăng kiểm — rõ ràng từ lúc nhận xe đến khi bàn giao.</p>
-          <div class="hero-actions"><a class="btn primary" href="#services">Xem 3 dịch vụ</a><a class="btn secondary" href="#how">Cách FlashX hoạt động</a></div>
-          <div class="micro-proof"><span><b>3</b> dịch vụ MVP</span><i></i><span>Đặt ngay hoặc hẹn giờ</span><i></i><span>Báo giá trước</span></div>
+  <main id="main">
+    <section id="top" class="hero">
+      <div class="hero-light hero-light-a" aria-hidden="true"></div>
+      <div class="hero-light hero-light-b" aria-hidden="true"></div>
+      <div class="shell hero-grid">
+        <div class="hero-copy enter">
+          <div class="eyebrow"><span class="pulse-dot" aria-hidden="true"></span>Đang hoàn thiện MVP tại Thanh Hóa</div>
+          <h1>Xe của bạn.<br><em>Tài xế khi bạn cần.</em></h1>
+          <p class="hero-lead">FlashX kết nối người phù hợp để lái chính phương tiện của bạn hoặc thay bạn thực hiện đăng kiểm — với tiến trình rõ ràng từ lúc nhận xe đến lúc bàn giao.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#services">Xem 3 dịch vụ <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="#flow"><span class="play" aria-hidden="true">▶</span>Cách FlashX hoạt động</a>
+          </div>
+          <div class="hero-facts" aria-label="Điểm nổi bật">
+            <div><strong>3</strong><span>Dịch vụ cốt lõi</span></div>
+            <div><strong>Realtime</strong><span>Tiến trình & vị trí</span></div>
+            <div><strong>Rõ giá</strong><span>Báo trước khi đặt</span></div>
+          </div>
         </div>
 
-        <div class="phone-stage reveal delay" role="img" aria-label="Mô phỏng hành trình dịch vụ FlashX từ tài xế đang đến nhận xe tới bàn giao">
-          <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
-          <div class="phone">
-            <div class="phone-top"><span>9:41</span><div class="island"></div><span class="signal">●●●</span></div>
-            <div class="phone-body">
-              <div class="mini-brand"><span class="mini-mark">F</span><div><b>FlashX</b><small>Đang theo dõi công việc</small></div></div>
-              <div class="trip-card">
-                <div class="trip-head"><div><small>LÁI HỘ Ô TÔ</small><strong>Đang đến nhận xe</strong></div><span class="status-dot"></span></div>
-                <div class="route">
-                  <span class="route-node start"></span><div class="route-line"><span></span></div><span class="route-node end"></span>
-                  <div class="route-copy"><p><b>Điểm nhận</b><small>Phường Đông Vệ, Thanh Hóa</small></p><p><b>Điểm đến</b><small>Quảng Xương, Thanh Hóa</small></p></div>
-                </div>
-                <div class="driver"><div class="avatar">LX</div><div><b>Tài xế đang đến</b><small>Dự kiến 6 phút</small></div><span>›</span></div>
+        <div class="product-stage enter enter-delay" aria-label="Mô phỏng giao diện khách hàng FlashX">
+          <div class="stage-ring stage-ring-one" aria-hidden="true"></div>
+          <div class="stage-ring stage-ring-two" aria-hidden="true"></div>
+          <div class="float-card float-price" aria-hidden="true"><span>Giá dự kiến</span><strong>144.000đ</strong><small>Hiển thị trước khi xác nhận</small></div>
+          <div class="float-card float-driver" aria-hidden="true"><span class="mini-avatar">LX</span><div><strong>Tài xế đã nhận</strong><small>Đang tới điểm nhận · 6 phút</small></div></div>
+
+          <div class="device">
+            <div class="device-bar"><span>9:41</span><i></i><span class="device-signal">●●●</span></div>
+            <div class="app-screen">
+              <div class="app-head">
+                <div><small>Xin chào 👋</small><strong>Bạn cần FlashX làm gì?</strong></div>
+                <span class="profile-dot">M</span>
               </div>
-              <div class="timeline"><div class="done"><span></span><b>Đã xác nhận</b></div><div class="active"><span></span><b>Tài xế đang đến</b></div><div><span></span><b>Nhận xe & thực hiện</b></div><div><span></span><b>Bàn giao</b></div></div>
+              <div class="app-services">
+                <div class="app-service active"><span class="service-glyph car-glyph" aria-hidden="true">●</span><b>Lái hộ<br>ô tô</b></div>
+                <div class="app-service"><span class="service-glyph bike-glyph" aria-hidden="true">●</span><b>Lái hộ<br>xe máy</b></div>
+                <div class="app-service"><span class="service-glyph doc-glyph" aria-hidden="true">✓</span><b>Đăng kiểm<br>hộ</b></div>
+              </div>
+              <div class="map-card">
+                <div class="map-grid" aria-hidden="true"></div>
+                <span class="road road-one" aria-hidden="true"></span><span class="road road-two" aria-hidden="true"></span>
+                <span class="map-pin pickup-pin" aria-hidden="true"></span><span class="map-pin destination-pin" aria-hidden="true"></span>
+                <span class="driver-pin" aria-hidden="true">F</span>
+                <div class="map-bubble"><small>Tài xế đang tới</small><strong>6 phút</strong></div>
+              </div>
+              <div class="app-sheet">
+                <div class="sheet-handle" aria-hidden="true"></div>
+                <div class="sheet-title"><div><small>LÁI HỘ Ô TÔ</small><strong>Đang đến nhận xe</strong></div><span class="live-badge">LIVE</span></div>
+                <div class="address-row"><span class="address-dot hollow"></span><div><small>Điểm nhận</small><b>Hạc Thành, Thanh Hóa</b></div></div>
+                <div class="address-line"></div>
+                <div class="address-row"><span class="address-dot"></span><div><small>Điểm đến</small><b>Quảng Xương, Thanh Hóa</b></div></div>
+                <div class="eta-row"><span>ETA tài xế</span><strong>6 phút · 2,1 km</strong></div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <section id="services" class="section services">
-      <div class="container">
-        <div class="section-heading"><span class="kicker">DỊCH VỤ CỐT LÕI</span><h2>Một nền tảng cho những lúc<br>chiếc xe cần người đồng hành.</h2><p>Ba dịch vụ đầu tiên được thiết kế quanh một nguyên tắc: phương tiện vẫn là của khách, FlashX chịu trách nhiệm kết nối và quản lý tiến trình.</p></div>
-        <div class="service-grid">
-          <article class="service-card featured"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h14M6 16v2m12-2v2M4 13l2-5h12l2 5v3H4v-3Zm3-5 1-3h8l1 3"/></svg></div><div><span class="service-no">01</span><h3>Lái hộ ô tô</h3><p>Tài xế đến đúng điểm nhận, lái chính ô tô của bạn đến nơi cần tới và bàn giao lại theo quy trình rõ ràng.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
-          <article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M9 17h4l3-7h-5l-2 4H6m6-4-2-3h3"/></svg></div><div><span class="service-no">02</span><h3>Lái hộ xe máy</h3><p>Ghép tài xế có năng lực phù hợp để đưa bạn và chiếc xe máy của chính mình về đúng nơi cần đến.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
-          <article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7zM9 7h6M9 11h6M9 15h3"/><path d="m14 16 1.5 1.5L19 14"/></svg></div><div><span class="service-no">03</span><h3>Đăng kiểm hộ</h3><p>Nhận xe theo quy trình riêng, theo dõi từng mốc đăng kiểm rồi trả lại xe cho khách khi hoàn tất.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
+    <section class="proof-strip" aria-label="Nguyên tắc sản phẩm">
+      <div class="shell proof-grid">
+        <div><span class="proof-icon">01</span><p><strong>Phương tiện của khách</strong><small>FlashX không đổi bản chất sở hữu chiếc xe.</small></p></div>
+        <div><span class="proof-icon">02</span><p><strong>Người thực hiện phù hợp</strong><small>Ghép theo năng lực và trạng thái cung ứng.</small></p></div>
+        <div><span class="proof-icon">03</span><p><strong>Tiến trình nhìn thấy được</strong><small>Tách rõ nhận xe, thực hiện và bàn giao.</small></p></div>
+      </div>
+    </section>
+
+    <section id="services" class="section services-section">
+      <div class="shell">
+        <div class="section-title center">
+          <span class="kicker">BA DỊCH VỤ ĐẦU TIÊN</span>
+          <h2>Một ứng dụng.<br>Ba lúc bạn cần người cầm lái.</h2>
+          <p>FlashX bắt đầu bằng những tình huống rất cụ thể, thay vì cố làm mọi thứ cùng lúc.</p>
+        </div>
+
+        <div class="bento">
+          <article class="service-panel service-panel-main">
+            <div class="service-top"><span class="service-number">01</span><span class="soft-chip">Ô tô của bạn</span></div>
+            <div class="service-art car-art" aria-hidden="true"><div class="car-body"><i></i><i></i></div><span class="driver-orbit">F</span><span class="art-path"></span></div>
+            <div class="service-content"><span class="service-symbol">↗</span><h3>Lái hộ ô tô</h3><p>Tài xế đến điểm nhận, xác nhận nhận xe, lái chính ô tô của khách tới điểm đến và bàn giao theo từng mốc.</p><ul><li>Đặt ngay hoặc hẹn giờ</li><li>Báo giá trước</li><li>ETA & vị trí tài xế</li><li>Theo dõi hành trình</li></ul></div>
+          </article>
+
+          <article class="service-panel">
+            <div class="service-top"><span class="service-number">02</span><span class="soft-chip">Bạn + xe máy</span></div>
+            <div class="compact-art bike-art" aria-hidden="true"><span class="wheel wheel-a"></span><span class="wheel wheel-b"></span><span class="bike-frame"></span><span class="bike-seat"></span></div>
+            <div class="service-content"><h3>Lái hộ xe máy</h3><p>Ghép người có năng lực phù hợp để đưa bạn và chính chiếc xe máy của mình về nơi cần đến.</p><a href="#flow">Xem Flowline <span>→</span></a></div>
+          </article>
+
+          <article class="service-panel inspection-panel">
+            <div class="service-top"><span class="service-number">03</span><span class="soft-chip">Quy trình riêng</span></div>
+            <div class="compact-art inspection-art" aria-hidden="true"><div class="doc-card"><span></span><span></span><span></span><b>✓</b></div><div class="tiny-car"></div></div>
+            <div class="service-content"><h3>Đăng kiểm hộ</h3><p>Nhận ô tô và giấy tờ theo checklist, thực hiện tại trung tâm, ghi nhận kết quả rồi trả xe lại cho khách.</p><a href="#inspection">Xem luồng đăng kiểm <span>→</span></a></div>
+          </article>
         </div>
       </div>
     </section>
 
-    <section id="how" class="section flow-section">
-      <div class="container flow-layout">
-        <div class="section-heading left"><span class="kicker">FLASHX FLOWLINE</span><h2>Mỗi bước đều nhìn thấy được.</h2><p>Không để khách phải đoán “xe của mình đang ở đâu”. Từ tìm tài xế, nhận xe, thực hiện đến bàn giao đều là các mốc rõ ràng.</p><div class="flow-note"><span class="pulse"></span><div><b>Realtime khi áp dụng</b><small>Trạng thái và vị trí được đồng bộ về hệ thống.</small></div></div></div>
-        <div class="flow-card">
-          <div class="flow-row complete"><span class="flow-index">1</span><div><b>Xác nhận yêu cầu</b><small>Dịch vụ, xe, thời gian và giá dự kiến</small></div><span class="check">✓</span></div>
-          <div class="connector on"></div>
-          <div class="flow-row complete"><span class="flow-index">2</span><div><b>Ghép người thực hiện</b><small>Phù hợp năng lực và vị trí</small></div><span class="check">✓</span></div>
-          <div class="connector on"></div>
-          <div class="flow-row active"><span class="flow-index">3</span><div><b>Nhận xe & thực hiện</b><small>Ghi nhận mốc bàn giao tài sản</small></div><span class="pulse"></span></div>
-          <div class="connector"></div>
-          <div class="flow-row"><span class="flow-index">4</span><div><b>Bàn giao & hoàn tất</b><small>Trả xe, thanh toán và đánh giá</small></div></div>
+    <section id="flow" class="section flow-section">
+      <div class="shell split-layout">
+        <div class="section-title left sticky-copy">
+          <span class="kicker">FLASHX FLOWLINE</span>
+          <h2>Không để khách phải đoán “xe mình đang ở đâu”.</h2>
+          <p>Mỗi thay đổi quan trọng trong quá trình phục vụ là một trạng thái riêng, để khách và Operations cùng nhìn một câu chuyện.</p>
+          <div class="inline-note"><span class="pulse-dot"></span><p><strong>Realtime khi công việc đang chạy</strong><small>Vị trí và tiến trình được đồng bộ về hệ thống.</small></p></div>
+        </div>
+
+        <div class="flow-board">
+          <div class="flow-step complete"><span class="step-index">1</span><div><small>YÊU CẦU</small><strong>Chọn xe, điểm nhận & điểm đến</strong><p>Khách chọn phương tiện của chính mình, thời gian và xem giá dự kiến.</p></div><span class="step-state">✓</span></div>
+          <div class="step-link active"></div>
+          <div class="flow-step complete"><span class="step-index">2</span><div><small>MATCHING</small><strong>Ghép tài xế phù hợp</strong><p>Hệ thống ưu tiên năng lực, trạng thái online và vị trí gần điểm nhận.</p></div><span class="step-state">✓</span></div>
+          <div class="step-link active"></div>
+          <div class="flow-step current"><span class="step-index">3</span><div><small>CUSTODY</small><strong>Nhận xe — bắt đầu trách nhiệm</strong><p>Mốc nhận phương tiện được tách riêng trước khi công việc chính thức diễn ra.</p></div><span class="pulse-dot"></span></div>
+          <div class="step-link"></div>
+          <div class="flow-step"><span class="step-index">4</span><div><small>EXECUTION</small><strong>Thực hiện & theo dõi realtime</strong><p>Khách theo dõi tài xế, hành trình và tiến trình còn lại.</p></div></div>
+          <div class="step-link"></div>
+          <div class="flow-step"><span class="step-index">5</span><div><small>HANDOVER</small><strong>Bàn giao, thanh toán & đánh giá</strong><p>Kết thúc trách nhiệm giữ xe bằng một mốc bàn giao rõ ràng.</p></div></div>
         </div>
       </div>
     </section>
 
-    <section id="trust" class="section trust">
-      <div class="container"><div class="section-heading"><span class="kicker">VẬN HÀNH CÓ TRÁCH NHIỆM</span><h2>Phương tiện là tài sản của khách.<br>Quy trình phải xứng đáng với điều đó.</h2></div><div class="trust-grid"><div><span>01</span><h3>Duyệt người thực hiện</h3><p>Hồ sơ và năng lực được kiểm tra trước khi nhận công việc.</p></div><div><span>02</span><h3>Mốc nhận & trả xe riêng</h3><p>Nhận xe không bị coi như một trạng thái phụ trong chuyến đi.</p></div><div><span>03</span><h3>Theo dõi tiến trình rõ ràng</h3><p>Nhận xe, thực hiện và bàn giao được tách thành các mốc riêng để khách dễ theo dõi.</p></div><div><span>04</span><h3>Xử lý sự cố theo vận hành</h3><p>Sau khi nhận xe, vấn đề được đưa vào luồng Operations thay vì hủy thông thường.</p></div></div></div>
+    <section id="inspection" class="section inspection-section">
+      <div class="shell inspection-shell">
+        <div class="inspection-demo">
+          <div class="inspection-window">
+            <div class="window-head"><div><span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span></div><small>ĐĂNG KIỂM HỘ</small></div>
+            <div class="window-body">
+              <div class="vehicle-chip"><span class="vehicle-icon">36A</span><div><small>XE CỦA KHÁCH</small><strong>Toyota Vios · 36A-123.45</strong></div></div>
+              <div class="inspection-progress">
+                <div class="progress-item done"><span>✓</span><p><b>Đã nhận xe & giấy tờ</b><small>08:42 · Hạc Thành</small></p></div>
+                <div class="progress-line done"></div>
+                <div class="progress-item done"><span>✓</span><p><b>Đã tới trung tâm</b><small>09:18</small></p></div>
+                <div class="progress-line live"></div>
+                <div class="progress-item live"><span></span><p><b>Đang đăng kiểm</b><small>Trạng thái hiện tại</small></p></div>
+                <div class="progress-line"></div>
+                <div class="progress-item"><span></span><p><b>Trả xe & bàn giao</b><small>Chưa bắt đầu</small></p></div>
+              </div>
+              <div class="result-note"><span>i</span><p><strong>Kết quả độc lập với dịch vụ</strong><small>Công việc có thể hoàn tất dù kết quả đăng kiểm là đạt, không đạt hoặc cần xử lý thêm.</small></p></div>
+            </div>
+          </div>
+        </div>
+        <div class="section-title left">
+          <span class="kicker">KHÔNG PHẢI MỘT “CHUYẾN XE”</span>
+          <h2>Đăng kiểm hộ có logic riêng của nó.</h2>
+          <p>FlashX không ép đăng kiểm vào luồng taxi. Từ giấy tờ, trung tâm đăng kiểm, kết quả tới lúc trả xe đều có trạng thái riêng.</p>
+          <div class="check-list"><div><span>✓</span><p><strong>Checklist bàn giao</strong><small>Xe và giấy tờ được ghi nhận trước khi người thực hiện rời điểm nhận.</small></p></div><div><span>✓</span><p><strong>Theo dõi từng mốc</strong><small>Từ đang tới nhận xe đến đăng kiểm, quay về và bàn giao.</small></p></div><div><span>✓</span><p><strong>Kết quả không bị “làm đẹp”</strong><small>Trạng thái dịch vụ hoàn tất không đồng nghĩa xe chắc chắn đạt đăng kiểm.</small></p></div></div>
+        </div>
+      </div>
     </section>
 
-    <section id="pilot" class="section pilot"><div class="container pilot-card"><div><span class="kicker">GIAI ĐOẠN ĐẦU</span><h2>Bắt đầu từ Thanh Hóa.<br>Xây đúng trước khi mở rộng.</h2><p>FlashX tập trung làm ba dịch vụ MVP chạy end-to-end, ổn định quy trình ghép tài xế và bàn giao trước khi mở rộng mô hình marketplace.</p></div><div class="pilot-points"><div><b>Lái hộ ô tô</b><span>End-to-end</span></div><div><b>Lái hộ xe máy</b><span>End-to-end</span></div><div><b>Đăng kiểm hộ</b><span>End-to-end</span></div></div></div></section>
+    <section id="operations" class="section operations-section">
+      <div class="shell">
+        <div class="section-title center narrow"><span class="kicker">VẬN HÀNH CÓ TRÁCH NHIỆM</span><h2>Phương tiện là tài sản của khách.<br>Backend phải nghĩ như vậy.</h2><p>Giao diện đơn giản cho khách; phía sau là các lớp kiểm soát để Operations biết điều gì đang xảy ra và cần làm gì tiếp theo.</p></div>
+        <div class="operations-grid">
+          <article><span class="op-icon">◎</span><h3>Duyệt người thực hiện</h3><p>Hồ sơ, trạng thái và năng lực được quản lý trước khi tài xế xuất hiện trong matching.</p></article>
+          <article><span class="op-icon">⌁</span><h3>Điều phối có giới hạn</h3><p>Operations có thể gán hoặc đổi tài xế ở giai đoạn an toàn; sau khi nhận xe thì không reassign theo luồng thường.</p></article>
+          <article><span class="op-icon">!</span><h3>Sự cố là một luồng riêng</h3><p>Vấn đề sau mốc nhận xe được đưa vào Operations thay vì biến thành một nút “hủy” đơn giản.</p></article>
+          <article><span class="op-icon">↺</span><h3>Khôi phục trạng thái</h3><p>Ứng dụng tiếp tục công việc đang chạy sau mất mạng hoặc mở lại, thay vì bắt đầu từ màn đầu.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="thanhhoa" class="section launch-section">
+      <div class="shell launch-card">
+        <div class="launch-copy"><span class="kicker light">GIAI ĐOẠN PILOT</span><h2>Làm sâu ở Thanh Hóa.<br>Rồi mới mở rộng.</h2><p>Ưu tiên hiện tại là ba dịch vụ chạy end‑to‑end ổn định, quy trình nhận/bàn giao rõ và Operations xử lý được tình huống thật.</p><a class="button button-white" href="#top">Xem lại sản phẩm <span>→</span></a></div>
+        <div class="launch-status" aria-label="Tình trạng ba dịch vụ MVP">
+          <div><span class="status-check">✓</span><p><strong>Lái hộ ô tô</strong><small>Luồng MVP end‑to‑end</small></p><span class="status-pill">MVP</span></div>
+          <div><span class="status-check">✓</span><p><strong>Lái hộ xe máy</strong><small>Luồng MVP end‑to‑end</small></p><span class="status-pill">MVP</span></div>
+          <div><span class="status-check">✓</span><p><strong>Đăng kiểm hộ</strong><small>Luồng nghiệp vụ riêng</small></p><span class="status-pill">MVP</span></div>
+          <div class="future-row"><span class="future-icon">＋</span><p><strong>Marketplace mở rộng</strong><small>Thiết kế nền tảng để thêm dịch vụ sau này</small></p><span class="future-pill">SAU MVP</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-section">
+      <div class="shell final-card"><span class="brand-mark large" aria-hidden="true"><span>F</span></span><div><span class="kicker">FLASHX</span><h2>Tài xế của bạn,<br>khi bạn cần.</h2><p>Ba dịch vụ đầu tiên. Một cách làm rõ ràng: dùng chính phương tiện của khách và quản lý trách nhiệm tới lúc bàn giao.</p></div><a class="button button-primary" href="#services">Khám phá 3 dịch vụ <span>→</span></a></div>
+    </section>
   </main>
 
-  <footer class="footer"><div class="container footer-inner"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">F</span><span>FlashX</span></a><p>Tài xế của bạn, khi bạn cần.</p><span class="muted">Pilot đầu tiên • Thanh Hóa</span></div></footer>
+  <footer class="footer">
+    <div class="shell footer-grid"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><span>F</span></span><span class="brand-copy"><strong>FlashX</strong><small>Tài xế của bạn, khi bạn cần.</small></span></a><div class="footer-links"><a href="#services">Dịch vụ</a><a href="#flow">Flowline</a><a href="#operations">Vận hành</a></div><p>Pilot đầu tiên · Thanh Hóa</p></div>
+  </footer>
 </body>
 </html>

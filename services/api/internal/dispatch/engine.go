@@ -326,6 +326,101 @@ func (e *Engine) DispatchWaiting(limit int) []Offer {
 	return created
 }
 
+// CandidatesForTrip uses the same eligibility rules as automated dispatch:
+// approved, online, capability-compatible and recently located near pickup.
+func (e *Engine) CandidatesForTrip(tripID string, limit int) ([]drivers.NearbyDriver, error) {
+	trip, err := e.trips.Get(tripID)
+	if err != nil {
+		return nil, err
+	}
+	if trip.IncidentOpen || (trip.Status != trips.StatusSearching && !trips.CanReassignBeforeCustody(trip.Status)) {
+		return nil, trips.ErrInvalidState
+	}
+	if limit <= 0 || limit > 30 {
+		limit = 15
+	}
+	return e.drivers.NearbyCandidates(
+		trip.ServiceType,
+		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
+		e.maxDistance,
+		20*time.Second,
+		limit,
+	)
+}
+
+// ManualAssign serializes with normal offer acceptance using the same trip
+// lock. It supports first assignment while searching and safe reassignment
+// before vehicle custody, then invalidates any stale pending offers.
+func (e *Engine) ManualAssign(tripID, driverID string) (trips.Trip, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	unlock, acquired, err := e.locker.TryLock("trip:"+tripID, e.lockTTL)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	if !acquired {
+		return trips.Trip{}, ErrOfferUnavailable
+	}
+	defer unlock()
+
+	trip, err := e.trips.Get(tripID)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	if driverID == "" || trip.IncidentOpen || (trip.Status != trips.StatusSearching && !trips.CanReassignBeforeCustody(trip.Status)) || trip.DriverID == driverID {
+		return trips.Trip{}, trips.ErrInvalidState
+	}
+
+	candidates, err := e.drivers.NearbyCandidates(
+		trip.ServiceType,
+		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
+		e.maxDistance,
+		20*time.Second,
+		30,
+	)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	eligible := false
+	for _, candidate := range candidates {
+		if candidate.Driver.ID == driverID {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		return trips.Trip{}, drivers.ErrDriverUnavailable
+	}
+
+	if _, err := e.drivers.TryMarkBusy(driverID); err != nil {
+		return trips.Trip{}, err
+	}
+	oldDriverID := trip.DriverID
+	var updated trips.Trip
+	if trip.Status == trips.StatusSearching {
+		updated, err = e.trips.AssignDriver(tripID, driverID)
+	} else {
+		updated, err = e.trips.ReassignDriver(tripID, driverID)
+	}
+	if err != nil {
+		_, _ = e.drivers.MarkAvailable(driverID)
+		return trips.Trip{}, err
+	}
+	if oldDriverID != "" && oldDriverID != driverID {
+		// Best effort: suspended/rejected drivers intentionally remain unavailable.
+		_, _ = e.drivers.MarkAvailable(oldDriverID)
+	}
+	items, _ := e.offers.ListByTrip(tripID)
+	for _, offer := range items {
+		if offer.Status == OfferPending {
+			offer.Status = OfferInvalid
+			_ = e.offers.Save(offer)
+		}
+	}
+	return updated, nil
+}
+
 func (e *Engine) pendingOfferForTrip(tripID string, now time.Time) (Offer, bool, error) {
 	items, err := e.offers.ListByTrip(tripID)
 	if err != nil {

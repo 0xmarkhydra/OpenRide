@@ -179,6 +179,92 @@ type resolveIncidentRequest struct {
 	Note string `json:"note"`
 }
 
+type adminAssignDriverRequest struct {
+	DriverID string `json:"driver_id"`
+	Reason   string `json:"reason"`
+}
+
+func (s *Server) adminTripDriverCandidates(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	if s.deps.Dispatch == nil {
+		writeError(w, http.StatusServiceUnavailable, "DISPATCH_UNAVAILABLE", "Dispatch service is unavailable", nil)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.deps.Dispatch.CandidatesForTrip(r.PathValue("id"), limit)
+	if err != nil {
+		if err == trips.ErrInvalidState {
+			s.writeDomainError(w, err)
+			return
+		}
+		s.writeDispatchError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminAssignTripDriver(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := s.activeAdminID(w, r)
+	if !ok {
+		return
+	}
+	if s.deps.Dispatch == nil {
+		writeError(w, http.StatusServiceUnavailable, "DISPATCH_UNAVAILABLE", "Dispatch service is unavailable", nil)
+		return
+	}
+	var req adminAssignDriverRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.DriverID = strings.TrimSpace(req.DriverID)
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.DriverID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "DRIVER_REQUIRED", "Driver is required", nil)
+		return
+	}
+	before, err := s.deps.Trips.Get(r.PathValue("id"))
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	isReassign := before.DriverID != ""
+	if isReassign && req.Reason == "" {
+		writeError(w, http.StatusUnprocessableEntity, "REASSIGN_REASON_REQUIRED", "A reason is required when replacing a driver", nil)
+		return
+	}
+	updated, err := s.deps.Dispatch.ManualAssign(before.ID, req.DriverID)
+	if err != nil {
+		if err == trips.ErrInvalidState {
+			s.writeDomainError(w, err)
+			return
+		}
+		s.writeDispatchError(w, err)
+		return
+	}
+	action := "trip.driver_assigned"
+	eventType := "trip.assigned"
+	if isReassign {
+		action = "trip.driver_reassigned"
+		eventType = "trip.reassigned"
+	}
+	if err := s.deps.Admin.Audit(adminID, action, "trip", updated.ID, map[string]any{
+		"previous_driver_id": before.DriverID,
+		"driver_id":          updated.DriverID,
+		"previous_status":    before.Status,
+		"reason":             req.Reason,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Driver assignment changed but audit write failed", nil)
+		return
+	}
+	if isReassign && before.DriverID != updated.DriverID {
+		s.publishActor(before.DriverID, "trip.unassigned", updated.ID, map[string]any{"trip_id": updated.ID, "reason": req.Reason})
+	}
+	s.publishTrip(updated, eventType, updated)
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: updated})
+}
+
 func (s *Server) adminResolveIncident(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := s.activeAdminID(w, r)
 	if !ok {

@@ -55,6 +55,7 @@ type Driver = {
   location?: { lat: number; lng: number; captured_at?: string };
   created_at?: string;
 };
+type DriverCandidate = { driver: Driver; distance_to_pickup_m: number };
 type Trip = {
   id: string;
   rider_id: string;
@@ -202,6 +203,9 @@ function vehicleTypeLabel(value: string) { return value === 'motorbike' ? 'Xe m�
 function km(value?: number) { return value ? `${(value / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km` : '—'; }
 function duration(value?: number) { return value ? `${Math.max(1, Math.round(value / 60))} phút` : '—'; }
 function coordinate(point?: { lat: number; lng: number }) { return point ? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` : '—'; }
+function canManageDriver(trip: Trip) {
+  return !trip.incident_open && ['searching', 'accepted', 'arriving', 'arrived', 'arriving_for_pickup', 'arrived_for_pickup'].includes(trip.status);
+}
 
 const phoneSchema = z.object({ phone: z.string().trim().min(9, 'Nhập số điện thoại Admin') });
 const otpSchema = z.object({ code: z.string().regex(/^\d{6}$/, 'OTP phải gồm 6 chữ số') });
@@ -244,6 +248,9 @@ export default function AdminClient() {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [driverDocs, setDriverDocs] = useState<DriverDocumentWithURL[]>([]);
   const [driverDocsLoading, setDriverDocsLoading] = useState(false);
+  const [driverCandidates, setDriverCandidates] = useState<DriverCandidate[]>([]);
+  const [driverCandidatesLoading, setDriverCandidatesLoading] = useState(false);
+  const [assignmentReason, setAssignmentReason] = useState('');
   const [driverReason, setDriverReason] = useState('');
   const [documentNote, setDocumentNote] = useState('');
   const [incidentResolutionNote, setIncidentResolutionNote] = useState('');
@@ -341,6 +348,24 @@ export default function AdminClient() {
     setAudit(items);
   }, [authedApi, token]);
 
+  const loadDriverCandidates = useCallback(async (trip: Trip | null) => {
+    if (!trip || !canManageDriver(trip)) {
+      setDriverCandidates([]);
+      setDriverCandidatesLoading(false);
+      return;
+    }
+    setDriverCandidatesLoading(true);
+    try {
+      setDriverCandidates(await authedApi<DriverCandidate[]>(`/v1/admin/trips/${trip.id}/driver-candidates?limit=15`));
+    } catch (candidateError) {
+      setDriverCandidates([]);
+      if (candidateError instanceof ApiHttpError && candidateError.status === 409) return;
+      setError(candidateError instanceof Error ? candidateError.message : 'Không thể tải tài xế phù hợp');
+    } finally {
+      setDriverCandidatesLoading(false);
+    }
+  }, [authedApi]);
+
   useEffect(() => {
     if (!token) return;
     void loadCore(token);
@@ -348,6 +373,11 @@ export default function AdminClient() {
     const timer = window.setInterval(() => void loadCore(token), 5000);
     return () => window.clearInterval(timer);
   }, [token, loadCore, loadReference]);
+
+  useEffect(() => {
+    setAssignmentReason('');
+    void loadDriverCandidates(selectedTrip);
+  }, [selectedTrip?.id, selectedTrip?.status, selectedTrip?.driver_id, selectedTrip?.incident_open, loadDriverCandidates]);
 
   const requestOtp = phoneForm.handleSubmit(async ({ phone }) => {
     setBusy(true);
@@ -450,6 +480,30 @@ export default function AdminClient() {
       await Promise.all([loadCore(), loadAudit()]);
     } catch (incidentError) {
       setError(incidentError instanceof Error ? incidentError.message : 'Không thể đóng sự cố');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assignTripDriver(candidate: DriverCandidate) {
+    if (!selectedTrip) return;
+    const reason = assignmentReason.trim();
+    if (selectedTrip.driver_id && !reason) {
+      setError('Nhập lý do trước khi đổi tài xế cho công việc đang được nhận.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<Trip>(`/v1/admin/trips/${selectedTrip.id}/assign-driver`, {
+        method: 'POST', body: JSON.stringify({ driver_id: candidate.driver.id, reason }),
+      });
+      setTrips(items => items.map(item => item.id === updated.id ? updated : item));
+      setSelectedTrip(updated);
+      setAssignmentReason('');
+      await Promise.all([loadCore(), loadAudit(), loadDriverCandidates(updated)]);
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : 'Không thể điều phối tài xế');
     } finally {
       setBusy(false);
     }
@@ -586,7 +640,7 @@ export default function AdminClient() {
     <main className='min-w-0'><header className='sticky top-0 z-30 border-b border-border/80 bg-surface/80 backdrop-blur-xl'><div className='flex h-16 items-center justify-between px-4 md:px-6'><div className='flex items-center gap-3'><Button size='icon' variant='ghost' className='lg:hidden' onClick={() => setMobileNavOpen(true)} aria-label='Mở menu'><Menu aria-hidden='true' className='size-5' /></Button><div><div className='text-[11px] font-semibold uppercase tracking-[.13em] text-primary'>FlashX Operations</div><h1 className='text-lg font-semibold tracking-tight text-foreground'>{activeLabel}</h1></div></div><div className='flex items-center gap-2'><Badge variant={error ? 'destructive' : busy ? 'secondary' : 'success'}><span className={`mr-1.5 size-1.5 rounded-full ${error ? 'bg-danger' : busy ? 'bg-muted-soft' : 'bg-success'}`} />{error ? 'Cần kiểm tra' : busy ? 'Đang đồng bộ' : 'Đã đồng bộ'}</Badge><Button size='icon' variant='ghost' onClick={() => { void loadCore(); void loadReference(); }} disabled={busy} aria-label='Làm mới'><RefreshCw aria-hidden='true' className={`size-4 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /></Button><Button size='icon' variant='ghost' onClick={() => void logout()} aria-label='Đăng xuất'><LogOut aria-hidden='true' className='size-4' /></Button></div></div></header><div className='mx-auto max-w-[1500px] p-4 md:p-6 lg:p-7'>{error ? <div role='alert' className='mb-4 flex items-start justify-between gap-3 rounded-2xl border border-danger/15 bg-danger-soft p-4 text-sm text-danger'><span>{error}</span><button type='button' className='font-semibold' onClick={() => setError('')}>Đóng</button></div> : null}{renderView()}</div></main>
 
     <DetailPanel open={Boolean(selectedTrip)} title={selectedTrip ? `Công việc ${selectedTrip.id}` : 'Chi tiết công việc'} description={selectedTrip ? `${serviceLabel(selectedTrip.service_type)} · ${tripStatusLabel(selectedTrip.status)}` : undefined} onClose={() => setSelectedTrip(null)}>
-      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} /> : null}
+      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} /> : null}
     </DetailPanel>
 
     <DetailPanel open={Boolean(selectedDriver)} title={selectedDriver ? selectedDriver.full_name || selectedDriver.phone || selectedDriver.id : 'Chi tiết tài xế'} description={selectedDriver ? `${serviceLabel(selectedDriver.service_type)} · ${approvalLabel(selectedDriver.approval_status)}` : undefined} onClose={() => { setSelectedDriver(null); setDriverDocs([]); }}>
@@ -631,7 +685,7 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
   </div>;
 }
 
-function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve }: {
+function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign }: {
   trip: Trip;
   customer?: Customer;
   driver?: Driver;
@@ -640,10 +694,17 @@ function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, set
   resolutionNote: string;
   setResolutionNote: (value: string) => void;
   onResolve: () => void;
+  candidates: DriverCandidate[];
+  candidatesLoading: boolean;
+  assignmentReason: string;
+  setAssignmentReason: (value: string) => void;
+  onAssign: (candidate: DriverCandidate) => void;
 }) {
   const steps = tripSteps(trip);
+  const manageable = canManageDriver(trip);
   return <div className='grid gap-5'>
     {trip.incident_open ? <div className='rounded-2xl border border-danger/15 bg-danger-soft p-4'><div className='flex items-start gap-3'><AlertTriangle aria-hidden='true' className='mt-0.5 size-5 text-danger' /><div><div className='font-semibold text-danger'>{trip.incident_type || 'Sự cố đang mở'}</div><p className='mt-1 text-sm leading-6 text-foreground'>{trip.incident_note || 'Tài xế chưa để lại ghi chú chi tiết.'}</p></div></div><label className='mt-4 block text-sm font-semibold text-foreground'>Ghi chú xử lý<Input className='mt-1.5' value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} placeholder='Ví dụ: Đã gọi xác nhận với khách và tài xế' /></label><Button className='mt-3 w-full sm:w-auto' disabled={busy} onClick={onResolve}>Đóng sự cố</Button></div> : null}
+    <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều phối tài xế</CardTitle><CardDescription>{manageable ? 'Chỉ hiển thị tài xế đã duyệt, online, đúng năng lực và có vị trí mới gần điểm nhận.' : 'Điều phối thủ công đã khóa ở trạng thái hiện tại để bảo vệ chuỗi bàn giao xe.'}</CardDescription></div><Badge variant={manageable ? 'success' : 'secondary'}>{manageable ? 'Có thể điều phối' : 'Đã khóa'}</Badge></div></CardHeader><CardContent>{manageable ? <div className='grid gap-3'>{trip.driver_id ? <label className='block text-sm font-semibold text-foreground'>Lý do đổi tài xế<Input className='mt-1.5' value={assignmentReason} onChange={event => setAssignmentReason(event.target.value)} placeholder='Bắt buộc khi thay tài xế đang nhận việc' /></label> : null}{candidatesLoading ? Array.from({ length: 3 }, (_, index) => <div key={index} className='h-16 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />) : candidates.length ? candidates.map(candidate => <div key={candidate.driver.id} className='flex flex-col gap-3 rounded-2xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between'><div className='min-w-0'><div className='font-semibold text-foreground'>{candidate.driver.full_name || candidate.driver.phone || candidate.driver.id}</div><div className='mt-1 text-xs text-muted'>{candidate.driver.phone || candidate.driver.id} · {Math.max(0.1, candidate.distance_to_pickup_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km tới điểm nhận</div></div><Button size='sm' disabled={busy || Boolean(trip.driver_id && !assignmentReason.trim())} onClick={() => onAssign(candidate)}>{trip.driver_id ? 'Đổi tài xế' : 'Gán tài xế'}</Button></div>) : <InfoState icon={UserRound} title='Chưa có tài xế phù hợp' text='Không có tài xế online đủ năng lực với vị trí mới trong bán kính điều phối hiện tại.' />}</div> : <div className='rounded-2xl bg-surface-soft p-4 text-sm leading-6 text-muted'>{trip.status === 'vehicle_received' || !['scheduled', 'searching', 'completed', 'cancelled'].includes(trip.status) ? 'Từ lúc tài xế xác nhận đã nhận xe, FlashX không cho phép đổi tài xế theo luồng thông thường. Nếu bắt buộc phải chuyển người giữ xe, Operations phải xử lý theo quy trình sự cố/bàn giao có ghi nhận.' : 'Công việc này không ở trạng thái cho phép điều phối thủ công.'}</div>}</CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Khách hàng' value={customer?.full_name || customer?.phone || trip.rider_id} detail={customer?.phone} icon={UsersRound} /><InfoCard label='Tài xế' value={driver?.full_name || (trip.driver_id ? trip.driver_id : 'Chưa ghép')} detail={driver?.phone} icon={UserRound} /><InfoCard label='Xe khách' value={vehicle?.license_plate || trip.customer_vehicle_id || 'Chưa gắn xe'} detail={vehicle ? [vehicle.brand, vehicle.model].filter(Boolean).join(' ') : undefined} icon={CarFront} /><InfoCard label='Giá hiện tại' value={money(trip.final_fare_minor || trip.estimated_fare_minor)} detail={trip.booking_mode === 'scheduled' ? `Hẹn ${formatDate(trip.scheduled_at)}` : 'Đặt ngay'} icon={BadgeDollarSign} /></div>
     <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>FlashX Flowline</CardTitle><CardDescription>Vòng đời thực tế của {serviceLabel(trip.service_type).toLocaleLowerCase('vi')}.</CardDescription></CardHeader><CardContent><div className='grid gap-0'>{steps.map((step, index) => <div key={step.status} className='grid grid-cols-[24px_1fr] gap-3'><div className='relative flex justify-center'>{index < steps.length - 1 ? <span className={`absolute top-5 h-full w-px ${step.done ? 'bg-primary' : 'bg-border'}`} /> : null}<span className={`relative mt-1 size-3 rounded-full border-2 ${step.active ? 'fx-pulse-dot border-primary bg-surface' : step.done ? 'border-primary bg-primary' : 'border-border bg-surface'}`} /></div><div className='pb-5'><div className={`text-sm font-semibold ${step.active ? 'text-primary' : step.done ? 'text-foreground' : 'text-muted'}`}>{step.label}</div>{step.active ? <div className='mt-1 text-xs text-muted'>Trạng thái hiện tại</div> : null}</div></div>)}</div></CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Điểm nhận' value={coordinate(trip.pickup)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Điểm đến / trả xe' value={coordinate(trip.destination)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Quãng đường dự kiến' value={km(trip.estimated_distance_m)} icon={Gauge} /><InfoCard label='Thời gian dự kiến' value={duration(trip.estimated_duration_s)} icon={Clock3} /></div>

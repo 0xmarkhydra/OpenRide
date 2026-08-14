@@ -123,6 +123,9 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("POST /v1/driver/trips/{id}/complete", s.driverTripComplete)
 
 	mux.HandleFunc("GET /v1/admin/me", s.adminMe)
+	mux.HandleFunc("GET /v1/admin/accounts", s.adminAccounts)
+	mux.HandleFunc("POST /v1/admin/accounts", s.adminCreateAccount)
+	mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.adminUpdateAccount)
 	mux.HandleFunc("GET /v1/admin/drivers", s.adminDrivers)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/approval", s.adminDriverApproval)
 	mux.HandleFunc("GET /v1/admin/drivers/{id}/documents", s.adminDriverDocuments)

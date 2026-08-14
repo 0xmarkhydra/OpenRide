@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,9 +28,39 @@ func (s *PostgresStore) Bootstrap(user User) (User, error) {
 		ON CONFLICT (phone) WHERE phone IS NOT NULL DO NOTHING
 	`, user.ID, user.Phone, user.Email, user.DisplayName, user.Role, user.Status, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
-		return User{}, err
+		return User{}, translateAdminStoreError(err)
 	}
 	return s.GetByPhone(user.Phone)
+}
+
+func (s *PostgresStore) Create(user User) (User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO admin_users (id, phone, email, display_name, role, status, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	`, user.ID, user.Phone, user.Email, user.DisplayName, user.Role, user.Status, user.CreatedAt, user.UpdatedAt)
+	if err != nil {
+		return User{}, translateAdminStoreError(err)
+	}
+	return s.Get(user.ID)
+}
+
+func (s *PostgresStore) Save(user User) (User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE admin_users
+		SET email=$2, display_name=$3, role=$4, status=$5, updated_at=$6
+		WHERE id=$1
+	`, user.ID, user.Email, user.DisplayName, user.Role, user.Status, user.UpdatedAt)
+	if err != nil {
+		return User{}, translateAdminStoreError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return User{}, ErrNotFound
+	}
+	return s.Get(user.ID)
 }
 
 func (s *PostgresStore) Get(id string) (User, error) {
@@ -42,6 +73,28 @@ func (s *PostgresStore) GetByPhone(phone string) (User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return scanAdmin(s.pool.QueryRow(ctx, adminSelect+` WHERE phone=$1`, phone))
+}
+
+func (s *PostgresStore) List(limit int) ([]User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, adminSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]User, 0)
+	for rows.Next() {
+		item, scanErr := scanAdmin(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *PostgresStore) AppendAudit(entry AuditEntry) error {
@@ -100,4 +153,12 @@ func scanAdmin(row interface{ Scan(dest ...any) error }) (User, error) {
 		return User{}, err
 	}
 	return user, nil
+}
+
+func translateAdminStoreError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrConflict
+	}
+	return err
 }

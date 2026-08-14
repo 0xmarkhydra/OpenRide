@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	admindomain "flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/pricing"
@@ -27,6 +28,110 @@ func (s *Server) adminMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: user})
+}
+
+type adminAccountCreateRequest struct {
+	Phone       string `json:"phone"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+}
+
+type adminAccountUpdateRequest struct {
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason"`
+}
+
+func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdminRole(w, r, admindomain.RoleSuperAdmin); !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.deps.Admin.ListAccounts(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "ADMIN_ACCOUNTS_FAILED", "Unable to list admin accounts", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
+}
+
+func (s *Server) adminCreateAccount(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireAdminRole(w, r, admindomain.RoleSuperAdmin)
+	if !ok {
+		return
+	}
+	var req adminAccountCreateRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	created, err := s.deps.Admin.CreateAccount(admindomain.CreateAccountInput{
+		Phone: req.Phone, DisplayName: req.DisplayName, Role: strings.TrimSpace(req.Role),
+	})
+	if err != nil {
+		s.writeAdminAccountError(w, err)
+		return
+	}
+	if err := s.deps.Admin.Audit(actor.ID, "admin.account_created", "admin_user", created.ID, map[string]any{
+		"phone": created.Phone, "role": created.Role, "status": created.Status,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Admin account created but audit write failed", nil)
+		return
+	}
+	writeJSON(w, http.StatusCreated, dataEnvelope{Data: created})
+}
+
+func (s *Server) adminUpdateAccount(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireAdminRole(w, r, admindomain.RoleSuperAdmin)
+	if !ok {
+		return
+	}
+	var req adminAccountUpdateRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	before, err := s.deps.Admin.GetAccount(r.PathValue("id"))
+	if err != nil {
+		s.writeAdminAccountError(w, err)
+		return
+	}
+	req.Role = strings.TrimSpace(req.Role)
+	req.Status = strings.TrimSpace(req.Status)
+	req.Reason = strings.TrimSpace(req.Reason)
+	if (req.Role != before.Role || req.Status != before.Status) && req.Reason == "" {
+		writeError(w, http.StatusUnprocessableEntity, "ADMIN_CHANGE_REASON_REQUIRED", "A reason is required when changing role or status", nil)
+		return
+	}
+	updated, err := s.deps.Admin.UpdateAccount(before.ID, admindomain.UpdateAccountInput{
+		DisplayName: req.DisplayName, Role: req.Role, Status: req.Status,
+	})
+	if err != nil {
+		s.writeAdminAccountError(w, err)
+		return
+	}
+	if err := s.deps.Admin.Audit(actor.ID, "admin.account_updated", "admin_user", updated.ID, map[string]any{
+		"previous_role": before.Role, "previous_status": before.Status,
+		"role": updated.Role, "status": updated.Status, "reason": req.Reason,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Admin account changed but audit write failed", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: updated})
+}
+
+func (s *Server) writeAdminAccountError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, admindomain.ErrInvalidInput):
+		writeError(w, http.StatusUnprocessableEntity, "ADMIN_ACCOUNT_INVALID", "Admin account input is invalid", nil)
+	case errors.Is(err, admindomain.ErrConflict):
+		writeError(w, http.StatusConflict, "ADMIN_ACCOUNT_CONFLICT", "Phone or email already belongs to another admin", nil)
+	case errors.Is(err, admindomain.ErrLastSuperAdmin):
+		writeError(w, http.StatusConflict, "ADMIN_LAST_SUPER_ADMIN", "At least one active Super Admin must remain", nil)
+	case errors.Is(err, admindomain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "ADMIN_ACCOUNT_NOT_FOUND", "Admin account was not found", nil)
+	default:
+		writeError(w, http.StatusInternalServerError, "ADMIN_ACCOUNT_FAILED", "Unable to update admin account", nil)
+	}
 }
 
 func (s *Server) adminDrivers(w http.ResponseWriter, r *http.Request) {
@@ -60,20 +165,43 @@ func (s *Server) adminDrivers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dataEnvelope{Data: items, Meta: map[string]any{"count": len(items)}})
 }
 
-func (s *Server) activeAdminID(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (s *Server) activeAdmin(w http.ResponseWriter, r *http.Request) (admindomain.User, bool) {
 	adminID, ok := s.actorID(w, r, auth.RoleAdmin, "X-Dev-Admin-ID")
 	if !ok {
-		return "", false
+		return admindomain.User{}, false
 	}
 	if s.deps.Admin == nil {
 		writeError(w, http.StatusServiceUnavailable, "ADMIN_UNAVAILABLE", "Admin service is unavailable", nil)
-		return "", false
+		return admindomain.User{}, false
 	}
-	if _, err := s.deps.Admin.Get(adminID); err != nil {
+	user, err := s.deps.Admin.Get(adminID)
+	if err != nil {
 		writeError(w, http.StatusForbidden, "ADMIN_FORBIDDEN", "Admin account is not active", nil)
+		return admindomain.User{}, false
+	}
+	return user, true
+}
+
+func (s *Server) activeAdminID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	user, ok := s.activeAdmin(w, r)
+	if !ok {
 		return "", false
 	}
-	return adminID, true
+	return user.ID, true
+}
+
+func (s *Server) requireAdminRole(w http.ResponseWriter, r *http.Request, roles ...string) (admindomain.User, bool) {
+	user, ok := s.activeAdmin(w, r)
+	if !ok {
+		return admindomain.User{}, false
+	}
+	for _, role := range roles {
+		if user.Role == role {
+			return user, true
+		}
+	}
+	writeError(w, http.StatusForbidden, "ADMIN_ROLE_FORBIDDEN", "Admin role cannot perform this action", nil)
+	return admindomain.User{}, false
 }
 
 type driverApprovalRequest struct {
@@ -154,10 +282,11 @@ type adminPricingUpdateRequest struct {
 }
 
 func (s *Server) adminUpdatePricing(w http.ResponseWriter, r *http.Request) {
-	adminID, ok := s.activeAdminID(w, r)
+	adminUser, ok := s.requireAdminRole(w, r, admindomain.RoleSuperAdmin)
 	if !ok {
 		return
 	}
+	adminID := adminUser.ID
 	if s.deps.Pricing == nil {
 		writeError(w, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Pricing service is unavailable", nil)
 		return

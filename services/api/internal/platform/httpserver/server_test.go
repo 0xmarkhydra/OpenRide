@@ -508,9 +508,73 @@ func TestAdminOperationsEndpoints(t *testing.T) {
 	}
 }
 
+func TestAdminRBAC(t *testing.T) {
+	s := newTestServer()
+	superID, superHeaders := adminSession(t, s)
+
+	created := perform(t, s, http.MethodPost, "/v1/admin/accounts", []byte(`{"phone":"0912345678","display_name":"Operations One","role":"operations"}`), superHeaders)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create operations admin status=%d body=%s", created.Code, created.Body.String())
+	}
+	var createdPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdPayload); err != nil {
+		t.Fatal(err)
+	}
+	operationsID, operationsHeaders := adminSessionForPhone(t, s, "0912345678")
+	if operationsID != createdPayload.Data.ID {
+		t.Fatalf("operations id=%s want=%s", operationsID, createdPayload.Data.ID)
+	}
+
+	me := perform(t, s, http.MethodGet, "/v1/admin/me", nil, operationsHeaders)
+	if me.Code != http.StatusOK || !bytes.Contains(me.Body.Bytes(), []byte(`"role":"operations"`)) {
+		t.Fatalf("operations me status=%d body=%s", me.Code, me.Body.String())
+	}
+	tripsList := perform(t, s, http.MethodGet, "/v1/admin/trips", nil, operationsHeaders)
+	if tripsList.Code != http.StatusOK {
+		t.Fatalf("operations trips status=%d body=%s", tripsList.Code, tripsList.Body.String())
+	}
+	pricingDenied := perform(t, s, http.MethodPatch, "/v1/admin/pricing/"+trips.ServiceDesignatedDriverCar, []byte(`{"base_fare_minor":100000,"per_km_minor":20000,"service_minor":0,"minimum_minor":140000}`), operationsHeaders)
+	if pricingDenied.Code != http.StatusForbidden {
+		t.Fatalf("operations pricing status=%d body=%s", pricingDenied.Code, pricingDenied.Body.String())
+	}
+	accountsDenied := perform(t, s, http.MethodGet, "/v1/admin/accounts", nil, operationsHeaders)
+	if accountsDenied.Code != http.StatusForbidden {
+		t.Fatalf("operations accounts status=%d body=%s", accountsDenied.Code, accountsDenied.Body.String())
+	}
+
+	lastSuperDenied := perform(t, s, http.MethodPatch, "/v1/admin/accounts/"+superID, []byte(`{"display_name":"Test Admin","role":"operations","status":"active","reason":"test downgrade"}`), superHeaders)
+	if lastSuperDenied.Code != http.StatusConflict {
+		t.Fatalf("last super admin downgrade status=%d body=%s", lastSuperDenied.Code, lastSuperDenied.Body.String())
+	}
+
+	disabled := perform(t, s, http.MethodPatch, "/v1/admin/accounts/"+operationsID, []byte(`{"display_name":"Operations One","role":"operations","status":"disabled","reason":"offboard test"}`), superHeaders)
+	if disabled.Code != http.StatusOK || !bytes.Contains(disabled.Body.Bytes(), []byte(`"status":"disabled"`)) {
+		t.Fatalf("disable operations status=%d body=%s", disabled.Code, disabled.Body.String())
+	}
+	otpDenied := perform(t, s, http.MethodPost, "/v1/auth/otp/request", []byte(`{"phone":"0912345678","role":"admin"}`), nil)
+	if otpDenied.Code != http.StatusForbidden {
+		t.Fatalf("disabled admin otp status=%d body=%s", otpDenied.Code, otpDenied.Body.String())
+	}
+
+	audit := perform(t, s, http.MethodGet, "/v1/admin/audit?limit=50", nil, superHeaders)
+	if audit.Code != http.StatusOK || !bytes.Contains(audit.Body.Bytes(), []byte("admin.account_created")) || !bytes.Contains(audit.Body.Bytes(), []byte("admin.account_updated")) {
+		t.Fatalf("rbac audit missing actions status=%d body=%s", audit.Code, audit.Body.String())
+	}
+}
+
 func adminSession(t *testing.T, s *Server) (string, map[string]string) {
 	t.Helper()
-	request := perform(t, s, http.MethodPost, "/v1/auth/otp/request", []byte(`{"phone":"0900000001","role":"admin"}`), nil)
+	return adminSessionForPhone(t, s, "0900000001")
+}
+
+func adminSessionForPhone(t *testing.T, s *Server, phone string) (string, map[string]string) {
+	t.Helper()
+	requestBody, _ := json.Marshal(map[string]any{"phone": phone, "role": "admin"})
+	request := perform(t, s, http.MethodPost, "/v1/auth/otp/request", requestBody, nil)
 	if request.Code != http.StatusAccepted {
 		t.Fatalf("admin otp status=%d body=%s", request.Code, request.Body.String())
 	}

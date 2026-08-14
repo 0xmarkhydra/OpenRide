@@ -23,6 +23,10 @@ func (s *Service) Get(id string) (User, error) {
 	return s.store.Get(id)
 }
 
+func (s *Service) ListAll(limit int) ([]User, error) {
+	return s.store.ListAll(limit)
+}
+
 func (s *Service) FindOrCreateByPhone(phone string) (User, bool, error) {
 	phone = strings.TrimSpace(phone)
 	if phone == "" {

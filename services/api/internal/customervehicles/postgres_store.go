@@ -52,6 +52,28 @@ func (s *PostgresStore) ListByOwner(ownerUserID string) ([]Vehicle, error) {
 	return items, rows.Err()
 }
 
+func (s *PostgresStore) ListAll(limit int) ([]Vehicle, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, vehicleSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Vehicle, 0)
+	for rows.Next() {
+		vehicle, scanErr := scanVehicle(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, vehicle)
+	}
+	return items, rows.Err()
+}
+
 const vehicleSelect = `SELECT id, owner_user_id, type, license_plate, brand, model,
 	COALESCE(year,0), color, transmission, COALESCE(seats,0), notes,
 	photo_object_key, status, created_at, updated_at FROM customer_vehicles`

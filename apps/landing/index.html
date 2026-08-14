@@ -9,17 +9,18 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#top">Bỏ qua điều hướng</a>
   <header class="nav">
     <div class="container nav-inner">
       <a class="brand" href="#top" aria-label="FlashX trang chủ"><span class="brand-mark" aria-hidden="true">F</span><span>FlashX</span></a>
       <nav class="nav-links" aria-label="Điều hướng chính">
         <a href="#services">Dịch vụ</a><a href="#how">Cách hoạt động</a><a href="#trust">An toàn</a><a href="#pilot">Thanh Hóa</a>
       </nav>
-      <a class="nav-cta" href="#services">Khám phá FlashX</a>
+      <a class="nav-cta" href="#services">Xem dịch vụ</a>
     </div>
   </header>
 
-  <main id="top">
+  <main id="top" tabindex="-1">
     <section class="hero">
       <div class="hero-glow glow-a"></div><div class="hero-glow glow-b"></div>
       <div class="container hero-grid">
@@ -31,7 +32,7 @@
           <div class="micro-proof"><span><b>3</b> dịch vụ MVP</span><i></i><span>Đặt ngay hoặc hẹn giờ</span><i></i><span>Báo giá trước</span></div>
         </div>
 
-        <div class="phone-stage reveal delay" aria-label="Mô phỏng hành trình dịch vụ FlashX">
+        <div class="phone-stage reveal delay" role="img" aria-label="Mô phỏng hành trình dịch vụ FlashX từ tài xế đang đến nhận xe tới bàn giao">
           <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
           <div class="phone">
             <div class="phone-top"><span>9:41</span><div class="island"></div><span class="signal">●●●</span></div>
@@ -58,7 +59,7 @@
         <div class="service-grid">
           <article class="service-card featured"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h14M6 16v2m12-2v2M4 13l2-5h12l2 5v3H4v-3Zm3-5 1-3h8l1 3"/></svg></div><div><span class="service-no">01</span><h3>Lái hộ ô tô</h3><p>Tài xế đến đúng điểm nhận, lái chính ô tô của bạn đến nơi cần tới và bàn giao lại theo quy trình rõ ràng.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
           <article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M9 17h4l3-7h-5l-2 4H6m6-4-2-3h3"/></svg></div><div><span class="service-no">02</span><h3>Lái hộ xe máy</h3><p>Ghép tài xế có năng lực phù hợp để đưa bạn và chiếc xe máy của chính mình về đúng nơi cần đến.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
-          <article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7zM9 7h6M9 11h6M9 15h3"/><path d="m14 16 1.5 1.5L19 14"/></svg></div><div><span class="service-no">03</span><h3>Đăng kiểm hộ</h3><p>Nhận xe và giấy tờ theo checklist, theo dõi từng mốc đăng kiểm rồi trả lại xe cho khách khi hoàn tất.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
+          <article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7zM9 7h6M9 11h6M9 15h3"/><path d="m14 16 1.5 1.5L19 14"/></svg></div><div><span class="service-no">03</span><h3>Đăng kiểm hộ</h3><p>Nhận xe theo quy trình riêng, theo dõi từng mốc đăng kiểm rồi trả lại xe cho khách khi hoàn tất.</p></div><a href="#how">Xem cách hoạt động <span>→</span></a></article>
         </div>
       </div>
     </section>
@@ -79,12 +80,12 @@
     </section>
 
     <section id="trust" class="section trust">
-      <div class="container"><div class="section-heading"><span class="kicker">VẬN HÀNH CÓ TRÁCH NHIỆM</span><h2>Phương tiện là tài sản của khách.<br>Quy trình phải xứng đáng với điều đó.</h2></div><div class="trust-grid"><div><span>01</span><h3>Duyệt người thực hiện</h3><p>Hồ sơ và năng lực được kiểm tra trước khi nhận công việc.</p></div><div><span>02</span><h3>Mốc nhận & trả xe riêng</h3><p>Nhận xe không bị coi như một trạng thái phụ trong chuyến đi.</p></div><div><span>03</span><h3>Ghi nhận tình trạng xe</h3><p>Ảnh và ghi chú hỗ trợ minh bạch khi bàn giao.</p></div><div><span>04</span><h3>Xử lý sự cố theo vận hành</h3><p>Sau khi nhận xe, vấn đề được đưa vào luồng Operations thay vì hủy thông thường.</p></div></div></div>
+      <div class="container"><div class="section-heading"><span class="kicker">VẬN HÀNH CÓ TRÁCH NHIỆM</span><h2>Phương tiện là tài sản của khách.<br>Quy trình phải xứng đáng với điều đó.</h2></div><div class="trust-grid"><div><span>01</span><h3>Duyệt người thực hiện</h3><p>Hồ sơ và năng lực được kiểm tra trước khi nhận công việc.</p></div><div><span>02</span><h3>Mốc nhận & trả xe riêng</h3><p>Nhận xe không bị coi như một trạng thái phụ trong chuyến đi.</p></div><div><span>03</span><h3>Theo dõi tiến trình rõ ràng</h3><p>Nhận xe, thực hiện và bàn giao được tách thành các mốc riêng để khách dễ theo dõi.</p></div><div><span>04</span><h3>Xử lý sự cố theo vận hành</h3><p>Sau khi nhận xe, vấn đề được đưa vào luồng Operations thay vì hủy thông thường.</p></div></div></div>
     </section>
 
     <section id="pilot" class="section pilot"><div class="container pilot-card"><div><span class="kicker">GIAI ĐOẠN ĐẦU</span><h2>Bắt đầu từ Thanh Hóa.<br>Xây đúng trước khi mở rộng.</h2><p>FlashX tập trung làm ba dịch vụ MVP chạy end-to-end, ổn định quy trình ghép tài xế và bàn giao trước khi mở rộng mô hình marketplace.</p></div><div class="pilot-points"><div><b>Lái hộ ô tô</b><span>End-to-end</span></div><div><b>Lái hộ xe máy</b><span>End-to-end</span></div><div><b>Đăng kiểm hộ</b><span>End-to-end</span></div></div></div></section>
   </main>
 
-  <footer class="footer"><div class="container footer-inner"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">F</span><span>FlashX</span></a><p>Tài xế của bạn, khi bạn cần.</p><span class="muted">Thông tin liên hệ đang được cập nhật.</span></div></footer>
+  <footer class="footer"><div class="container footer-inner"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">F</span><span>FlashX</span></a><p>Tài xế của bạn, khi bạn cần.</p><span class="muted">Pilot đầu tiên • Thanh Hóa</span></div></footer>
 </body>
 </html>

@@ -15,6 +15,7 @@ type Store interface {
 	Get(id string) (User, error)
 	GetByPhone(phone string) (User, error)
 	AppendAudit(AuditEntry) error
+	ListAudit(limit int) ([]AuditEntry, error)
 }
 
 type MemoryStore struct {
@@ -64,4 +65,21 @@ func (s *MemoryStore) AppendAudit(entry AuditEntry) error {
 	defer s.mu.Unlock()
 	s.audit = append(s.audit, entry)
 	return nil
+}
+
+func (s *MemoryStore) ListAudit(limit int) ([]AuditEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	count := len(s.audit)
+	if count < limit {
+		limit = count
+	}
+	items := make([]AuditEntry, 0, limit)
+	for i := count - 1; i >= 0 && len(items) < limit; i-- {
+		items = append(items, s.audit[i])
+	}
+	return items, nil
 }

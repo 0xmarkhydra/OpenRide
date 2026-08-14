@@ -358,6 +358,9 @@ func (s *Service) ResolveIncident(id string) (Trip, error) {
 	if err != nil {
 		return Trip{}, err
 	}
+	if !trip.IncidentOpen {
+		return Trip{}, ErrInvalidState
+	}
 	trip.IncidentOpen = false
 	return s.persistWithoutTransition(trip)
 }

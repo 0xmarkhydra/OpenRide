@@ -43,6 +43,28 @@ func (s *PostgresStore) GetByPhone(phone string) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, userSelect+` WHERE phone = $1`, phone))
 }
 
+func (s *PostgresStore) ListAll(limit int) ([]User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, userSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]User, 0)
+	for rows.Next() {
+		user, scanErr := scanUser(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, user)
+	}
+	return items, rows.Err()
+}
+
 func (s *PostgresStore) Save(user User) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

@@ -35,14 +35,14 @@ func (s *Service) Bootstrap(phone, email, displayName string) (User, error) {
 	}
 	now := s.now()
 	return s.store.Bootstrap(User{
-		ID: ids.New("adm"),
-		Phone: phone,
-		Email: email,
+		ID:          ids.New("adm"),
+		Phone:       phone,
+		Email:       email,
 		DisplayName: displayName,
-		Role: "super_admin",
-		Status: "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		Role:        "super_admin",
+		Status:      "active",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	})
 }
 
@@ -77,12 +77,16 @@ func (s *Service) Audit(actorID, action, resourceType, resourceID string, metada
 		return ErrInvalidInput
 	}
 	return s.store.AppendAudit(AuditEntry{
-		ActorType: "admin",
-		ActorID: actorID,
-		Action: action,
+		ActorType:    "admin",
+		ActorID:      actorID,
+		Action:       action,
 		ResourceType: resourceType,
-		ResourceID: resourceID,
-		Metadata: metadata,
-		CreatedAt: s.now(),
+		ResourceID:   resourceID,
+		Metadata:     metadata,
+		CreatedAt:    s.now(),
 	})
+}
+
+func (s *Service) ListAudit(limit int) ([]AuditEntry, error) {
+	return s.store.ListAudit(limit)
 }

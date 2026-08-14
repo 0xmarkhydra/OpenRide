@@ -79,6 +79,10 @@ func (s *Service) ListForOwner(ownerUserID string) ([]Vehicle, error) {
 	return s.store.ListByOwner(ownerUserID)
 }
 
+func (s *Service) ListAll(limit int) ([]Vehicle, error) {
+	return s.store.ListAll(limit)
+}
+
 func (s *Service) ValidateForService(id, ownerUserID, serviceType string) (Vehicle, error) {
 	vehicle, err := s.GetForOwner(id, ownerUserID)
 	if err != nil {

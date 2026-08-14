@@ -36,6 +36,7 @@ func newTestServer() *Server {
 	}
 	return New(":0", Dependencies{
 		AppEnv:           "test",
+		Persistence:      "memory",
 		AllowDevIdentity: true,
 		Trips:            tripService,
 		Drivers:          driverService,
@@ -394,6 +395,137 @@ func TestAdminOTPApprovesDriverThenDriverCanGoOnline(t *testing.T) {
 	if online.Code != http.StatusOK {
 		t.Fatalf("approved driver online status=%d body=%s", online.Code, online.Body.String())
 	}
+}
+
+func TestAdminOperationsEndpoints(t *testing.T) {
+	s := newTestServer()
+	adminID, adminHeaders := adminSession(t, s)
+
+	customer, _, err := s.deps.Users.FindOrCreateByPhone("0911222333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	customer, err = s.deps.Users.UpdateProfile(customer.ID, "Khách Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vehicle, err := s.deps.CustomerVehicles.Create(customervehicles.CreateInput{
+		OwnerUserID:  customer.ID,
+		Type:         "car",
+		LicensePlate: "36A-12345",
+		Brand:        "Toyota",
+		Model:        "Vios",
+		Transmission: "automatic",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := s.deps.Drivers.RegisterApproved("driver-admin-test", "Driver Admin Test", trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := s.deps.Trips.Create(trips.CreateInput{
+		RiderID:            customer.ID,
+		CustomerVehicleID:  vehicle.ID,
+		ServiceType:        trips.ServiceDesignatedDriverCar,
+		Pickup:             trips.Point{Lat: 19.807, Lng: 105.776},
+		Destination:        trips.Point{Lat: 19.82, Lng: 105.79},
+		EstimatedDistanceM: 5000,
+		EstimatedDurationS: 900,
+		FareBreakdown:      trips.FareBreakdown{TotalMinor: 180000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.AssignDriver(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArriving(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkArrived(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.MarkVehicleReceived(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.Start(trip.ID, driver.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.deps.Trips.ReportIncident(trip.ID, driver.ID, "vehicle_issue", "Test incident"); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := []struct {
+		path     string
+		contains string
+	}{
+		{"/v1/admin/customers", customer.ID},
+		{"/v1/admin/vehicles", vehicle.ID},
+		{"/v1/admin/pricing", trips.ServiceDesignatedDriverCar},
+		{"/v1/admin/system", `"persistence":"memory"`},
+	}
+	for _, check := range checks {
+		rr := perform(t, s, http.MethodGet, check.path, nil, adminHeaders)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s status=%d body=%s", check.path, rr.Code, rr.Body.String())
+		}
+		if !bytes.Contains(rr.Body.Bytes(), []byte(check.contains)) {
+			t.Fatalf("GET %s missing %q: %s", check.path, check.contains, rr.Body.String())
+		}
+	}
+
+	resolved := perform(t, s, http.MethodPost, "/v1/admin/trips/"+trip.ID+"/incident/resolve", []byte(`{"note":"Đã xác minh với khách và tài xế"}`), adminHeaders)
+	if resolved.Code != http.StatusOK {
+		t.Fatalf("resolve incident status=%d body=%s", resolved.Code, resolved.Body.String())
+	}
+	if !bytes.Contains(resolved.Body.Bytes(), []byte(`"incident_open":false`)) {
+		t.Fatalf("incident must be closed: %s", resolved.Body.String())
+	}
+
+	audit := perform(t, s, http.MethodGet, "/v1/admin/audit?limit=20", nil, adminHeaders)
+	if audit.Code != http.StatusOK {
+		t.Fatalf("audit status=%d body=%s", audit.Code, audit.Body.String())
+	}
+	if !bytes.Contains(audit.Body.Bytes(), []byte("trip.incident_resolved")) || !bytes.Contains(audit.Body.Bytes(), []byte(adminID)) {
+		t.Fatalf("audit missing incident resolution: %s", audit.Body.String())
+	}
+}
+
+func adminSession(t *testing.T, s *Server) (string, map[string]string) {
+	t.Helper()
+	request := perform(t, s, http.MethodPost, "/v1/auth/otp/request", []byte(`{"phone":"0900000001","role":"admin"}`), nil)
+	if request.Code != http.StatusAccepted {
+		t.Fatalf("admin otp status=%d body=%s", request.Code, request.Body.String())
+	}
+	var challenge struct {
+		Data struct {
+			ChallengeID string `json:"challenge_id"`
+			DebugCode   string `json:"debug_code"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(request.Body.Bytes(), &challenge); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"challenge_id": challenge.Data.ChallengeID, "role": "admin", "code": challenge.Data.DebugCode})
+	verified := perform(t, s, http.MethodPost, "/v1/auth/otp/verify", body, nil)
+	if verified.Code != http.StatusOK {
+		t.Fatalf("admin verify status=%d body=%s", verified.Code, verified.Body.String())
+	}
+	var session struct {
+		Data struct {
+			Actor struct {
+				ID string `json:"id"`
+			} `json:"actor"`
+			Tokens struct {
+				AccessToken string `json:"access_token"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(verified.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	return session.Data.Actor.ID, map[string]string{"Authorization": "Bearer " + session.Data.Tokens.AccessToken}
 }
 
 func perform(t *testing.T, s *Server, method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {

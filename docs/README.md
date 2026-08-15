@@ -6,14 +6,15 @@ Thư mục này là nguồn tài liệu chuẩn (source of truth) cho dự án F
 
 1. [CUSTOMER_REQUIREMENTS.md](./CUSTOMER_REQUIREMENTS.md) — **source of truth phạm vi sản phẩm**: FlashX là nền tảng lái hộ/hỗ trợ phương tiện; MVP gồm Lái hộ ô tô, Lái hộ xe máy, Đăng kiểm hộ.
 2. [BA_MVP_OPERATING_RULES_2026-08-12.md](./BA_MVP_OPERATING_RULES_2026-08-12.md) — **source of truth cách vận hành 3 dịch vụ MVP**: giao nhận xe, hủy, sự cố, chi phí phát sinh, đăng kiểm không đạt, evidence, Operations và các case bắt buộc test.
-3. [THREAD_SUMMARY_2026-08-12.md](./THREAD_SUMMARY_2026-08-12.md) — toàn bộ context/pivot/quyết định của thread hiện tại để tiếp tục ở cuộc hội thoại khác.
-4. [PRD_MVP.md](./PRD_MVP.md) — yêu cầu sản phẩm MVP chi tiết.
-5. [PRODUCT_BACKLOG.md](./PRODUCT_BACKLOG.md) — backlog P0/P1/P2 đã rebaseline theo business lái hộ/đăng kiểm hộ.
-6. [UX_UI_SYSTEM.md](./UX_UI_SYSTEM.md) — design system và flow UX mới cho Customer/Driver/Admin.
-7. [FULL_MARKETPLACE_COST_PLAN.md](./FULL_MARKETPLACE_COST_PLAN.md) — phương án tài chính/triển khai Founder đã chốt: UI đơn giản, engine Full Marketplace.
-8. [IMPLEMENTATION_GAP_REVIEW_2026-08-12.md](./IMPLEMENTATION_GAP_REVIEW_2026-08-12.md) — đối chiếu code hiện tại với yêu cầu Full Marketplace và danh sách blocker P0 cần xử lý.
+3. [SCREEN_FLOW_IMPLEMENTATION_PLAN_2026-08-15.md](./SCREEN_FLOW_IMPLEMENTATION_PLAN_2026-08-15.md) — **source of truth trạng thái implementation theo từng màn**: chức năng phải có, phần đã xong/một phần/chưa làm, logic còn thiếu, current branch checkpoint và thứ tự hoàn thiện tiếp theo.
+4. [THREAD_SUMMARY_2026-08-12.md](./THREAD_SUMMARY_2026-08-12.md) — toàn bộ context/pivot/quyết định của thread hiện tại để tiếp tục ở cuộc hội thoại khác.
+5. [PRD_MVP.md](./PRD_MVP.md) — yêu cầu sản phẩm MVP chi tiết.
+6. [PRODUCT_BACKLOG.md](./PRODUCT_BACKLOG.md) — backlog P0/P1/P2 đã rebaseline theo business lái hộ/đăng kiểm hộ.
+7. [UX_UI_SYSTEM.md](./UX_UI_SYSTEM.md) — design system và flow UX mới cho Customer/Driver/Admin.
+8. [FULL_MARKETPLACE_COST_PLAN.md](./FULL_MARKETPLACE_COST_PLAN.md) — phương án tài chính/triển khai Founder đã chốt: UI đơn giản, engine Full Marketplace.
+9. [IMPLEMENTATION_GAP_REVIEW_2026-08-12.md](./IMPLEMENTATION_GAP_REVIEW_2026-08-12.md) — **tài liệu lịch sử** đối chiếu code tại ngày 12/08; nhiều P0 trong file này đã được xử lý sau đó, không dùng nó thay cho implementation audit ngày 15/08.
 
-Nếu tài liệu legacy còn mô tả `car/bike` theo nghĩa taxi/ride-hailing, **8 tài liệu trên được ưu tiên** và tài liệu legacy phải được migrate trước khi dùng để code feature mới.
+Nếu tài liệu legacy còn mô tả `car/bike` theo nghĩa taxi/ride-hailing, **9 tài liệu trên được ưu tiên** và tài liệu legacy phải được migrate trước khi dùng để code feature mới.
 
 ## Mục lục
 

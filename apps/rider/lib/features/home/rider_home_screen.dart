@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/theme/flashx_theme.dart';
@@ -20,6 +22,10 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
   var _bookingMode = 'immediate';
   DateTime? _scheduledAt;
   String _destinationName = 'Vincom Plaza Thanh Hóa';
+  final TextEditingController _destinationSearch = TextEditingController();
+  Timer? _placeSearchDebounce;
+  bool _customDestinationSelected = false;
+  bool _pinDestinationMode = false;
 
   @override
   void initState() {
@@ -27,6 +33,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     trips = RiderTripController(
         api: widget.auth.api, realtime: widget.auth.realtime)
       ..addListener(_refresh);
+    trips.selectDestination(RiderTripController.destinations[_destinationName]);
     trips.initialize();
   }
 
@@ -36,6 +43,8 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
 
   @override
   void dispose() {
+    _placeSearchDebounce?.cancel();
+    _destinationSearch.dispose();
     trips.removeListener(_refresh);
     trips.dispose();
     super.dispose();
@@ -79,6 +88,25 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             pickup: trips.pickup,
             activeTrip: active,
             driverLocation: trips.driverLocation,
+            selectedDestination: trips.selectedDestination,
+            estimatePolyline: trips.estimate?['route_polyline']?.toString(),
+            liveRoutes: trips.liveRoutes,
+            onDestinationSelected: _pinDestinationMode
+                ? (point) {
+                    trips.selectDestination(point);
+                    _destinationSearch.clear();
+                    trips.clearPlaceSearch();
+                    setState(() {
+                      _destinationName = 'Điểm đã ghim';
+                      _customDestinationSelected = true;
+                      _pinDestinationMode = false;
+                    });
+                    ScaffoldMessenger.of(context)
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(const SnackBar(
+                          content: Text('Đã chọn điểm đến trên bản đồ.')));
+                  }
+                : null,
           ),
         ),
         Positioned(
@@ -171,9 +199,11 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             ? entry.key.contains('đăng kiểm')
             : !entry.key.contains('đăng kiểm'))
         .toList();
-    if (!destinationEntries.any((e) => e.key == _destinationName) &&
+    if (!_customDestinationSelected &&
+        !destinationEntries.any((e) => e.key == _destinationName) &&
         destinationEntries.isNotEmpty) {
       _destinationName = destinationEntries.first.key;
+      trips.selectDestination(destinationEntries.first.value);
     }
 
     return Column(
@@ -250,12 +280,88 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             onChanged: trips.busy ? null : trips.selectVehicle,
           ),
         const SizedBox(height: 14),
+        TextField(
+          controller: _destinationSearch,
+          enabled: !trips.busy,
+          textInputAction: TextInputAction.search,
+          onChanged: _queuePlaceSearch,
+          decoration: InputDecoration(
+            labelText: _serviceType == 'vehicle_inspection_assist'
+                ? 'Tìm nơi đăng kiểm / địa chỉ'
+                : 'Tìm điểm đến',
+            hintText: 'Ví dụ: Vincom Thanh Hóa',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: trips.placesLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : _destinationSearch.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _placeSearchDebounce?.cancel();
+                          _destinationSearch.clear();
+                          trips.clearPlaceSearch();
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+          ),
+        ),
+        if (trips.placeResults.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: FlashXTheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: FlashXTheme.border),
+            ),
+            child: Column(
+              children: trips.placeResults
+                  .map((place) => ListTile(
+                        leading: const Icon(Icons.location_on_outlined),
+                        title: Text(place['name']?.toString().isNotEmpty == true
+                            ? place['name'].toString()
+                            : place['address']?.toString() ?? 'Địa điểm'),
+                        subtitle:
+                            place['address']?.toString().isNotEmpty == true
+                                ? Text(place['address'].toString(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis)
+                                : null,
+                        onTap: () => _selectPlaceResult(place),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ] else if (trips.placeSearchUnavailable &&
+            _destinationSearch.text.trim().runes.length >= 3) ...[
+          const SizedBox(height: 8),
+          const _InfoBox(
+            icon: Icons.map_outlined,
+            text:
+                'Chưa tìm được địa chỉ tự động. Bạn vẫn có thể ghim chính xác điểm cần đến trên bản đồ.',
+          ),
+        ],
+        const SizedBox(height: 10),
         DropdownButtonFormField<String>(
-          initialValue: _destinationName,
+          initialValue:
+              destinationEntries.any((entry) => entry.key == _destinationName)
+                  ? _destinationName
+                  : null,
           decoration: InputDecoration(
             labelText: _serviceType == 'vehicle_inspection_assist'
                 ? 'Nơi đăng kiểm'
-                : 'Điểm đến',
+                : 'Điểm đến nhanh',
+            hintText: _customDestinationSelected
+                ? (_destinationName == 'Điểm đã ghim'
+                    ? _pinnedDestinationLabel(trips.selectedDestination)
+                    : _destinationName)
+                : null,
             prefixIcon: Icon(_serviceType == 'vehicle_inspection_assist'
                 ? Icons.fact_check_outlined
                 : Icons.location_on_outlined),
@@ -266,11 +372,41 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
               .toList(),
           onChanged: trips.busy
               ? null
-              : (value) => setState(() {
-                    if (value != null) _destinationName = value;
-                    trips.estimate = null;
-                  }),
+              : (value) {
+                  if (value == null) return;
+                  final destination = RiderTripController.destinations[value];
+                  trips.selectDestination(destination);
+                  _destinationSearch.clear();
+                  trips.clearPlaceSearch();
+                  setState(() {
+                    _destinationName = value;
+                    _customDestinationSelected = false;
+                    _pinDestinationMode = false;
+                  });
+                },
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: trips.busy
+              ? null
+              : () => setState(() => _pinDestinationMode = true),
+          icon: const Icon(Icons.add_location_alt_outlined),
+          label: Text(_pinDestinationMode
+              ? 'Chạm vị trí cần đến trên phần bản đồ phía trên'
+              : _destinationName == 'Điểm đã ghim'
+                  ? 'Đổi điểm đã ghim trên bản đồ'
+                  : 'Ghim điểm khác trên bản đồ'),
+        ),
+        if (_customDestinationSelected &&
+            trips.selectedDestination != null) ...[
+          const SizedBox(height: 8),
+          _InfoBox(
+            icon: Icons.location_on_rounded,
+            text: _destinationName == 'Điểm đã ghim'
+                ? _pinnedDestinationLabel(trips.selectedDestination)
+                : 'Đã chọn: $_destinationName',
+          ),
+        ],
         const SizedBox(height: 14),
         Row(
           children: [
@@ -339,6 +475,44 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     );
   }
 
+  void _queuePlaceSearch(String value) {
+    _placeSearchDebounce?.cancel();
+    final query = value.trim();
+    if (query.runes.length < 3) {
+      trips.clearPlaceSearch();
+      setState(() {});
+      return;
+    }
+    _placeSearchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) trips.searchPlaces(query);
+    });
+    setState(() {});
+  }
+
+  void _selectPlaceResult(Map<String, dynamic> place) {
+    final location = place['location'];
+    if (location is! Map) return;
+    final lat = (location['lat'] as num?)?.toDouble();
+    final lng = (location['lng'] as num?)?.toDouble();
+    if (lat == null || lng == null) return;
+    final name = place['name']?.toString().trim();
+    final address = place['address']?.toString().trim();
+    final label = name?.isNotEmpty == true
+        ? name!
+        : address?.isNotEmpty == true
+            ? address!
+            : 'Điểm đã tìm';
+    trips.selectDestination({'lat': lat, 'lng': lng});
+    trips.clearPlaceSearch();
+    _destinationSearch.text = label;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _destinationName = label;
+      _customDestinationSelected = true;
+      _pinDestinationMode = false;
+    });
+  }
+
   void _selectService(String service) {
     setState(() {
       _serviceType = service;
@@ -346,11 +520,18 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       final compatible = trips.vehiclesForService(service);
       trips.selectVehicle(
           compatible.isEmpty ? null : compatible.first['id']?.toString());
+      _placeSearchDebounce?.cancel();
+      _destinationSearch.clear();
+      trips.clearPlaceSearch();
+      _customDestinationSelected = false;
+      _pinDestinationMode = false;
       if (service == 'vehicle_inspection_assist') {
         _destinationName = 'Trung tâm đăng kiểm Thanh Hóa';
-      } else if (_destinationName.contains('đăng kiểm')) {
+      } else {
         _destinationName = 'Vincom Plaza Thanh Hóa';
       }
+      trips.selectDestination(
+          RiderTripController.destinations[_destinationName]);
     });
   }
 
@@ -378,10 +559,11 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
 
   Future<void> _showEstimateAndBook(
       List<MapEntry<String, Map<String, double>>> destinations) async {
-    final destination = destinations
-        .firstWhere((entry) => entry.key == _destinationName,
-            orElse: () => destinations.first)
-        .value;
+    final destination = trips.selectedDestination ??
+        destinations
+            .firstWhere((entry) => entry.key == _destinationName,
+                orElse: () => destinations.first)
+            .value;
     final ok = await trips.estimateTo(destination, serviceType: _serviceType);
     if (!mounted || !ok || trips.estimate == null) return;
     final estimate = trips.estimate!;
@@ -554,8 +736,36 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     final status = trip['status']?.toString() ?? '';
     final service = trip['service_type']?.toString() ?? '';
     final incidentOpen = trip['incident_open'] == true;
+    final canReportSupport = !incidentOpen &&
+        const {
+          'accepted',
+          'arriving',
+          'arriving_for_pickup',
+          'arrived',
+          'arrived_for_pickup',
+          'vehicle_received',
+          'in_progress',
+          'en_route_to_inspection',
+          'arrived_at_inspection_center',
+          'inspection_in_progress',
+          'inspection_completed',
+          'returning_vehicle',
+          'arrived_for_return',
+          'handover',
+        }.contains(status);
     final pickupEvidence = trips.custodyFor('pickup');
     final returnEvidence = trips.custodyFor('return');
+    final payment = trips.activePayment;
+    final paymentStatus = switch (payment?['status']?.toString()) {
+      'paid' => 'Đã thu tiền mặt',
+      'cancelled' => 'Đã hủy thanh toán',
+      'failed' => 'Thanh toán lỗi',
+      _ => 'Thanh toán khi hoàn tất',
+    };
+    final paymentAmount = payment?['amount_minor'] ??
+        trip['final_fare_minor'] ??
+        trip['estimated_fare_minor'] ??
+        0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -618,6 +828,31 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
               style: TextStyle(
                   color: FlashXTheme.success, fontWeight: FontWeight.w700)),
         ],
+        if (trips.liveRoutes != null) ...[
+          const SizedBox(height: 10),
+          _LiveRouteCard(snapshot: trips.liveRoutes!),
+        ],
+        const SizedBox(height: 10),
+        _InfoBox(
+          icon: Icons.payments_outlined,
+          text: 'Tiền mặt · $paymentStatus · ${_money(paymentAmount)}',
+        ),
+        if (service == 'vehicle_inspection_assist' &&
+            trips.inspectionChecklist != null) ...[
+          const SizedBox(height: 12),
+          _RiderInspectionChecklistCard(
+            snapshot: trips.inspectionChecklist!,
+            busy: trips.busy,
+            editable: const {
+              'scheduled',
+              'searching',
+              'accepted',
+              'arriving_for_pickup',
+              'arrived_for_pickup',
+            }.contains(status),
+            onEdit: _editInspectionChecklistItem,
+          ),
+        ],
         if (pickupEvidence != null) ...[
           const SizedBox(height: 12),
           _RiderCustodyCard(
@@ -636,6 +871,14 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
             onReview: () => _reviewCustodyEvidence('return', returnEvidence),
           ),
         ],
+        if (canReportSupport) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: trips.busy ? null : _reportIncident,
+            icon: const Icon(Icons.support_agent_rounded),
+            label: const Text('Báo sự cố / cần hỗ trợ'),
+          ),
+        ],
         if (trips.canCancel) ...[
           const SizedBox(height: 14),
           OutlinedButton.icon(
@@ -646,6 +889,158 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
         ],
       ],
     );
+  }
+
+  Future<void> _reportIncident() async {
+    var type = 'support';
+    final note = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Báo sự cố / cần hỗ trợ'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                initialValue: type,
+                decoration:
+                    const InputDecoration(labelText: 'Bạn cần hỗ trợ về'),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'support', child: Text('Cần Operations hỗ trợ')),
+                  DropdownMenuItem(
+                      value: 'driver_issue', child: Text('Vấn đề với tài xế')),
+                  DropdownMenuItem(
+                      value: 'vehicle_issue', child: Text('Xe gặp vấn đề')),
+                  DropdownMenuItem(
+                      value: 'safety', child: Text('An toàn / va chạm')),
+                  DropdownMenuItem(value: 'other', child: Text('Khác')),
+                ],
+                onChanged: (value) =>
+                    setDialogState(() => type = value ?? type),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: note,
+                maxLines: 4,
+                maxLength: 1000,
+                decoration: const InputDecoration(
+                  labelText: 'Mô tả ngắn',
+                  hintText: 'Nêu tình huống để Operations xử lý nhanh hơn',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const _InfoBox(
+                icon: Icons.info_outline_rounded,
+                text:
+                    'Khi gửi, công việc sẽ được đánh dấu có sự cố để Operations tiếp nhận trước khi tiếp tục các bước nhạy cảm.',
+                warning: true,
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Đóng')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Gửi hỗ trợ')),
+          ],
+        ),
+      ),
+    );
+    final noteText = note.text.trim();
+    note.dispose();
+    if (confirmed != true || !mounted) return;
+    final ok = await trips.reportIncident(type, noteText);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(ok
+            ? 'Đã gửi sự cố tới FlashX Operations.'
+            : trips.error ?? 'Không thể gửi yêu cầu hỗ trợ.'),
+      ));
+  }
+
+  Future<void> _editInspectionChecklistItem(Map<String, dynamic> item) async {
+    var status = item['customer_status']?.toString() ?? 'pending';
+    if (status == 'pending') status = 'present';
+    final required = item['required'] == true;
+    final note =
+        TextEditingController(text: item['customer_note']?.toString() ?? '');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(item['label']?.toString() ?? 'Giấy tờ đăng kiểm'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration:
+                    const InputDecoration(labelText: 'Tình trạng bàn giao'),
+                items: [
+                  const DropdownMenuItem(
+                      value: 'present',
+                      child: Text('Tôi sẽ bàn giao giấy này')),
+                  const DropdownMenuItem(
+                      value: 'not_available',
+                      child: Text('Hiện không có giấy này')),
+                  if (!required)
+                    const DropdownMenuItem(
+                        value: 'not_applicable', child: Text('Không áp dụng')),
+                ],
+                onChanged: (value) =>
+                    setDialogState(() => status = value ?? status),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: note,
+                maxLines: 3,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Ghi chú · không bắt buộc',
+                  hintText: 'Ví dụ: Bản gốc để trong túi hồ sơ màu xanh',
+                ),
+              ),
+              if (required) ...[
+                const SizedBox(height: 8),
+                const _InfoBox(
+                  icon: Icons.info_outline_rounded,
+                  text:
+                      'Đây là giấy tờ bắt buộc. Tài xế phải xác nhận đã nhận thực tế trước khi FlashX được phép nhận xe.',
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Đóng')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Lưu khai báo')),
+          ],
+        ),
+      ),
+    );
+    final noteText = note.text.trim();
+    note.dispose();
+    if (saved != true || !mounted) return;
+    final ok = await trips.updateInspectionChecklistItem(
+      item['key']?.toString() ?? '',
+      status,
+      noteText,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(ok
+            ? 'Đã cập nhật giấy tờ đăng kiểm.'
+            : trips.error ?? 'Không thể cập nhật giấy tờ.'),
+      ));
   }
 
   Future<void> _reviewCustodyEvidence(
@@ -913,6 +1308,172 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
     }
   }
 
+  Future<void> _showHistoryTrip(Map<String, dynamic> trip) async {
+    final tripID = trip['id']?.toString() ?? '';
+    final completed = trip['status'] == 'completed';
+    Map<String, dynamic>? rating;
+    if (completed && tripID.isNotEmpty) {
+      try {
+        rating = await trips.loadTripRating(tripID);
+      } catch (_) {
+        // History detail remains usable if the optional rating lookup fails.
+      }
+    }
+    if (!mounted) return;
+
+    var stars = (rating?['stars'] as num?)?.toInt() ?? 5;
+    final comment =
+        TextEditingController(text: rating?['comment']?.toString() ?? '');
+    final submitted = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              4,
+              20,
+              24 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(children: [
+                  _ServiceIcon(service: trip['service_type']?.toString() ?? ''),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _serviceLabel(trip['service_type']?.toString() ?? ''),
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        Text(
+                          _statusLabel(trip['status']?.toString() ?? ''),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _money(trip['final_fare_minor'] ??
+                        trip['estimated_fare_minor'] ??
+                        0),
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.w900),
+                  ),
+                ]),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F8FA),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Mã công việc ${_shortId(tripID)}',
+                          style: const TextStyle(fontWeight: FontWeight.w800)),
+                      if ((trip['inspection_result']?.toString() ?? '')
+                          .isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Kết quả đăng kiểm: ${_inspectionResult(trip['inspection_result'].toString())}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                      if (trip['scheduled_at'] != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Lịch hẹn: ${_dateTimeLabel(DateTime.tryParse(trip['scheduled_at'].toString())?.toLocal() ?? DateTime.now())}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (completed &&
+                    trip['driver_id']?.toString().isNotEmpty == true) ...[
+                  const SizedBox(height: 20),
+                  Text(rating == null ? 'Đánh giá tài xế' : 'Đánh giá của bạn',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (index) {
+                      final selected = index < stars;
+                      return IconButton(
+                        onPressed: rating == null
+                            ? () => setSheetState(() => stars = index + 1)
+                            : null,
+                        tooltip: '${index + 1} sao',
+                        icon: Icon(
+                          selected
+                              ? Icons.star_rounded
+                              : Icons.star_border_rounded,
+                          color: selected
+                              ? FlashXTheme.warning
+                              : FlashXTheme.textSecondary,
+                          size: 34,
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: comment,
+                    enabled: rating == null,
+                    maxLines: 3,
+                    maxLength: 1000,
+                    decoration: InputDecoration(
+                      labelText: rating == null
+                          ? 'Nhận xét · không bắt buộc'
+                          : 'Nhận xét',
+                      hintText: 'Chia sẻ trải nghiệm của bạn',
+                    ),
+                  ),
+                  if (rating == null) ...[
+                    const SizedBox(height: 10),
+                    FilledButton.icon(
+                      onPressed: trips.busy
+                          ? null
+                          : () => Navigator.pop(sheetContext, true),
+                      icon: const Icon(Icons.star_rounded),
+                      label: const Text('Gửi đánh giá'),
+                    ),
+                  ] else
+                    const _InfoBox(
+                      icon: Icons.verified_rounded,
+                      text: 'Đánh giá đã được ghi nhận cho công việc này.',
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final commentText = comment.text.trim();
+    comment.dispose();
+    if (submitted == true && mounted) {
+      final ok = await trips.rateTrip(tripID, stars, commentText);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(ok
+              ? 'Cảm ơn bạn đã đánh giá tài xế.'
+              : trips.error ?? 'Không thể gửi đánh giá.'),
+        ));
+    }
+  }
+
   Widget _activity() {
     return SafeArea(
       child: RefreshIndicator(
@@ -929,43 +1490,58 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
                   text: 'Chưa có dịch vụ nào được đặt.'),
             ...trips.history.map((trip) => Card(
                   margin: const EdgeInsets.only(bottom: 10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        _ServiceIcon(
-                            service: trip['service_type']?.toString() ?? ''),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  _serviceLabel(
-                                      trip['service_type']?.toString() ?? ''),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800)),
-                              const SizedBox(height: 3),
-                              Text(
-                                  _statusLabel(
-                                      trip['status']?.toString() ?? ''),
-                                  style: Theme.of(context).textTheme.bodySmall),
-                              if ((trip['inspection_result']?.toString() ?? '')
-                                  .isNotEmpty)
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => _showHistoryTrip(trip),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          _ServiceIcon(
+                              service: trip['service_type']?.toString() ?? ''),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Text(
-                                    'Kết quả đăng kiểm: ${_inspectionResult(trip['inspection_result'].toString())}',
+                                    _serviceLabel(
+                                        trip['service_type']?.toString() ?? ''),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w800)),
+                                const SizedBox(height: 3),
+                                Text(
+                                    _statusLabel(
+                                        trip['status']?.toString() ?? ''),
                                     style:
                                         Theme.of(context).textTheme.bodySmall),
+                                if ((trip['inspection_result']?.toString() ??
+                                        '')
+                                    .isNotEmpty)
+                                  Text(
+                                      'Kết quả đăng kiểm: ${_inspectionResult(trip['inspection_result'].toString())}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                  _money(trip['final_fare_minor'] ??
+                                      trip['estimated_fare_minor'] ??
+                                      0),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 4),
+                              const Icon(Icons.chevron_right_rounded,
+                                  size: 18, color: FlashXTheme.textSecondary),
                             ],
                           ),
-                        ),
-                        Text(
-                            _money(trip['final_fare_minor'] ??
-                                trip['estimated_fare_minor'] ??
-                                0),
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w900)),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 )),
@@ -1140,6 +1716,13 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       ? value
       : value.substring(value.length - 8).toUpperCase();
 
+  static String _pinnedDestinationLabel(Map<String, double>? value) {
+    if (value == null) return 'Chưa ghim điểm đến';
+    final lat = value['lat']?.toStringAsFixed(5) ?? '—';
+    final lng = value['lng']?.toStringAsFixed(5) ?? '—';
+    return 'Điểm đã ghim · $lat, $lng';
+  }
+
   static String _dateTimeLabel(DateTime value) {
     final h = value.hour.toString().padLeft(2, '0');
     final m = value.minute.toString().padLeft(2, '0');
@@ -1246,6 +1829,142 @@ class _ServiceCard extends StatelessWidget {
       );
 }
 
+class _RiderInspectionChecklistCard extends StatelessWidget {
+  const _RiderInspectionChecklistCard({
+    required this.snapshot,
+    required this.busy,
+    required this.editable,
+    required this.onEdit,
+  });
+
+  final Map<String, dynamic> snapshot;
+  final bool busy;
+  final bool editable;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = (snapshot['items'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final ready = snapshot['ready'] == true;
+    final customerComplete = snapshot['customer_complete'] == true;
+    final checklist = Map<String, dynamic>.from(
+      snapshot['checklist'] as Map? ?? const {},
+    );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ready ? const Color(0xFFECFDF3) : const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: ready ? const Color(0xFFABEFC6) : FlashXTheme.border,
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(Icons.description_rounded,
+                color: ready ? FlashXTheme.success : FlashXTheme.navy),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Giấy tờ đăng kiểm',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text(
+                ready
+                    ? 'Khách và tài xế đã xác minh đủ giấy tờ bắt buộc'
+                    : customerComplete
+                        ? 'Bạn đã khai báo · chờ tài xế đối chiếu thực tế'
+                        : 'Khai báo giấy tờ sẽ bàn giao cho FlashX',
+                style: TextStyle(
+                  color:
+                      ready ? FlashXTheme.success : FlashXTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ]),
+          ),
+          Text('v${checklist['template_version'] ?? '—'}',
+              style: Theme.of(context).textTheme.bodySmall),
+        ]),
+        const SizedBox(height: 12),
+        ...items.map((item) {
+          final required = item['required'] == true;
+          final status = item['customer_status']?.toString() ?? 'pending';
+          final declared = status != 'pending';
+          final label = switch (status) {
+            'present' => 'Sẽ bàn giao',
+            'not_available' => 'Không có',
+            'not_applicable' => 'Không áp dụng',
+            _ => 'Chưa khai báo',
+          };
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                onTap: editable && !busy ? () => onEdit(item) : null,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    Icon(
+                      declared
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 19,
+                      color: status == 'present'
+                          ? FlashXTheme.success
+                          : status == 'not_available'
+                              ? FlashXTheme.warning
+                              : FlashXTheme.textSecondary,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item['label']?.toString() ?? '',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            const SizedBox(height: 2),
+                            Text('$label${required ? ' · Bắt buộc' : ''}',
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ]),
+                    ),
+                    if (editable)
+                      const Icon(Icons.chevron_right_rounded,
+                          color: FlashXTheme.textSecondary),
+                  ]),
+                ),
+              ),
+            ),
+          );
+        }),
+        if (!editable && !ready)
+          const _InfoBox(
+            icon: Icons.lock_outline_rounded,
+            text:
+                'Khai báo đã khóa ở giai đoạn hiện tại. Nếu giấy tờ có vấn đề, tài xế sẽ báo sự cố để Operations xử lý.',
+          ),
+      ]),
+    );
+  }
+}
+
 class _RiderCustodyCard extends StatelessWidget {
   const _RiderCustodyCard({
     required this.stage,
@@ -1346,6 +2065,53 @@ class _RiderCustodyCard extends StatelessWidget {
               ? Icons.verified_user_outlined
               : Icons.visibility_outlined),
           label: Text(needsAction ? 'Kiểm tra & xác nhận' : 'Xem bằng chứng'),
+        ),
+      ]),
+    );
+  }
+}
+
+class _LiveRouteCard extends StatelessWidget {
+  const _LiveRouteCard({required this.snapshot});
+  final Map<String, dynamic> snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = snapshot['primary'] is Map
+        ? Map<String, dynamic>.from(snapshot['primary'] as Map)
+        : snapshot['service'] is Map
+            ? Map<String, dynamic>.from(snapshot['service'] as Map)
+            : const <String, dynamic>{};
+    final distance = (primary['distance_m'] as num?)?.toDouble() ?? 0;
+    final duration = (primary['duration_s'] as num?)?.toDouble() ?? 0;
+    final phase = snapshot['phase']?.toString() ?? 'service';
+    final title = switch (phase) {
+      'approach' => 'Tài xế đang tới điểm nhận',
+      'return' => 'Đang đưa xe về điểm trả',
+      _ => 'Lộ trình dịch vụ',
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF3),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFABEFC6)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.route_rounded, color: FlashXTheme.success),
+        const SizedBox(width: 10),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(
+              distance > 0 && duration > 0
+                  ? '${(distance / 1000).toStringAsFixed(1)} km · khoảng ${(duration / 60).ceil()} phút'
+                  : 'Đang cập nhật khoảng cách và thời gian',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ]),
         ),
       ]),
     );

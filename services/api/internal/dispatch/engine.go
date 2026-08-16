@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/trips"
 )
@@ -45,16 +46,17 @@ type Offer struct {
 type Engine struct {
 	// mu protects one Engine instance. Production also uses Locker so separate
 	// API instances serialize mutations for the same trip.
-	mu             sync.Mutex
-	drivers        *drivers.Service
-	trips          *trips.Service
-	offers         OfferStore
-	locker         Locker
-	now            func() time.Time
-	offerTTL       time.Duration
-	lockTTL        time.Duration
-	maxDistance    float64
-	locationMaxAge time.Duration
+	mu               sync.Mutex
+	drivers          *drivers.Service
+	trips            *trips.Service
+	customerVehicles *customervehicles.Service
+	offers           OfferStore
+	locker           Locker
+	now              func() time.Time
+	offerTTL         time.Duration
+	lockTTL          time.Duration
+	maxDistance      float64
+	locationMaxAge   time.Duration
 }
 
 func NewEngine(driverService *drivers.Service, tripService *trips.Service) *Engine {
@@ -79,6 +81,12 @@ func NewEngineWithStore(driverService *drivers.Service, tripService *trips.Servi
 		maxDistance:    5_000,
 		locationMaxAge: 20 * time.Second,
 	}
+}
+
+func (e *Engine) SetCustomerVehicles(service *customervehicles.Service) {
+	e.mu.Lock()
+	e.customerVehicles = service
+	e.mu.Unlock()
 }
 
 func (e *Engine) UpdatePolicy(maxDistanceM int64, locationMaxAgeSeconds int) {
@@ -151,7 +159,7 @@ func (e *Engine) CreateOffer(tripID string) (Offer, error) {
 	}
 	for _, nearbyDriver := range nearby {
 		driver := nearbyDriver.Driver
-		if excluded[driver.ID] {
+		if excluded[driver.ID] || !e.driverEligibleForTrip(trip, driver) {
 			continue
 		}
 		distance := nearbyDriver.DistanceM
@@ -228,6 +236,14 @@ func (e *Engine) Accept(offerID, driverID string) (Offer, trips.Trip, error) {
 	}
 	if offer.Status != OfferPending || !offer.ExpiresAt.After(now) {
 		return Offer{}, trips.Trip{}, ErrOfferUnavailable
+	}
+	pendingTrip, err := e.trips.Get(offer.TripID)
+	if err != nil {
+		return Offer{}, trips.Trip{}, err
+	}
+	driver, err := e.drivers.Get(driverID)
+	if err != nil || !e.driverEligibleForTrip(pendingTrip, driver) {
+		return Offer{}, trips.Trip{}, drivers.ErrDriverUnavailable
 	}
 
 	if _, err := e.drivers.TryMarkBusy(driverID); err != nil {
@@ -355,13 +371,23 @@ func (e *Engine) CandidatesForTrip(tripID string, limit int) ([]drivers.NearbyDr
 	maxDistance := e.maxDistance
 	locationMaxAge := e.locationMaxAge
 	e.mu.Unlock()
-	return e.drivers.NearbyCandidates(
+	items, err := e.drivers.NearbyCandidates(
 		trip.ServiceType,
 		drivers.Location{Lat: trip.Pickup.Lat, Lng: trip.Pickup.Lng, CapturedAt: e.now()},
 		maxDistance,
 		locationMaxAge,
 		limit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]drivers.NearbyDriver, 0, len(items))
+	for _, item := range items {
+		if e.driverEligibleForTrip(trip, item.Driver) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 // ManualAssign serializes with normal offer acceptance using the same trip
@@ -400,7 +426,7 @@ func (e *Engine) ManualAssign(tripID, driverID string) (trips.Trip, error) {
 	}
 	eligible := false
 	for _, candidate := range candidates {
-		if candidate.Driver.ID == driverID {
+		if candidate.Driver.ID == driverID && e.driverEligibleForTrip(trip, candidate.Driver) {
 			eligible = true
 			break
 		}
@@ -478,6 +504,23 @@ func (e *Engine) normalizeOffer(offer Offer, now time.Time) (Offer, error) {
 		return offer, ErrOfferExpired
 	}
 	return offer, nil
+}
+
+func (e *Engine) driverEligibleForTrip(trip trips.Trip, driver drivers.Driver) bool {
+	if driver.LicenseExpiry != nil && !driver.LicenseExpiry.After(e.now()) {
+		return false
+	}
+	if trip.CustomerVehicleID == "" || e.customerVehicles == nil {
+		return true
+	}
+	vehicle, err := e.customerVehicles.Get(trip.CustomerVehicleID)
+	if err != nil {
+		return false
+	}
+	if vehicle.Transmission == "manual" && !driver.CanDriveManual {
+		return false
+	}
+	return true
 }
 
 func newID(prefix string) string {

@@ -26,16 +26,19 @@ type Location struct {
 }
 
 type Driver struct {
-	ID           string             `json:"id"`
-	Phone        string             `json:"phone"`
-	FullName     string             `json:"full_name"`
-	ServiceType  string             `json:"service_type"`
-	Capabilities []string           `json:"capabilities"`
-	Approval     ApprovalStatus     `json:"approval_status"`
-	Availability AvailabilityStatus `json:"availability_status"`
-	Location     *Location          `json:"location,omitempty"`
-	LastIdleAt   time.Time          `json:"last_idle_at"`
-	CreatedAt    time.Time          `json:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at"`
-	Version      int64              `json:"version"`
+	ID             string             `json:"id"`
+	Phone          string             `json:"phone"`
+	FullName       string             `json:"full_name"`
+	ServiceType    string             `json:"service_type"`
+	Capabilities   []string           `json:"capabilities"`
+	LicenseClass   string             `json:"license_class,omitempty"`
+	LicenseExpiry  *time.Time         `json:"license_expiry,omitempty"`
+	CanDriveManual bool               `json:"can_drive_manual"`
+	Approval       ApprovalStatus     `json:"approval_status"`
+	Availability   AvailabilityStatus `json:"availability_status"`
+	Location       *Location          `json:"location,omitempty"`
+	LastIdleAt     time.Time          `json:"last_idle_at"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	Version        int64              `json:"version"`
 }

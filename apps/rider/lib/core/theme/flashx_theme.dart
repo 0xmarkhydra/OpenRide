@@ -1,26 +1,35 @@
 import 'package:flutter/material.dart';
 
 abstract final class FlashXTheme {
-  static const navy = Color(0xFF0B132B);
-  static const navySoft = Color(0xFF17213D);
-  static const yellow = Color(0xFFFFD600);
-  static const lime = Color(0xFFC7F36B);
-  static const canvas = Color(0xFFF5F6F8);
+  // Canonical FlashX palette from design-system/flashx/MASTER.md.
+  static const brand = Color(0xFF12B76A);
+  static const primaryAction = Color(0xFF079455);
+  static const primaryPressed = Color(0xFF067647);
+  static const primarySoft = Color(0xFFD1FADF);
+  static const canvas = Color(0xFFF7F9F8);
   static const surface = Color(0xFFFFFFFF);
-  static const textPrimary = Color(0xFF111827);
-  static const textSecondary = Color(0xFF6B7280);
-  static const border = Color(0xFFE6E8EE);
-  static const success = Color(0xFF0E9F6E);
-  static const warning = Color(0xFFF59E0B);
-  static const danger = Color(0xFFE5484D);
+  static const textPrimary = Color(0xFF101828);
+  static const textSecondary = Color(0xFF667085);
+  static const border = Color(0xFFE4E7EC);
+  static const success = Color(0xFF079455);
+  static const warning = Color(0xFFDC6803);
+  static const danger = Color(0xFFD92D20);
+  static const info = Color(0xFF175CD3);
+
+  // Transitional aliases keep existing screens source-compatible while the
+  // visual language is migrated away from the legacy navy/yellow branding.
+  static const navy = primaryAction;
+  static const navySoft = primaryPressed;
+  static const yellow = primarySoft;
+  static const lime = brand;
 
   static ThemeData light() {
     const scheme = ColorScheme.light(
-      primary: navy,
+      primary: primaryAction,
       onPrimary: Colors.white,
-      secondary: yellow,
-      onSecondary: navy,
-      tertiary: lime,
+      secondary: brand,
+      onSecondary: Colors.white,
+      tertiary: primarySoft,
       surface: surface,
       onSurface: textPrimary,
       error: danger,
@@ -115,7 +124,7 @@ abstract final class FlashXTheme {
         height: 72,
         elevation: 0,
         backgroundColor: surface,
-        indicatorColor: yellow,
+        indicatorColor: primarySoft,
         surfaceTintColor: Colors.transparent,
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           return TextStyle(

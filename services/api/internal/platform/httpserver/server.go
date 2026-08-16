@@ -19,8 +19,11 @@ import (
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/inspectionchecklist"
+	"flashx/services/api/internal/notifications"
 	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
+	"flashx/services/api/internal/places"
 	"flashx/services/api/internal/platform/idempotency"
 	"flashx/services/api/internal/pricing"
 	"flashx/services/api/internal/ratings"
@@ -38,11 +41,14 @@ type Dependencies struct {
 	CustomerVehicles    *customervehicles.Service
 	DriverDocuments     *driverdocs.Service
 	CustodyEvidence     *custodyevidence.Service
+	InspectionChecklist *inspectionchecklist.Service
 	Dispatch            *dispatch.Engine
 	Ride                *ride.Service
 	Pricing             *pricing.Service
 	OperationalSettings *operationalsettings.Service
 	Payments            *payments.Service
+	Notifications       *notifications.Service
+	Places              places.Provider
 	Ratings             *ratings.Service
 	Idempotency         idempotency.Store
 	Auth                *auth.Service
@@ -87,9 +93,12 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/realtime", s.realtimeSocket)
 	mux.HandleFunc("GET /v1/rider/me", s.riderMe)
 	mux.HandleFunc("PATCH /v1/rider/me", s.updateRiderMe)
+	mux.HandleFunc("POST /v1/rider/push-devices", s.registerRiderPushDevice)
+	mux.HandleFunc("DELETE /v1/rider/push-devices/{id}", s.disableRiderPushDevice)
 	mux.HandleFunc("GET /v1/rider/vehicles", s.riderVehicles)
 	mux.HandleFunc("POST /v1/rider/vehicles", s.createRiderVehicle)
 	mux.HandleFunc("GET /v1/rider/vehicles/{id}", s.getRiderVehicle)
+	mux.HandleFunc("GET /v1/places/search", s.searchPlaces)
 	mux.HandleFunc("POST /v1/trips/estimate", s.estimateTrip)
 	mux.HandleFunc("POST /v1/trips", s.createTrip)
 	mux.HandleFunc("GET /v1/trips", s.listTrips)
@@ -98,12 +107,18 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/trips/{id}/rating", s.getTripRating)
 	mux.HandleFunc("POST /v1/trips/{id}/rating", s.createTripRating)
 	mux.HandleFunc("POST /v1/trips/{id}/cancel", s.cancelTrip)
+	mux.HandleFunc("POST /v1/trips/{id}/incident", s.riderTripIncident)
+	mux.HandleFunc("GET /v1/trips/{id}/routes", s.riderTripRoutes)
 	mux.HandleFunc("GET /v1/trips/{id}/custody", s.riderTripCustodyEvidence)
 	mux.HandleFunc("POST /v1/trips/{id}/custody/{stage}/confirm", s.riderConfirmCustodyEvidence)
+	mux.HandleFunc("GET /v1/trips/{id}/inspection-checklist", s.riderInspectionChecklist)
+	mux.HandleFunc("PATCH /v1/trips/{id}/inspection-checklist/{itemKey}", s.riderUpdateInspectionChecklist)
 
 	mux.HandleFunc("POST /v1/dev/drivers", s.registerDevDriver)
 	mux.HandleFunc("GET /v1/driver/me", s.driverMe)
 	mux.HandleFunc("PATCH /v1/driver/me", s.updateDriverMe)
+	mux.HandleFunc("POST /v1/driver/push-devices", s.registerDriverPushDevice)
+	mux.HandleFunc("DELETE /v1/driver/push-devices/{id}", s.disableDriverPushDevice)
 	mux.HandleFunc("POST /v1/driver/documents/upload-url", s.prepareDriverDocumentUpload)
 	mux.HandleFunc("POST /v1/driver/documents/complete", s.completeDriverDocumentUpload)
 	mux.HandleFunc("GET /v1/driver/documents", s.listDriverDocuments)
@@ -113,15 +128,21 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /v1/driver/offers/current", s.currentDriverOffer)
 	mux.HandleFunc("GET /v1/driver/trips", s.driverTrips)
 	mux.HandleFunc("GET /v1/driver/trips/{id}", s.driverTripDetail)
+	mux.HandleFunc("GET /v1/driver/trips/{id}/payment", s.driverTripPayment)
+	mux.HandleFunc("GET /v1/driver/trips/{id}/routes", s.driverTripRoutes)
 	mux.HandleFunc("GET /v1/driver/trips/{id}/custody", s.driverTripCustodyEvidence)
 	mux.HandleFunc("PUT /v1/driver/trips/{id}/custody/{stage}", s.driverUpdateCustodyEvidence)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/photos/upload-url", s.driverPrepareCustodyPhotoUpload)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/photos/complete", s.driverCompleteCustodyPhotoUpload)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/custody/{stage}/confirm", s.driverConfirmCustodyEvidence)
+	mux.HandleFunc("GET /v1/driver/trips/{id}/inspection-checklist", s.driverInspectionChecklist)
+	mux.HandleFunc("PATCH /v1/driver/trips/{id}/inspection-checklist/{itemKey}", s.driverUpdateInspectionChecklist)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/accept", s.acceptDriverOffer)
 	mux.HandleFunc("POST /v1/driver/offers/{id}/reject", s.rejectDriverOffer)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arriving", s.driverTripArriving)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arrived", s.driverTripArrived)
+	mux.HandleFunc("POST /v1/driver/trips/{id}/customer-no-show", s.driverTripCustomerNoShow)
+	mux.HandleFunc("GET /v1/driver/policy", s.driverOperationalPolicy)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/vehicle-received", s.driverTripVehicleReceived)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/start", s.driverTripStart)
 	mux.HandleFunc("POST /v1/driver/trips/{id}/arrive-inspection", s.driverTripArriveInspection)
@@ -139,10 +160,15 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.adminUpdateAccount)
 	mux.HandleFunc("GET /v1/admin/drivers", s.adminDrivers)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/approval", s.adminDriverApproval)
+	mux.HandleFunc("PATCH /v1/admin/drivers/{id}/qualifications", s.adminDriverQualifications)
 	mux.HandleFunc("GET /v1/admin/drivers/{id}/documents", s.adminDriverDocuments)
 	mux.HandleFunc("POST /v1/admin/drivers/{id}/documents/{documentID}/review", s.adminReviewDriverDocument)
 	mux.HandleFunc("GET /v1/admin/trips", s.adminTrips)
+	mux.HandleFunc("GET /v1/admin/trips/{id}/payment", s.adminTripPayment)
 	mux.HandleFunc("GET /v1/admin/trips/{id}/custody", s.adminTripCustodyEvidence)
+	mux.HandleFunc("GET /v1/admin/trips/{id}/inspection-checklist", s.adminTripInspectionChecklist)
+	mux.HandleFunc("GET /v1/admin/inspection-checklist/template", s.adminInspectionChecklistTemplate)
+	mux.HandleFunc("POST /v1/admin/inspection-checklist/template", s.adminReplaceInspectionChecklistTemplate)
 	mux.HandleFunc("GET /v1/admin/trips/{id}/driver-candidates", s.adminTripDriverCandidates)
 	mux.HandleFunc("POST /v1/admin/trips/{id}/assign-driver", s.adminAssignTripDriver)
 	mux.HandleFunc("POST /v1/admin/trips/{id}/incident/resolve", s.adminResolveIncident)
@@ -316,6 +342,15 @@ func (s *Server) createTrip(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, err)
 		return
 	}
+	// Snapshot the active inspection checklist at job creation time. This is
+	// eager by design: a later Admin template change must never alter the
+	// document requirements of an already-created inspection job.
+	if trips.IsInspectionService(trip.ServiceType) && s.deps.InspectionChecklist != nil {
+		if _, checklistErr := s.deps.InspectionChecklist.ForRider(trip.ID, riderID); checklistErr != nil {
+			writeError(w, http.StatusInternalServerError, "INSPECTION_CHECKLIST_CREATE_FAILED", "Unable to initialize inspection document checklist", nil)
+			return
+		}
+	}
 	if err := s.deps.Idempotency.Put(scope, key, idempotency.Record{Fingerprint: fingerprint, ResourceID: trip.ID}); err != nil {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", nil)
 		return
@@ -401,6 +436,8 @@ func (s *Server) writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "TRIP_FORBIDDEN", "Trip is not accessible by this actor", nil)
 	case errors.Is(err, custodyevidence.ErrNotReady):
 		writeError(w, http.StatusConflict, "CUSTODY_EVIDENCE_REQUIRED", "Both driver and customer must confirm the required vehicle custody evidence before this action", nil)
+	case errors.Is(err, inspectionchecklist.ErrNotReady):
+		writeError(w, http.StatusConflict, "INSPECTION_CHECKLIST_REQUIRED", "Required inspection documents must be declared by the customer and verified by the driver before receiving the vehicle", nil)
 	case errors.Is(err, trips.ErrInvalidState):
 		writeError(w, http.StatusConflict, "TRIP_INVALID_STATE", "Trip cannot perform this action from its current state", nil)
 	case errors.Is(err, trips.ErrInvalidInput):

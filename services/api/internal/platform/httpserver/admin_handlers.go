@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	admindomain "flashx/services/api/internal/admin"
 	"flashx/services/api/internal/auth"
@@ -210,6 +211,64 @@ type driverApprovalRequest struct {
 	Reason string                 `json:"reason"`
 }
 
+type driverQualificationsRequest struct {
+	Capabilities   []string `json:"capabilities"`
+	LicenseClass   string   `json:"license_class"`
+	LicenseExpiry  string   `json:"license_expiry"`
+	CanDriveManual bool     `json:"can_drive_manual"`
+	Reason         string   `json:"reason"`
+}
+
+func (s *Server) adminDriverQualifications(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := s.activeAdminID(w, r)
+	if !ok {
+		return
+	}
+	var req driverQualificationsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusUnprocessableEntity, "QUALIFICATION_REASON_REQUIRED", "A reason is required when changing driver qualifications", nil)
+		return
+	}
+	var expiry *time.Time
+	if strings.TrimSpace(req.LicenseExpiry) != "" {
+		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(req.LicenseExpiry))
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "LICENSE_EXPIRY_INVALID", "License expiry must use YYYY-MM-DD", nil)
+			return
+		}
+		expiry = &parsed
+	}
+	before, err := s.deps.Drivers.Get(r.PathValue("id"))
+	if err != nil {
+		s.writeDriverError(w, err)
+		return
+	}
+	updated, err := s.deps.Drivers.UpdateQualifications(before.ID, drivers.QualificationInput{
+		Capabilities: req.Capabilities, LicenseClass: req.LicenseClass,
+		LicenseExpiry: expiry, CanDriveManual: req.CanDriveManual,
+	})
+	if err != nil {
+		s.writeDriverError(w, err)
+		return
+	}
+	if err := s.deps.Admin.Audit(adminID, "driver.qualifications_updated", "driver", updated.ID, map[string]any{
+		"previous_capabilities": before.Capabilities,
+		"capabilities":          updated.Capabilities,
+		"license_class":         updated.LicenseClass,
+		"license_expiry":        updated.LicenseExpiry,
+		"can_drive_manual":      updated.CanDriveManual,
+		"reason":                req.Reason,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "AUDIT_FAILED", "Driver qualifications changed but audit write failed", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: updated})
+}
+
 func (s *Server) adminTrips(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := s.actorID(w, r, auth.RoleAdmin, "X-Dev-Admin-ID")
 	if !ok {
@@ -404,12 +463,21 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 		"allow_dev_identity": s.deps.AllowDevIdentity,
 		"supported_services": []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection},
 		"features": map[string]bool{
-			"realtime":         s.deps.Realtime != nil,
-			"driver_documents": s.deps.DriverDocuments != nil,
-			"custody_evidence": s.deps.CustodyEvidence != nil,
-			"payments":         s.deps.Payments != nil,
-			"ratings":          s.deps.Ratings != nil,
+			"realtime":             s.deps.Realtime != nil,
+			"driver_documents":     s.deps.DriverDocuments != nil,
+			"custody_evidence":     s.deps.CustodyEvidence != nil,
+			"inspection_checklist": s.deps.InspectionChecklist != nil,
+			"payments":             s.deps.Payments != nil,
+			"ratings":              s.deps.Ratings != nil,
+			"push_foundation":      s.deps.Notifications != nil,
+			"place_search":         s.deps.Places != nil && s.deps.Places.Name() != "disabled",
 		},
+	}
+	if s.deps.Notifications != nil {
+		data["push_provider"] = s.deps.Notifications.ProviderName()
+	}
+	if s.deps.Places != nil {
+		data["place_provider"] = s.deps.Places.Name()
 	}
 	if s.deps.OperationalSettings != nil {
 		data["operational_settings"] = s.deps.OperationalSettings.Get()
@@ -423,6 +491,7 @@ type adminOperationalSettingsRequest struct {
 	VehicleInspectionEnabled    bool   `json:"vehicle_inspection_assist_enabled"`
 	DispatchMaxDistanceM        int64  `json:"dispatch_max_distance_m"`
 	DriverLocationMaxAgeSeconds int    `json:"driver_location_max_age_seconds"`
+	PickupGracePeriodSeconds    int    `json:"pickup_grace_period_seconds"`
 	Reason                      string `json:"reason"`
 }
 
@@ -451,6 +520,7 @@ func (s *Server) adminUpdateOperationalSettings(w http.ResponseWriter, r *http.R
 		VehicleInspectionEnabled:    req.VehicleInspectionEnabled,
 		DispatchMaxDistanceM:        req.DispatchMaxDistanceM,
 		DriverLocationMaxAgeSeconds: req.DriverLocationMaxAgeSeconds,
+		PickupGracePeriodSeconds:    req.PickupGracePeriodSeconds,
 	}, actor.ID)
 	if err != nil {
 		if errors.Is(err, operationalsettings.ErrInvalidConfig) {

@@ -22,6 +22,13 @@ type NearbyDriver struct {
 	DistanceM float64 `json:"distance_to_pickup_m"`
 }
 
+type QualificationInput struct {
+	Capabilities   []string
+	LicenseClass   string
+	LicenseExpiry  *time.Time
+	CanDriveManual bool
+}
+
 type Service struct {
 	store     Store
 	locations LocationIndex
@@ -90,7 +97,7 @@ func (s *Service) FindOrCreatePendingByPhone(phone string) (Driver, bool, error)
 	now := s.now()
 	driver := Driver{
 		ID: ids.New("drv"), Phone: phone, ServiceType: trips.ServiceDesignatedDriverCar,
-		Capabilities: []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection},
+		Capabilities: []string{},
 		Approval:     ApprovalPending, Availability: AvailabilityOffline,
 		LastIdleAt: now, CreatedAt: now, UpdatedAt: now, Version: 1,
 	}
@@ -111,6 +118,9 @@ func (s *Service) SetApproval(id string, status ApprovalStatus) (Driver, error) 
 	driver, err := s.store.Get(id)
 	if err != nil {
 		return Driver{}, err
+	}
+	if status == ApprovalApproved && len(driver.Capabilities) == 0 {
+		return Driver{}, ErrInvalidInput
 	}
 	driver.Approval = status
 	if status != ApprovalApproved {
@@ -133,21 +143,64 @@ func (s *Service) UpdateProfile(id, fullName, serviceType string) (Driver, error
 	}
 	fullName = strings.TrimSpace(fullName)
 	serviceType = strings.TrimSpace(serviceType)
-	if serviceType == "all" {
-		serviceType = trips.ServiceDesignatedDriverCar
-		driver.Capabilities = []string{trips.ServiceDesignatedDriverCar, trips.ServiceDesignatedDriverBike, trips.ServiceVehicleInspection}
-	} else {
+	if len(fullName) > 160 {
+		return Driver{}, ErrInvalidInput
+	}
+	if serviceType != "" {
 		serviceType = trips.NormalizeServiceType(serviceType)
 		if !trips.IsSupportedService(serviceType) {
 			return Driver{}, ErrInvalidInput
 		}
-		driver.Capabilities = capabilitiesForServiceType(serviceType)
+		driver.ServiceType = serviceType
 	}
-	if len(fullName) > 160 {
+	// A driver may edit their public profile/service preference, but only
+	// Operations may grant marketplace capabilities or manual-transmission
+	// eligibility. Self-service profile edits must never widen dispatch access.
+	driver.FullName = fullName
+	driver.UpdatedAt = s.now()
+	if err := s.store.Save(driver); err != nil {
+		return Driver{}, err
+	}
+	return s.Get(id)
+}
+
+func (s *Service) UpdateQualifications(id string, input QualificationInput) (Driver, error) {
+	driver, err := s.store.Get(id)
+	if err != nil {
+		return Driver{}, err
+	}
+	seen := make(map[string]bool)
+	capabilities := make([]string, 0, len(input.Capabilities))
+	for _, raw := range input.Capabilities {
+		capability := trips.NormalizeServiceType(strings.TrimSpace(raw))
+		if !trips.IsSupportedService(capability) {
+			return Driver{}, ErrInvalidInput
+		}
+		if !seen[capability] {
+			seen[capability] = true
+			capabilities = append(capabilities, capability)
+		}
+	}
+	licenseClass := strings.TrimSpace(input.LicenseClass)
+	if len(licenseClass) > 32 {
 		return Driver{}, ErrInvalidInput
 	}
-	driver.FullName = fullName
-	driver.ServiceType = serviceType
+	if input.LicenseExpiry != nil {
+		expiry := input.LicenseExpiry.UTC()
+		input.LicenseExpiry = &expiry
+	}
+	driver.Capabilities = capabilities
+	driver.LicenseClass = licenseClass
+	driver.LicenseExpiry = input.LicenseExpiry
+	driver.CanDriveManual = input.CanDriveManual
+	if len(capabilities) > 0 {
+		driver.ServiceType = capabilities[0]
+	}
+	if len(capabilities) == 0 && driver.Approval == ApprovalApproved {
+		driver.Approval = ApprovalPending
+		driver.Availability = AvailabilityOffline
+		_ = s.locations.SetEligible(id, driver.ServiceType, false)
+	}
 	driver.UpdatedAt = s.now()
 	if err := s.store.Save(driver); err != nil {
 		return Driver{}, err
@@ -361,7 +414,10 @@ func driverCanServe(driver Driver, serviceType string) bool {
 	serviceType = trips.NormalizeServiceType(serviceType)
 	capabilities := driver.Capabilities
 	if len(capabilities) == 0 {
-		capabilities = capabilitiesForServiceType(driver.ServiceType)
+		return false
+	}
+	if driver.LicenseExpiry != nil && !driver.LicenseExpiry.After(time.Now().UTC()) {
+		return false
 	}
 	has := func(target string) bool {
 		for _, capability := range capabilities {

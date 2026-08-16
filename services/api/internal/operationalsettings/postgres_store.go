@@ -26,29 +26,34 @@ func (s *PostgresStore) Save(config Config) (Config, error) {
 		INSERT INTO operational_settings (
 			id, designated_driver_car_enabled, designated_driver_bike_enabled,
 			vehicle_inspection_assist_enabled, dispatch_max_distance_m,
-			driver_location_max_age_seconds, version, updated_by, updated_at
-		) VALUES ('default',$1,$2,$3,$4,$5,1,NULLIF($6,''),$7)
+			driver_location_max_age_seconds, pickup_grace_period_seconds,
+			version, updated_by, updated_at
+		) VALUES ('default',$1,$2,$3,$4,$5,$6,1,NULLIF($7,''),$8)
 		ON CONFLICT (id) DO UPDATE SET
 			designated_driver_car_enabled=EXCLUDED.designated_driver_car_enabled,
 			designated_driver_bike_enabled=EXCLUDED.designated_driver_bike_enabled,
 			vehicle_inspection_assist_enabled=EXCLUDED.vehicle_inspection_assist_enabled,
 			dispatch_max_distance_m=EXCLUDED.dispatch_max_distance_m,
 			driver_location_max_age_seconds=EXCLUDED.driver_location_max_age_seconds,
+			pickup_grace_period_seconds=EXCLUDED.pickup_grace_period_seconds,
 			version=operational_settings.version+1,
 			updated_by=EXCLUDED.updated_by,
 			updated_at=EXCLUDED.updated_at
 		RETURNING designated_driver_car_enabled, designated_driver_bike_enabled,
 			vehicle_inspection_assist_enabled, dispatch_max_distance_m,
-			driver_location_max_age_seconds, version, COALESCE(updated_by,''), updated_at
+			driver_location_max_age_seconds, pickup_grace_period_seconds,
+			version, COALESCE(updated_by,''), updated_at
 	`, config.DesignatedDriverCarEnabled, config.DesignatedDriverBikeEnabled,
 		config.VehicleInspectionEnabled, config.DispatchMaxDistanceM,
-		config.DriverLocationMaxAgeSeconds, config.UpdatedBy, config.UpdatedAt)
+		config.DriverLocationMaxAgeSeconds, config.PickupGracePeriodSeconds,
+		config.UpdatedBy, config.UpdatedAt)
 	return scanConfigValues(row)
 }
 
 const settingsSelect = `SELECT designated_driver_car_enabled, designated_driver_bike_enabled,
 	vehicle_inspection_assist_enabled, dispatch_max_distance_m,
-	driver_location_max_age_seconds, version, COALESCE(updated_by,''), updated_at
+	driver_location_max_age_seconds, pickup_grace_period_seconds,
+	version, COALESCE(updated_by,''), updated_at
 	FROM operational_settings`
 
 type configScanner interface{ Scan(dest ...any) error }
@@ -65,6 +70,7 @@ func scanConfigValues(row configScanner) (Config, error) {
 	var cfg Config
 	err := row.Scan(&cfg.DesignatedDriverCarEnabled, &cfg.DesignatedDriverBikeEnabled,
 		&cfg.VehicleInspectionEnabled, &cfg.DispatchMaxDistanceM,
-		&cfg.DriverLocationMaxAgeSeconds, &cfg.Version, &cfg.UpdatedBy, &cfg.UpdatedAt)
+		&cfg.DriverLocationMaxAgeSeconds, &cfg.PickupGracePeriodSeconds,
+		&cfg.Version, &cfg.UpdatedBy, &cfg.UpdatedAt)
 	return cfg, err
 }

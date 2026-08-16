@@ -16,9 +16,11 @@ import (
 	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/notifications"
 	"flashx/services/api/internal/objectstorage"
 	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
+	"flashx/services/api/internal/places"
 	"flashx/services/api/internal/platform/idempotency"
 	"flashx/services/api/internal/pricing"
 	"flashx/services/api/internal/ratings"
@@ -28,6 +30,17 @@ import (
 )
 
 type testStorageSigner struct{}
+
+type testPlaceProvider struct{}
+
+func (testPlaceProvider) Name() string { return "test_places" }
+
+func (testPlaceProvider) Search(_ context.Context, query string, bias *trips.Point) ([]places.Result, error) {
+	return []places.Result{{
+		PlaceID: "place-test-1", Name: "Vincom Plaza Thanh Hóa", Address: "27 Trần Phú, Thanh Hóa",
+		Location: trips.Point{Lat: 19.8045, Lng: 105.7779}, Source: "test_places",
+	}}, nil
+}
 
 func (testStorageSigner) SignPut(_ context.Context, key, contentType string, contentLength int64) (objectstorage.SignedRequest, error) {
 	return objectstorage.SignedRequest{Method: "PUT", URL: "https://storage.test/put/" + key, ExpiresAt: time.Now().Add(time.Hour)}, nil
@@ -78,10 +91,59 @@ func newTestServer() *Server {
 		Pricing:             pricing.NewService(),
 		OperationalSettings: settingsService,
 		Payments:            payments.NewService(payments.NewMemoryStore()),
+		Notifications:       notifications.NewService(notifications.NewMemoryStore(), notifications.DisabledProvider{}),
+		Places:              testPlaceProvider{},
 		Ratings:             ratings.NewService(ratings.NewMemoryStore(), tripService),
 		Idempotency:         idempotency.NewMemoryStore(),
 		Auth:                authService,
 	})
+}
+
+func TestPlaceSearchHTTPContract(t *testing.T) {
+	s := newTestServer()
+	rr := perform(t, s, http.MethodGet, "/v1/places/search?q=Vincom%20Thanh%20H%C3%B3a&lat=19.8067&lng=105.7852", nil, map[string]string{"X-Dev-Rider-ID": "rider-place-1"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("place search status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"place_id":"place-test-1"`)) || !bytes.Contains(rr.Body.Bytes(), []byte(`"lat":19.8045`)) {
+		t.Fatalf("unexpected place search response: %s", rr.Body.String())
+	}
+	invalid := perform(t, s, http.MethodGet, "/v1/places/search?q=ab", nil, map[string]string{"X-Dev-Rider-ID": "rider-place-1"})
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("short place query status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestPushDeviceHTTPContract(t *testing.T) {
+	s := newTestServer()
+	riderHeaders := map[string]string{"X-Dev-Rider-ID": "rider-push-1"}
+	registered := perform(t, s, http.MethodPost, "/v1/rider/push-devices", []byte(`{"platform":"ios","token":"0123456789abcdef0123456789abcdef"}`), riderHeaders)
+	if registered.Code != http.StatusOK {
+		t.Fatalf("register push status=%d body=%s", registered.Code, registered.Body.String())
+	}
+	if bytes.Contains(registered.Body.Bytes(), []byte("0123456789abcdef")) {
+		t.Fatalf("push token must not be returned: %s", registered.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.ID == "" {
+		t.Fatalf("missing push device id: %s", registered.Body.String())
+	}
+
+	forbidden := perform(t, s, http.MethodDelete, "/v1/rider/push-devices/"+payload.Data.ID, nil, map[string]string{"X-Dev-Rider-ID": "other-rider"})
+	if forbidden.Code != http.StatusNotFound {
+		t.Fatalf("other actor delete status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+	removed := perform(t, s, http.MethodDelete, "/v1/rider/push-devices/"+payload.Data.ID, nil, riderHeaders)
+	if removed.Code != http.StatusNoContent {
+		t.Fatalf("owner delete status=%d body=%s", removed.Code, removed.Body.String())
+	}
 }
 
 func TestCreateTripIsIdempotent(t *testing.T) {
@@ -411,6 +473,13 @@ func TestAdminOTPApprovesDriverThenDriverCanGoOnline(t *testing.T) {
 	}
 	if err := json.Unmarshal(adminVerified.Body.Bytes(), &adminAuth); err != nil {
 		t.Fatal(err)
+	}
+
+	qualifications := perform(t, s, http.MethodPatch, "/v1/admin/drivers/"+driverAuth.Data.Actor.ID+"/qualifications", []byte(`{"capabilities":["designated_driver_bike"],"license_class":"A1","can_drive_manual":false,"reason":"capability_verified"}`), map[string]string{
+		"Authorization": "Bearer " + adminAuth.Data.Tokens.AccessToken,
+	})
+	if qualifications.Code != http.StatusOK {
+		t.Fatalf("qualifications status=%d body=%s", qualifications.Code, qualifications.Body.String())
 	}
 
 	approve := perform(t, s, http.MethodPost, "/v1/admin/drivers/"+driverAuth.Data.Actor.ID+"/approval", []byte(`{"status":"approved","reason":"documents_verified"}`), map[string]string{

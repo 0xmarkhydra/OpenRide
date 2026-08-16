@@ -16,9 +16,12 @@ import (
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/inspectionchecklist"
+	"flashx/services/api/internal/notifications"
 	"flashx/services/api/internal/objectstorage"
 	"flashx/services/api/internal/operationalsettings"
 	"flashx/services/api/internal/payments"
+	"flashx/services/api/internal/places"
 	"flashx/services/api/internal/platform/config"
 	"flashx/services/api/internal/platform/httpserver"
 	"flashx/services/api/internal/platform/idempotency"
@@ -51,6 +54,8 @@ func main() {
 		ratingStore              ratings.Store
 		documentStore            driverdocs.Store
 		custodyEvidenceStore     custodyevidence.Store
+		inspectionChecklistStore inspectionchecklist.Store
+		notificationStore        notifications.Store
 		pricingStore             pricing.Store
 		operationalSettingsStore operationalsettings.Store
 		dispatchOffers           dispatch.OfferStore
@@ -73,6 +78,8 @@ func main() {
 		ratingStore = ratings.NewMemoryStore()
 		documentStore = driverdocs.NewMemoryStore()
 		custodyEvidenceStore = custodyevidence.NewMemoryStore()
+		inspectionChecklistStore = inspectionchecklist.NewMemoryStore()
+		notificationStore = notifications.NewMemoryStore()
 		pricingStore = pricing.NewMemoryStore()
 		operationalSettingsStore = operationalsettings.NewMemoryStore()
 		dispatchOffers = dispatch.NewMemoryOfferStore()
@@ -98,6 +105,8 @@ func main() {
 		ratingStore = ratings.NewPostgresStore(resources.Postgres)
 		documentStore = driverdocs.NewPostgresStore(resources.Postgres)
 		custodyEvidenceStore = custodyevidence.NewPostgresStore(resources.Postgres)
+		inspectionChecklistStore = inspectionchecklist.NewPostgresStore(resources.Postgres)
+		notificationStore = notifications.NewPostgresStore(resources.Postgres)
 		pricingStore = pricing.NewPostgresStore(resources.Postgres)
 		operationalSettingsStore = operationalsettings.NewPostgresStore(resources.Postgres)
 		dispatchOffers = dispatch.NewRedisOfferStore(resources.Redis, "flashx")
@@ -154,7 +163,24 @@ func main() {
 		log.Fatalf("unsupported OBJECT_STORAGE_PROVIDER %q", cfg.ObjectStorageProvider)
 	}
 
+	var pushProvider notifications.Provider
+	switch cfg.PushProvider {
+	case "disabled", "":
+		pushProvider = notifications.DisabledProvider{ProviderName: "disabled"}
+	case "development":
+		if cfg.AppEnv == "production" {
+			log.Fatal("PUSH_PROVIDER=development is forbidden in production")
+		}
+		pushProvider = notifications.DisabledProvider{ProviderName: "development"}
+	default:
+		log.Fatalf("unsupported PUSH_PROVIDER %q; real FCM/APNs provider is not configured yet", cfg.PushProvider)
+	}
+
 	tripService := trips.NewService(tripStore)
+	inspectionChecklistService, err := inspectionchecklist.NewService(inspectionChecklistStore, tripService)
+	if err != nil {
+		log.Fatalf("configure inspection checklist: %v", err)
+	}
 	driverService := drivers.NewServiceWithLocationIndex(driverStore, locationIndex)
 	vehicleService := customervehicles.NewService(vehicleStore)
 	userService := users.NewService(userStore)
@@ -165,18 +191,25 @@ func main() {
 		}
 	}
 	var routeProvider routing.Provider
+	var placeProvider places.Provider
 	switch cfg.MapsProvider {
 	case "mock", "development", "":
 		if cfg.AppEnv == "production" {
 			log.Fatal("production requires a real routing provider; MAPS_PROVIDER=mock is forbidden")
 		}
 		routeProvider = routing.NewFallbackProvider()
+		placeProvider = places.DisabledProvider{}
 	case "google":
-		provider, err := routing.NewGoogleProvider(cfg.GoogleMapsAPIKey)
+		routeGoogle, err := routing.NewGoogleProvider(cfg.GoogleMapsAPIKey)
 		if err != nil {
 			log.Fatalf("configure google routes: %v", err)
 		}
-		routeProvider = provider
+		placesGoogle, err := places.NewGoogleProvider(cfg.GoogleMapsAPIKey)
+		if err != nil {
+			log.Fatalf("configure google places: %v", err)
+		}
+		routeProvider = routeGoogle
+		placeProvider = placesGoogle
 	default:
 		log.Fatalf("unsupported MAPS_PROVIDER %q", cfg.MapsProvider)
 	}
@@ -185,10 +218,12 @@ func main() {
 		log.Fatalf("configure pricing: %v", err)
 	}
 	paymentService := payments.NewService(paymentStore)
+	notificationService := notifications.NewService(notificationStore, pushProvider)
 	ratingService := ratings.NewService(ratingStore, tripService)
 	driverDocumentService := driverdocs.NewService(documentStore, storageSigner)
 	custodyEvidenceService := custodyevidence.NewService(custodyEvidenceStore, storageSigner, tripService)
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
+	dispatchEngine.SetCustomerVehicles(vehicleService)
 	operationalSettingsService, err := operationalsettings.NewService(operationalSettingsStore)
 	if err != nil {
 		log.Fatalf("configure operational settings: %v", err)
@@ -207,6 +242,7 @@ func main() {
 		CustomerVehicles:    vehicleService,
 		DriverDocuments:     driverDocumentService,
 		CustodyEvidence:     custodyEvidenceService,
+		InspectionChecklist: inspectionChecklistService,
 		Users:               userService,
 		Admin:               adminService,
 		Dispatch:            dispatchEngine,
@@ -214,6 +250,8 @@ func main() {
 		Pricing:             pricingService,
 		OperationalSettings: operationalSettingsService,
 		Payments:            paymentService,
+		Notifications:       notificationService,
+		Places:              placeProvider,
 		Ratings:             ratingService,
 		Idempotency:         idempotencyStore,
 		Auth:                authService,
@@ -223,6 +261,8 @@ func main() {
 	})
 
 	errCh := make(chan error, 1)
+	go server.RunScheduledDispatch(ctx, 5*time.Second)
+	go server.RunNotificationDispatch(ctx, 5*time.Second)
 	go func() {
 		log.Printf("flashx api listening on %s (%s, persistence=%s)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence)
 		errCh <- server.ListenAndServe()

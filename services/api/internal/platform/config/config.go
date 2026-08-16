@@ -25,6 +25,7 @@ type Config struct {
 	SMSProvider           string
 	SMSWebhookURL         string
 	SMSAPIKey             string
+	PushProvider          string
 	ObjectStorageProvider string
 	S3Endpoint            string
 	S3Region              string
@@ -55,6 +56,7 @@ func Load() Config {
 		SMSProvider:           env("SMS_PROVIDER", "development"),
 		SMSWebhookURL:         env("SMS_WEBHOOK_URL", ""),
 		SMSAPIKey:             env("SMS_API_KEY", ""),
+		PushProvider:          env("PUSH_PROVIDER", "disabled"),
 		ObjectStorageProvider: env("OBJECT_STORAGE_PROVIDER", "disabled"),
 		S3Endpoint:            env("S3_ENDPOINT", ""),
 		S3Region:              env("S3_REGION", "us-east-1"),

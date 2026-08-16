@@ -42,7 +42,7 @@ func NewService(store Store) (*Service, error) {
 func DefaultConfig() Config {
 	return Config{
 		DesignatedDriverCarEnabled: true, DesignatedDriverBikeEnabled: true, VehicleInspectionEnabled: true,
-		DispatchMaxDistanceM: 5_000, DriverLocationMaxAgeSeconds: 20, Version: 1,
+		DispatchMaxDistanceM: 5_000, DriverLocationMaxAgeSeconds: 20, PickupGracePeriodSeconds: 600, Version: 1,
 		UpdatedAt: time.Unix(0, 0).UTC(),
 	}
 }
@@ -70,6 +70,9 @@ func (s *Service) IsServiceEnabled(serviceType string) bool {
 }
 
 func (s *Service) Update(input Config, actorID string) (Config, error) {
+	if input.PickupGracePeriodSeconds == 0 {
+		input.PickupGracePeriodSeconds = s.Get().PickupGracePeriodSeconds
+	}
 	input.UpdatedBy = strings.TrimSpace(actorID)
 	input.UpdatedAt = s.now()
 	if !validConfig(input) {
@@ -101,5 +104,6 @@ func (s *Service) SetApplyHook(apply func(Config)) {
 
 func validConfig(cfg Config) bool {
 	return cfg.DispatchMaxDistanceM >= 1_000 && cfg.DispatchMaxDistanceM <= 30_000 &&
-		cfg.DriverLocationMaxAgeSeconds >= 5 && cfg.DriverLocationMaxAgeSeconds <= 120
+		cfg.DriverLocationMaxAgeSeconds >= 5 && cfg.DriverLocationMaxAgeSeconds <= 120 &&
+		cfg.PickupGracePeriodSeconds >= 60 && cfg.PickupGracePeriodSeconds <= 3_600
 }

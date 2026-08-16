@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"flashx/services/api/internal/payments"
+	"flashx/services/api/internal/trips"
 )
 
 func (s *Server) getTripPayment(w http.ResponseWriter, r *http.Request) {
@@ -12,8 +13,7 @@ func (s *Server) getTripPayment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.deps.Payments == nil {
-		writeError(w, http.StatusServiceUnavailable, "PAYMENT_UNAVAILABLE", "Payment service is unavailable", nil)
+	if !s.paymentAvailable(w) {
 		return
 	}
 	trip, err := s.deps.Trips.GetForRider(r.PathValue("id"), riderID)
@@ -21,10 +21,50 @@ func (s *Server) getTripPayment(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, err)
 		return
 	}
-	payment, err := s.deps.Payments.GetForTrip(trip)
-	if errors.Is(err, payments.ErrNotFound) {
-		payment, err = s.deps.Payments.EnsureCash(trip)
+	s.writeTripPayment(w, trip)
+}
+
+func (s *Server) driverTripPayment(w http.ResponseWriter, r *http.Request) {
+	driverID, ok := s.driverID(w, r)
+	if !ok {
+		return
 	}
+	if !s.paymentAvailable(w) {
+		return
+	}
+	trip, err := s.deps.Trips.GetForDriver(r.PathValue("id"), driverID)
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	s.writeTripPayment(w, trip)
+}
+
+func (s *Server) adminTripPayment(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.activeAdminID(w, r); !ok {
+		return
+	}
+	if !s.paymentAvailable(w) {
+		return
+	}
+	trip, err := s.deps.Trips.Get(r.PathValue("id"))
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	s.writeTripPayment(w, trip)
+}
+
+func (s *Server) paymentAvailable(w http.ResponseWriter) bool {
+	if s.deps.Payments != nil {
+		return true
+	}
+	writeError(w, http.StatusServiceUnavailable, "PAYMENT_UNAVAILABLE", "Payment service is unavailable", nil)
+	return false
+}
+
+func (s *Server) writeTripPayment(w http.ResponseWriter, trip trips.Trip) {
+	payment, err := s.deps.Payments.ReconcileCash(trip)
 	if err != nil {
 		s.writePaymentError(w, err)
 		return

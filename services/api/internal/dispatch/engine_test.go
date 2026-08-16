@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"flashx/services/api/internal/customervehicles"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/trips"
 )
@@ -204,5 +205,55 @@ func TestManualReassignBlockedAfterVehicleReceived(t *testing.T) {
 	}
 	if _, err := engine.ManualAssign(assigned.ID, "driver-far"); !errors.Is(err, trips.ErrInvalidState) {
 		t.Fatalf("error = %v, want trips.ErrInvalidState", err)
+	}
+}
+
+func TestManualTransmissionRequiresVerifiedDriverCapability(t *testing.T) {
+	driverService := drivers.NewService(drivers.NewMemoryStore())
+	tripService := trips.NewService(trips.NewMemoryStore())
+	vehicleService := customervehicles.NewService(customervehicles.NewMemoryStore())
+
+	driver, err := driverService.RegisterApproved("driver-manual", "Driver Manual", trips.ServiceDesignatedDriverCar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driverService.SetAvailability(driver.ID, drivers.AvailabilityOnline); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driverService.UpdateLocation(driver.ID, drivers.Location{Lat: 19.807, Lng: 105.776, AccuracyM: 5, CapturedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	vehicle, err := vehicleService.Create(customervehicles.CreateInput{
+		OwnerUserID: "rider-manual", Type: "car", LicensePlate: "36A-99999", Transmission: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := tripService.Create(trips.CreateInput{
+		RiderID: "rider-manual", CustomerVehicleID: vehicle.ID, ServiceType: trips.ServiceDesignatedDriverCar,
+		Pickup: trips.Point{Lat: 19.807, Lng: 105.776}, Destination: trips.Point{Lat: 19.82, Lng: 105.79},
+		FareBreakdown: trips.FareBreakdown{TotalMinor: 180000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(driverService, tripService)
+	engine.SetCustomerVehicles(vehicleService)
+
+	if _, err := engine.CreateOffer(trip.ID); !errors.Is(err, ErrNoCandidate) {
+		t.Fatalf("manual vehicle offered to unverified driver: %v", err)
+	}
+	if _, err := driverService.UpdateQualifications(driver.ID, drivers.QualificationInput{
+		Capabilities: []string{trips.ServiceDesignatedDriverCar}, LicenseClass: "B", CanDriveManual: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := engine.CreateOffer(trip.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offer.DriverID != driver.ID {
+		t.Fatalf("driver = %s, want %s", offer.DriverID, driver.ID)
 	}
 }

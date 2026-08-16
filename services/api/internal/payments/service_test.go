@@ -47,3 +47,26 @@ func TestCannotSettleCashBeforeTripCompletes(t *testing.T) {
 		t.Fatalf("err=%v want=%v", err, ErrInvalidState)
 	}
 }
+
+func TestReconcileCashFollowsTripLifecycle(t *testing.T) {
+	service := NewService(NewMemoryStore())
+	pending, err := service.ReconcileCash(trips.Trip{
+		ID: "trip_reconcile", Status: trips.StatusSearching, EstimatedFareMinor: 50000, Currency: "VND",
+	})
+	if err != nil || pending.Status != StatusPending {
+		t.Fatalf("pending reconcile = %+v err=%v", pending, err)
+	}
+	cancelled, err := service.ReconcileCash(trips.Trip{
+		ID: "trip_reconcile", Status: trips.StatusCancelled, EstimatedFareMinor: 50000, Currency: "VND",
+	})
+	if err != nil || cancelled.Status != StatusCancelled {
+		t.Fatalf("cancelled reconcile = %+v err=%v", cancelled, err)
+	}
+
+	paid, err := service.ReconcileCash(trips.Trip{
+		ID: "trip_paid", Status: trips.StatusCompleted, EstimatedFareMinor: 50000, FinalFareMinor: 54000, Currency: "VND",
+	})
+	if err != nil || paid.Status != StatusPaid || paid.AmountMinor != 54000 {
+		t.Fatalf("paid reconcile = %+v err=%v", paid, err)
+	}
+}

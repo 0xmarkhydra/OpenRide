@@ -61,6 +61,9 @@ type Driver = {
   full_name: string;
   service_type: string;
   capabilities?: string[];
+  license_class?: string;
+  license_expiry?: string;
+  can_drive_manual?: boolean;
   approval_status: string;
   availability_status: string;
   location?: { lat: number; lng: number; captured_at?: string };
@@ -88,6 +91,7 @@ type Trip = {
   incident_open?: boolean;
   created_at: string;
 };
+type Payment = { id: string; trip_id: string; provider: string; method: string; status: string; amount_minor: number; currency: string; updated_at: string };
 type Customer = { id: string; phone: string; full_name: string; status: string; created_at: string; updated_at: string };
 type Vehicle = {
   id: string;
@@ -128,6 +132,7 @@ type OperationalSettings = {
   vehicle_inspection_assist_enabled: boolean;
   dispatch_max_distance_m: number;
   driver_location_max_age_seconds: number;
+  pickup_grace_period_seconds: number;
   version: number;
   updated_by?: string;
   updated_at: string;
@@ -182,9 +187,36 @@ type CustodyEvidenceSnapshot = {
   }>;
   ready: boolean;
 };
+type InspectionTemplateItem = { key: string; label: string; required: boolean; sort_order: number };
+type InspectionTemplate = {
+  id: string;
+  version: number;
+  active: boolean;
+  items: InspectionTemplateItem[];
+  created_by?: string;
+  reason?: string;
+  created_at: string;
+};
+type InspectionChecklistItem = InspectionTemplateItem & {
+  id: string;
+  trip_id: string;
+  customer_status: string;
+  customer_note?: string;
+  customer_updated_at?: string;
+  driver_status: string;
+  driver_note?: string;
+  driver_updated_at?: string;
+};
+type InspectionChecklistSnapshot = {
+  checklist: { trip_id: string; template_id: string; template_version: number; created_at: string; updated_at: string };
+  items: InspectionChecklistItem[];
+  customer_complete: boolean;
+  driver_complete: boolean;
+  ready: boolean;
+};
 type Metrics = Record<string, number>;
 type ApiError = { error?: { message?: string; code?: string } };
-type ViewKey = 'overview' | 'trips' | 'drivers' | 'customers' | 'vehicles' | 'pricing' | 'incidents' | 'audit' | 'accounts' | 'settings';
+type ViewKey = 'overview' | 'trips' | 'drivers' | 'customers' | 'vehicles' | 'pricing' | 'inspection' | 'incidents' | 'audit' | 'accounts' | 'settings';
 type NavItem = { key: ViewKey; label: string; icon: LucideIcon; superOnly?: boolean };
 
 class ApiHttpError extends Error {
@@ -276,6 +308,7 @@ const operationalSettingsSchema = z.object({
   vehicle_inspection_assist_enabled: z.boolean(),
   dispatch_max_distance_m: z.number().min(1000, 'Tối thiểu 1 km').max(30000, 'Tối đa 30 km'),
   driver_location_max_age_seconds: z.number().min(5, 'Tối thiểu 5 giây').max(120, 'Tối đa 120 giây'),
+  pickup_grace_period_seconds: z.number().min(60, 'Tối thiểu 1 phút').max(3600, 'Tối đa 60 phút'),
   reason: z.string().trim().min(3, 'Nhập lý do thay đổi'),
 });
 type PhoneForm = z.infer<typeof phoneSchema>;
@@ -291,6 +324,7 @@ const navItems: NavItem[] = [
   { key: 'customers', label: 'Khách hàng', icon: UsersRound },
   { key: 'vehicles', label: 'Xe khách', icon: CarFront },
   { key: 'pricing', label: 'Bảng giá', icon: BadgeDollarSign },
+  { key: 'inspection', label: 'Checklist đăng kiểm', icon: FileCheck2 },
   { key: 'incidents', label: 'Sự cố', icon: AlertTriangle },
   { key: 'audit', label: 'Nhật ký', icon: ListChecks },
   { key: 'accounts', label: 'Quản trị viên', icon: ShieldCheck, superOnly: true },
@@ -334,6 +368,11 @@ export default function AdminClient() {
   const [driverCandidatesLoading, setDriverCandidatesLoading] = useState(false);
   const [custodyEvidence, setCustodyEvidence] = useState<CustodyEvidenceSnapshot[]>([]);
   const [custodyEvidenceLoading, setCustodyEvidenceLoading] = useState(false);
+  const [tripPayment, setTripPayment] = useState<Payment | null>(null);
+  const [tripPaymentLoading, setTripPaymentLoading] = useState(false);
+  const [inspectionTemplate, setInspectionTemplate] = useState<InspectionTemplate | null>(null);
+  const [inspectionChecklist, setInspectionChecklist] = useState<InspectionChecklistSnapshot | null>(null);
+  const [inspectionChecklistLoading, setInspectionChecklistLoading] = useState(false);
   const [assignmentReason, setAssignmentReason] = useState('');
   const [driverReason, setDriverReason] = useState('');
   const [documentNote, setDocumentNote] = useState('');
@@ -434,13 +473,14 @@ export default function AdminClient() {
   const loadReference = useCallback(async (access = token) => {
     if (!access) return;
     try {
-      const [adminData, customerData, vehicleData, pricingData, auditData, systemData] = await Promise.all([
+      const [adminData, customerData, vehicleData, pricingData, auditData, systemData, checklistTemplate] = await Promise.all([
         authedApi<AdminUser>('/v1/admin/me', {}, access),
         authedApi<Customer[]>('/v1/admin/customers', {}, access),
         authedApi<Vehicle[]>('/v1/admin/vehicles', {}, access),
         authedApi<PricingRule[]>('/v1/admin/pricing', {}, access),
         authedApi<AuditEntry[]>('/v1/admin/audit?limit=150', {}, access),
         authedApi<SystemInfo>('/v1/admin/system', {}, access),
+        authedApi<InspectionTemplate>('/v1/admin/inspection-checklist/template', {}, access),
       ]);
       setCurrentAdmin(adminData);
       setCustomers(customerData);
@@ -448,6 +488,7 @@ export default function AdminClient() {
       setPricing(pricingData);
       setAudit(auditData);
       setSystemInfo(systemData);
+      setInspectionTemplate(checklistTemplate);
       if (adminData.role === 'super_admin') {
         setAdminAccounts(await authedApi<AdminUser[]>('/v1/admin/accounts?limit=200', {}, access));
       } else {
@@ -500,6 +541,42 @@ export default function AdminClient() {
     }
   }, [authedApi]);
 
+  const loadTripPayment = useCallback(async (trip: Trip | null) => {
+    if (!trip) {
+      setTripPayment(null);
+      setTripPaymentLoading(false);
+      return;
+    }
+    setTripPaymentLoading(true);
+    try {
+      setTripPayment(await authedApi<Payment>(`/v1/admin/trips/${trip.id}/payment`));
+    } catch (paymentError) {
+      setTripPayment(null);
+      setError(paymentError instanceof Error ? paymentError.message : 'Không thể tải trạng thái thanh toán');
+    } finally {
+      setTripPaymentLoading(false);
+    }
+  }, [authedApi]);
+
+  const loadInspectionChecklist = useCallback(async (trip: Trip | null) => {
+    if (!trip || trip.service_type !== 'vehicle_inspection_assist') {
+      setInspectionChecklist(null);
+      setInspectionChecklistLoading(false);
+      return;
+    }
+    setInspectionChecklistLoading(true);
+    try {
+      setInspectionChecklist(await authedApi<InspectionChecklistSnapshot>(`/v1/admin/trips/${trip.id}/inspection-checklist`));
+    } catch (checklistError) {
+      setInspectionChecklist(null);
+      if (!(checklistError instanceof ApiHttpError && checklistError.status === 404)) {
+        setError(checklistError instanceof Error ? checklistError.message : 'Không thể tải checklist đăng kiểm');
+      }
+    } finally {
+      setInspectionChecklistLoading(false);
+    }
+  }, [authedApi]);
+
   useEffect(() => {
     if (!token) return;
     void loadCore(token);
@@ -523,12 +600,20 @@ export default function AdminClient() {
   useEffect(() => {
     if (!selectedTrip) {
       setCustodyEvidence([]);
+      setTripPayment(null);
+      setInspectionChecklist(null);
       return;
     }
+    void loadTripPayment(selectedTrip);
     void loadCustodyEvidence(selectedTrip);
-    const timer = window.setInterval(() => void loadCustodyEvidence(selectedTrip), 5000);
+    void loadInspectionChecklist(selectedTrip);
+    const timer = window.setInterval(() => {
+      void loadTripPayment(selectedTrip);
+      void loadCustodyEvidence(selectedTrip);
+      void loadInspectionChecklist(selectedTrip);
+    }, 5000);
     return () => window.clearInterval(timer);
-  }, [selectedTrip?.id, loadCustodyEvidence]);
+  }, [selectedTrip?.id, loadTripPayment, loadCustodyEvidence, loadInspectionChecklist]);
 
   const requestOtp = phoneForm.handleSubmit(async ({ phone }) => {
     setBusy(true);
@@ -580,6 +665,26 @@ export default function AdminClient() {
       await Promise.all([loadCore(), loadAudit()]);
     } catch (approvalError) {
       setError(approvalError instanceof Error ? approvalError.message : 'Không thể cập nhật tài xế');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateDriverQualifications(driver: Driver, values: { capabilities: string[]; license_class: string; license_expiry: string; can_drive_manual: boolean; reason: string }) {
+    if (!token) return;
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<Driver>(`/v1/admin/drivers/${driver.id}/qualifications`, {
+        method: 'PATCH',
+        body: JSON.stringify(values),
+      }, token);
+      setDrivers(items => items.map(item => item.id === updated.id ? updated : item));
+      setSelectedDriver(updated);
+      await loadAudit();
+    } catch (qualificationError) {
+      setError(qualificationError instanceof Error ? qualificationError.message : 'Không thể cập nhật năng lực tài xế');
+      throw qualificationError;
     } finally {
       setBusy(false);
     }
@@ -674,6 +779,24 @@ export default function AdminClient() {
     } catch (pricingError) {
       setError(pricingError instanceof Error ? pricingError.message : 'Không thể cập nhật bảng giá');
       throw pricingError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function publishInspectionTemplate(items: InspectionTemplateItem[], reason: string) {
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await authedApi<InspectionTemplate>('/v1/admin/inspection-checklist/template', {
+        method: 'POST',
+        body: JSON.stringify({ items, reason: reason.trim() }),
+      });
+      setInspectionTemplate(updated);
+      await loadAudit();
+    } catch (templateError) {
+      setError(templateError instanceof Error ? templateError.message : 'Không thể phát hành checklist đăng kiểm');
+      throw templateError;
     } finally {
       setBusy(false);
     }
@@ -828,6 +951,14 @@ export default function AdminClient() {
         <DataTable columns={vehicleColumns} data={vehicles} loading={initialLoading} onRowClick={setSelectedVehicle} searchPlaceholder='Tìm biển số, hãng xe, chủ xe...' mobileRow={vehicle => <VehicleMobileRow vehicle={vehicle} owner={customerMap.get(vehicle.owner_user_id)} jobs={trips.filter(trip => trip.customer_vehicle_id === vehicle.id).length} />} />
       </Section>;
     }
+    if (activeView === 'inspection') {
+      return <InspectionTemplateView
+        template={inspectionTemplate}
+        canEdit={currentAdmin?.role === 'super_admin'}
+        busy={busy}
+        onPublish={publishInspectionTemplate}
+      />;
+    }
     if (activeView === 'incidents') {
       return <Section title='Sự cố' description='Hàng đợi ưu tiên cao. Công việc có sự cố bị chặn tiến trình cho tới khi Operations xử lý.'>
         {incidents.length ? <div className='mb-4 rounded-2xl border border-danger/10 bg-danger-soft/60 p-4 text-sm leading-6 text-danger'><strong>{incidents.length} sự cố đang mở.</strong> Mở từng công việc để xem loại sự cố, ghi chú và đóng sự cố sau khi đã xử lý thực tế.</div> : null}
@@ -886,11 +1017,11 @@ export default function AdminClient() {
     <main className='min-w-0'><header className='sticky top-0 z-30 border-b border-border/80 bg-surface/80 backdrop-blur-xl'><div className='flex h-16 items-center justify-between px-4 md:px-6'><div className='flex items-center gap-3'><Button size='icon' variant='ghost' className='lg:hidden' onClick={() => setMobileNavOpen(true)} aria-label='Mở menu'><Menu aria-hidden='true' className='size-5' /></Button><div><div className='text-[11px] font-semibold uppercase tracking-[.13em] text-primary'>FlashX Operations</div><h1 className='text-lg font-semibold tracking-tight text-foreground'>{activeLabel}</h1></div></div><div className='flex items-center gap-2'><Badge variant={error ? 'destructive' : busy ? 'secondary' : 'success'}><span className={`mr-1.5 size-1.5 rounded-full ${error ? 'bg-danger' : busy ? 'bg-muted-soft' : 'bg-success'}`} />{error ? 'Cần kiểm tra' : busy ? 'Đang đồng bộ' : 'Đã đồng bộ'}</Badge><Button size='icon' variant='ghost' onClick={() => { void loadCore(); void loadReference(); }} disabled={busy} aria-label='Làm mới'><RefreshCw aria-hidden='true' className={`size-4 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /></Button><Button size='icon' variant='ghost' onClick={() => void logout()} aria-label='Đăng xuất'><LogOut aria-hidden='true' className='size-4' /></Button></div></div></header><div className='mx-auto max-w-[1500px] p-4 md:p-6 lg:p-7'>{error ? <div role='alert' className='mb-4 flex items-start justify-between gap-3 rounded-2xl border border-danger/15 bg-danger-soft p-4 text-sm text-danger'><span>{error}</span><button type='button' className='font-semibold' onClick={() => setError('')}>Đóng</button></div> : null}{renderView()}</div></main>
 
     <DetailPanel open={Boolean(selectedTrip)} title={selectedTrip ? `Công việc ${selectedTrip.id}` : 'Chi tiết công việc'} description={selectedTrip ? `${serviceLabel(selectedTrip.service_type)} · ${tripStatusLabel(selectedTrip.status)}` : undefined} onClose={() => setSelectedTrip(null)}>
-      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} custodyEvidence={custodyEvidence} custodyEvidenceLoading={custodyEvidenceLoading} /> : null}
+      {selectedTrip ? <TripDetail trip={selectedTrip} customer={selectedTripCustomer} driver={selectedTripDriver} vehicle={selectedTripVehicle} payment={tripPayment} paymentLoading={tripPaymentLoading} busy={busy} resolutionNote={incidentResolutionNote} setResolutionNote={setIncidentResolutionNote} onResolve={() => void resolveIncident(selectedTrip)} candidates={driverCandidates} candidatesLoading={driverCandidatesLoading} assignmentReason={assignmentReason} setAssignmentReason={setAssignmentReason} onAssign={candidate => void assignTripDriver(candidate)} custodyEvidence={custodyEvidence} custodyEvidenceLoading={custodyEvidenceLoading} inspectionChecklist={inspectionChecklist} inspectionChecklistLoading={inspectionChecklistLoading} /> : null}
     </DetailPanel>
 
     <DetailPanel open={Boolean(selectedDriver)} title={selectedDriver ? selectedDriver.full_name || selectedDriver.phone || selectedDriver.id : 'Chi tiết tài xế'} description={selectedDriver ? `${serviceLabel(selectedDriver.service_type)} · ${approvalLabel(selectedDriver.approval_status)}` : undefined} onClose={() => { setSelectedDriver(null); setDriverDocs([]); }}>
-      {selectedDriver ? <DriverDetail driver={selectedDriver} documents={driverDocs} loading={driverDocsLoading} busy={busy} reason={driverReason} setReason={setDriverReason} documentNote={documentNote} setDocumentNote={setDocumentNote} onApproval={status => void setDriverApproval(selectedDriver, status)} onReview={(item, status) => void reviewDocument(item, status)} /> : null}
+      {selectedDriver ? <DriverDetail driver={selectedDriver} documents={driverDocs} loading={driverDocsLoading} busy={busy} reason={driverReason} setReason={setDriverReason} documentNote={documentNote} setDocumentNote={setDocumentNote} onApproval={status => void setDriverApproval(selectedDriver, status)} onQualifications={values => updateDriverQualifications(selectedDriver, values)} onReview={(item, status) => void reviewDocument(item, status)} /> : null}
     </DetailPanel>
 
     <DetailPanel open={Boolean(selectedCustomer)} title={selectedCustomer?.full_name || selectedCustomer?.phone || 'Chi tiết khách hàng'} description={selectedCustomer?.phone} onClose={() => setSelectedCustomer(null)}>
@@ -953,11 +1084,13 @@ function Overview({ metrics, initialLoading, incidents, pendingDrivers, trips, c
   </div>;
 }
 
-function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign, custodyEvidence, custodyEvidenceLoading }: {
+function TripDetail({ trip, customer, driver, vehicle, payment, paymentLoading, busy, resolutionNote, setResolutionNote, onResolve, candidates, candidatesLoading, assignmentReason, setAssignmentReason, onAssign, custodyEvidence, custodyEvidenceLoading, inspectionChecklist, inspectionChecklistLoading }: {
   trip: Trip;
   customer?: Customer;
   driver?: Driver;
   vehicle?: Vehicle;
+  payment: Payment | null;
+  paymentLoading: boolean;
   busy: boolean;
   resolutionNote: string;
   setResolutionNote: (value: string) => void;
@@ -969,6 +1102,8 @@ function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, set
   onAssign: (candidate: DriverCandidate) => void;
   custodyEvidence: CustodyEvidenceSnapshot[];
   custodyEvidenceLoading: boolean;
+  inspectionChecklist: InspectionChecklistSnapshot | null;
+  inspectionChecklistLoading: boolean;
 }) {
   const steps = tripSteps(trip);
   const manageable = canManageDriver(trip);
@@ -978,7 +1113,9 @@ function TripDetail({ trip, customer, driver, vehicle, busy, resolutionNote, set
     {trip.incident_open ? <div className='rounded-2xl border border-danger/15 bg-danger-soft p-4'><div className='flex items-start gap-3'><AlertTriangle aria-hidden='true' className='mt-0.5 size-5 text-danger' /><div><div className='font-semibold text-danger'>{trip.incident_type || 'Sự cố đang mở'}</div><p className='mt-1 text-sm leading-6 text-foreground'>{trip.incident_note || 'Tài xế chưa để lại ghi chú chi tiết.'}</p></div></div><label className='mt-4 block text-sm font-semibold text-foreground'>Ghi chú xử lý<Input className='mt-1.5' value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} placeholder='Ví dụ: Đã gọi xác nhận với khách và tài xế' /></label><Button className='mt-3 w-full sm:w-auto' disabled={busy} onClick={onResolve}>Đóng sự cố</Button></div> : null}
     <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều phối tài xế</CardTitle><CardDescription>{manageable ? 'Chỉ hiển thị tài xế đã duyệt, online, đúng năng lực và có vị trí mới gần điểm nhận.' : 'Điều phối thủ công đã khóa ở trạng thái hiện tại để bảo vệ chuỗi bàn giao xe.'}</CardDescription></div><Badge variant={manageable ? 'success' : 'secondary'}>{manageable ? 'Có thể điều phối' : 'Đã khóa'}</Badge></div></CardHeader><CardContent>{manageable ? <div className='grid gap-3'>{trip.driver_id ? <label className='block text-sm font-semibold text-foreground'>Lý do đổi tài xế<Input className='mt-1.5' value={assignmentReason} onChange={event => setAssignmentReason(event.target.value)} placeholder='Bắt buộc khi thay tài xế đang nhận việc' /></label> : null}{candidatesLoading ? Array.from({ length: 3 }, (_, index) => <div key={index} className='h-16 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />) : candidates.length ? candidates.map(candidate => <div key={candidate.driver.id} className='flex flex-col gap-3 rounded-2xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between'><div className='min-w-0'><div className='font-semibold text-foreground'>{candidate.driver.full_name || candidate.driver.phone || candidate.driver.id}</div><div className='mt-1 text-xs text-muted'>{candidate.driver.phone || candidate.driver.id} · {Math.max(0.1, candidate.distance_to_pickup_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km tới điểm nhận</div></div><Button size='sm' disabled={busy || Boolean(trip.driver_id && !assignmentReason.trim())} onClick={() => onAssign(candidate)}>{trip.driver_id ? 'Đổi tài xế' : 'Gán tài xế'}</Button></div>) : <InfoState icon={UserRound} title='Chưa có tài xế phù hợp' text='Không có tài xế online đủ năng lực với vị trí mới trong bán kính điều phối hiện tại.' />}</div> : <div className='rounded-2xl bg-surface-soft p-4 text-sm leading-6 text-muted'>{trip.status === 'vehicle_received' || !['scheduled', 'searching', 'completed', 'cancelled'].includes(trip.status) ? 'Từ lúc tài xế xác nhận đã nhận xe, FlashX không cho phép đổi tài xế theo luồng thông thường. Nếu bắt buộc phải chuyển người giữ xe, Operations phải xử lý theo quy trình sự cố/bàn giao có ghi nhận.' : 'Công việc này không ở trạng thái cho phép điều phối thủ công.'}</div>}</CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Khách hàng' value={customer?.full_name || customer?.phone || trip.rider_id} detail={customer?.phone} icon={UsersRound} /><InfoCard label='Tài xế' value={driver?.full_name || (trip.driver_id ? trip.driver_id : 'Chưa ghép')} detail={driver?.phone} icon={UserRound} /><InfoCard label='Xe khách' value={vehicle?.license_plate || trip.customer_vehicle_id || 'Chưa gắn xe'} detail={vehicle ? [vehicle.brand, vehicle.model].filter(Boolean).join(' ') : undefined} icon={CarFront} /><InfoCard label='Giá hiện tại' value={money(trip.final_fare_minor || trip.estimated_fare_minor)} detail={trip.booking_mode === 'scheduled' ? `Hẹn ${formatDate(trip.scheduled_at)}` : 'Đặt ngay'} icon={BadgeDollarSign} /></div>
+    <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Thanh toán khách hàng</CardTitle><CardDescription>Cash-first cho MVP. Đây là khoản khách thanh toán cho công việc, không phải số tiền chi trả cho tài xế.</CardDescription></div>{payment ? <Badge variant={payment.status === 'paid' ? 'success' : payment.status === 'failed' ? 'destructive' : payment.status === 'cancelled' ? 'secondary' : 'warning'}>{paymentStatusLabel(payment.status)}</Badge> : null}</div></CardHeader><CardContent>{paymentLoading ? <div className='h-20 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' /> : payment ? <div className='grid gap-3 sm:grid-cols-3'><InfoCard label='Phương thức' value={payment.method === 'cash' ? 'Tiền mặt' : payment.method} detail={payment.provider === 'cash' ? 'Thu trực tiếp khi hoàn tất' : payment.provider} icon={BadgeDollarSign} /><InfoCard label='Số tiền đối soát' value={money(payment.amount_minor)} detail={payment.currency || 'VND'} icon={BadgeDollarSign} /><InfoCard label='Trạng thái' value={paymentStatusLabel(payment.status)} detail={`Cập nhật ${formatDate(payment.updated_at)}`} icon={FileCheck2} /></div> : <InfoState icon={BadgeDollarSign} title='Chưa có payment record' text='Backend chưa khởi tạo trạng thái thanh toán cho công việc này.' />}</CardContent></Card>
     <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Bằng chứng nhận & bàn giao xe</CardTitle><CardDescription>Ảnh và xác nhận hai bên tạo ranh giới trách nhiệm với phương tiện của khách.</CardDescription></div><Badge variant={pickupEvidence?.ready && returnEvidence?.ready ? 'success' : 'secondary'}>{pickupEvidence?.ready && returnEvidence?.ready ? 'Đủ 2 đầu' : 'Đang thu thập'}</Badge></div></CardHeader><CardContent>{custodyEvidenceLoading ? <div className='grid gap-3 sm:grid-cols-2'>{Array.from({ length: 2 }, (_, index) => <div key={index} className='h-48 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />)}</div> : <div className='grid gap-3 sm:grid-cols-2'><CustodyEvidenceCard stage='pickup' snapshot={pickupEvidence} /><CustodyEvidenceCard stage='return' snapshot={returnEvidence} /></div>}</CardContent></Card>
+    {trip.service_type === 'vehicle_inspection_assist' ? <Card className='rounded-2xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Checklist giấy tờ đăng kiểm</CardTitle><CardDescription>Snapshot theo version tại thời điểm job được tạo; template mới không thay đổi job cũ.</CardDescription></div>{inspectionChecklist ? <Badge variant={inspectionChecklist.ready ? 'success' : 'warning'}>{inspectionChecklist.ready ? 'Đủ điều kiện nhận xe' : 'Chưa đủ điều kiện'}</Badge> : null}</div></CardHeader><CardContent>{inspectionChecklistLoading ? <div className='h-40 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' /> : inspectionChecklist ? <InspectionChecklistSnapshotView snapshot={inspectionChecklist} /> : <InfoState icon={FileCheck2} title='Chưa có checklist' text='Checklist chưa được khởi tạo hoặc job này được tạo trước khi tính năng checklist được bật.' />}</CardContent></Card> : null}
     <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>FlashX Flowline</CardTitle><CardDescription>Vòng đời thực tế của {serviceLabel(trip.service_type).toLocaleLowerCase('vi')}.</CardDescription></CardHeader><CardContent><div className='grid gap-0'>{steps.map((step, index) => <div key={step.status} className='grid grid-cols-[24px_1fr] gap-3'><div className='relative flex justify-center'>{index < steps.length - 1 ? <span className={`absolute top-5 h-full w-px ${step.done ? 'bg-primary' : 'bg-border'}`} /> : null}<span className={`relative mt-1 size-3 rounded-full border-2 ${step.active ? 'fx-pulse-dot border-primary bg-surface' : step.done ? 'border-primary bg-primary' : 'border-border bg-surface'}`} /></div><div className='pb-5'><div className={`text-sm font-semibold ${step.active ? 'text-primary' : step.done ? 'text-foreground' : 'text-muted'}`}>{step.label}</div>{step.active ? <div className='mt-1 text-xs text-muted'>Trạng thái hiện tại</div> : null}</div></div>)}</div></CardContent></Card>
     <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Điểm nhận' value={coordinate(trip.pickup)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Điểm đến / trả xe' value={coordinate(trip.destination)} detail='Tọa độ backend hiện có' icon={MapPin} /><InfoCard label='Quãng đường dự kiến' value={km(trip.estimated_distance_m)} icon={Gauge} /><InfoCard label='Thời gian dự kiến' value={duration(trip.estimated_duration_s)} icon={Clock3} /></div>
     {trip.service_type === 'vehicle_inspection_assist' ? <InfoCard label='Kết quả đăng kiểm' value={trip.inspection_result || 'Chưa có kết quả'} detail='Kết quả đăng kiểm độc lập với trạng thái hoàn thành dịch vụ.' icon={FileCheck2} /> : null}
@@ -1006,7 +1143,7 @@ function CustodyEvidenceCard({ stage, snapshot }: { stage: 'pickup' | 'return'; 
   </div>;
 }
 
-function DriverDetail({ driver, documents, loading, busy, reason, setReason, documentNote, setDocumentNote, onApproval, onReview }: {
+function DriverDetail({ driver, documents, loading, busy, reason, setReason, documentNote, setDocumentNote, onApproval, onQualifications, onReview }: {
   driver: Driver;
   documents: DriverDocumentWithURL[];
   loading: boolean;
@@ -1016,11 +1153,30 @@ function DriverDetail({ driver, documents, loading, busy, reason, setReason, doc
   documentNote: string;
   setDocumentNote: (value: string) => void;
   onApproval: (status: 'approved' | 'rejected' | 'suspended') => void;
+  onQualifications: (values: { capabilities: string[]; license_class: string; license_expiry: string; can_drive_manual: boolean; reason: string }) => Promise<void>;
   onReview: (item: DriverDocumentWithURL, status: 'approved' | 'rejected') => void;
 }) {
+  const [qualificationCaps, setQualificationCaps] = useState<string[]>(driver.capabilities || []);
+  const [licenseClass, setLicenseClass] = useState(driver.license_class || '');
+  const [licenseExpiry, setLicenseExpiry] = useState(driver.license_expiry ? driver.license_expiry.slice(0, 10) : '');
+  const [canDriveManual, setCanDriveManual] = useState(Boolean(driver.can_drive_manual));
+  const [qualificationReason, setQualificationReason] = useState('');
+  useEffect(() => {
+    setQualificationCaps(driver.capabilities || []);
+    setLicenseClass(driver.license_class || '');
+    setLicenseExpiry(driver.license_expiry ? driver.license_expiry.slice(0, 10) : '');
+    setCanDriveManual(Boolean(driver.can_drive_manual));
+    setQualificationReason('');
+  }, [driver.id, driver.capabilities?.join('|'), driver.license_class, driver.license_expiry, driver.can_drive_manual]);
+  const toggleCapability = (capability: string) => setQualificationCaps(current => current.includes(capability) ? current.filter(item => item !== capability) : [...current, capability]);
+  const saveQualifications = async () => {
+    if (!qualificationReason.trim()) return;
+    await onQualifications({ capabilities: qualificationCaps, license_class: licenseClass.trim(), license_expiry: licenseExpiry, can_drive_manual: canDriveManual, reason: qualificationReason.trim() });
+  };
   return <div className='grid gap-5'>
-    <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Số điện thoại' value={driver.phone || '—'} icon={UserRound} /><InfoCard label='Cung ứng' value={driver.availability_status === 'online' ? 'Online' : driver.availability_status === 'busy' ? 'Đang bận' : 'Offline'} detail={driver.location ? `Vị trí cuối: ${driver.location.lat.toFixed(5)}, ${driver.location.lng.toFixed(5)}` : 'Chưa có vị trí gần nhất'} icon={Wifi} /><InfoCard label='Năng lực' value={(driver.capabilities || []).map(serviceLabel).join(', ') || serviceLabel(driver.service_type)} icon={ShieldCheck} /><InfoCard label='Trạng thái hồ sơ' value={approvalLabel(driver.approval_status)} icon={FileCheck2} /></div>
-    <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>Quyết định tài xế</CardTitle><CardDescription>Duyệt, từ chối hoặc tạm khóa đều được ghi audit.</CardDescription></CardHeader><CardContent><label className='block text-sm font-semibold text-foreground'>Lý do khi từ chối / tạm khóa<Input className='mt-1.5' value={reason} onChange={event => setReason(event.target.value)} placeholder='Nhập lý do vận hành' /></label><div className='mt-3 flex flex-wrap gap-2'>{driver.approval_status !== 'approved' ? <Button disabled={busy} onClick={() => onApproval('approved')}><UserCheck aria-hidden='true' className='size-4' /> Duyệt tài xế</Button> : null}{driver.approval_status !== 'rejected' ? <Button variant='destructive' disabled={busy} onClick={() => onApproval('rejected')}><Ban aria-hidden='true' className='size-4' /> Từ chối</Button> : null}{driver.approval_status === 'approved' ? <Button variant='outline' disabled={busy} onClick={() => onApproval('suspended')}><Ban aria-hidden='true' className='size-4' /> Tạm khóa</Button> : null}</div></CardContent></Card>
+    <div className='grid gap-3 sm:grid-cols-2'><InfoCard label='Số điện thoại' value={driver.phone || '—'} icon={UserRound} /><InfoCard label='Cung ứng' value={driver.availability_status === 'online' ? 'Online' : driver.availability_status === 'busy' ? 'Đang bận' : 'Offline'} detail={driver.location ? `Vị trí cuối: ${driver.location.lat.toFixed(5)}, ${driver.location.lng.toFixed(5)}` : 'Chưa có vị trí gần nhất'} icon={Wifi} /><InfoCard label='Năng lực' value={(driver.capabilities || []).map(serviceLabel).join(', ') || 'Chưa được cấp'} detail={driver.can_drive_manual ? 'Được lái xe số sàn' : 'Chưa được duyệt xe số sàn'} icon={ShieldCheck} /><InfoCard label='Trạng thái hồ sơ' value={approvalLabel(driver.approval_status)} icon={FileCheck2} /></div>
+    <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>Năng lực & giấy phép</CardTitle><CardDescription>Chỉ Operations cấp năng lực điều phối. Tài xế không thể tự mở thêm dịch vụ hay quyền lái số sàn.</CardDescription></CardHeader><CardContent className='grid gap-4'><div className='grid gap-2 sm:grid-cols-3'>{[['designated_driver_car','Lái hộ ô tô'],['designated_driver_bike','Lái hộ xe máy'],['vehicle_inspection_assist','Đăng kiểm hộ']].map(([capability,label]) => <label key={capability} className={`flex min-h-12 items-center gap-2 rounded-xl border px-3 text-sm font-semibold ${qualificationCaps.includes(capability) ? 'border-primary/20 bg-primary-soft/45 text-primary' : 'border-border bg-surface'}`}><input type='checkbox' className='size-4 accent-primary' checked={qualificationCaps.includes(capability)} onChange={() => toggleCapability(capability)} />{label}</label>)}</div><div className='grid gap-3 sm:grid-cols-2'><label className='text-sm font-semibold text-foreground'>Hạng GPLX<Input className='mt-1.5' value={licenseClass} onChange={event => setLicenseClass(event.target.value)} placeholder='Ví dụ: B, C1...' /></label><label className='text-sm font-semibold text-foreground'>Hạn GPLX<Input className='mt-1.5' type='date' value={licenseExpiry} onChange={event => setLicenseExpiry(event.target.value)} /></label></div><label className='flex min-h-12 items-center gap-3 rounded-xl bg-surface-soft px-4 text-sm font-semibold text-foreground'><input type='checkbox' className='size-5 accent-primary' checked={canDriveManual} onChange={event => setCanDriveManual(event.target.checked)} /> Đã xác minh đủ năng lực lái xe số sàn</label><label className='text-sm font-semibold text-foreground'>Lý do cập nhật<Input className='mt-1.5' value={qualificationReason} onChange={event => setQualificationReason(event.target.value)} placeholder='Ví dụ: Đã kiểm tra GPLX và phỏng vấn thực hành' /></label><div className='flex justify-end'><Button disabled={busy || !qualificationReason.trim()} onClick={() => void saveQualifications()}><ShieldCheck aria-hidden='true' className='size-4' /> Lưu năng lực</Button></div></CardContent></Card>
+    <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>Quyết định tài xế</CardTitle><CardDescription>Duyệt, từ chối hoặc tạm khóa đều được ghi audit.</CardDescription></CardHeader><CardContent><label className='block text-sm font-semibold text-foreground'>Lý do khi từ chối / tạm khóa<Input className='mt-1.5' value={reason} onChange={event => setReason(event.target.value)} placeholder='Nhập lý do vận hành' /></label><div className='mt-3 flex flex-wrap gap-2'>{driver.approval_status !== 'approved' ? <Button disabled={busy || !(driver.capabilities?.length)} onClick={() => onApproval('approved')}><UserCheck aria-hidden='true' className='size-4' /> Duyệt tài xế</Button> : null}{driver.approval_status !== 'rejected' ? <Button variant='destructive' disabled={busy} onClick={() => onApproval('rejected')}><Ban aria-hidden='true' className='size-4' /> Từ chối</Button> : null}{driver.approval_status === 'approved' ? <Button variant='outline' disabled={busy} onClick={() => onApproval('suspended')}><Ban aria-hidden='true' className='size-4' /> Tạm khóa</Button> : null}</div></CardContent></Card>
     <Card className='rounded-2xl shadow-none'><CardHeader><CardTitle className='text-base'>Hồ sơ KYC</CardTitle><CardDescription>Mỗi tài liệu có signed URL riêng; file không đi xuyên qua backend.</CardDescription></CardHeader><CardContent className='grid gap-3'>{loading ? Array.from({ length: 3 }, (_, index) => <div key={index} className='h-28 animate-pulse rounded-2xl bg-surface-soft motion-reduce:animate-none' />) : documents.length ? documents.map(item => <div key={item.document.id} className='rounded-2xl border border-border p-4'><div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-start'><div><div className='font-semibold text-foreground'>{documentLabel(item.document.document_type)}</div><div className='mt-1 text-xs text-muted'>{item.document.filename} · {Math.max(1, Math.round(item.document.size_bytes / 1024))} KB</div></div><Badge variant={approvalVariant(item.document.review_status)}>{approvalLabel(item.document.review_status)}</Badge></div>{item.document.review_note ? <p className='mt-3 rounded-xl bg-surface-soft p-3 text-sm text-muted'>Ghi chú: {item.document.review_note}</p> : null}<div className='mt-3 flex flex-wrap gap-2'><a href={item.view.url} target='_blank' rel='noreferrer' className='inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-3 text-sm font-semibold text-foreground hover:bg-surface-soft'>Xem tài liệu <ExternalLink aria-hidden='true' className='size-4' /></a><Button size='sm' variant='outline' disabled={busy} onClick={() => onReview(item, 'rejected')}>Từ chối file</Button><Button size='sm' disabled={busy} onClick={() => onReview(item, 'approved')}>Duyệt file</Button></div></div>) : <InfoState icon={FileCheck2} title='Chưa có tài liệu' text='Tài xế chưa hoàn tất upload hồ sơ KYC.' />}<label className='block text-sm font-semibold text-foreground'>Ghi chú cho lần review tiếp theo<Input className='mt-1.5' value={documentNote} onChange={event => setDocumentNote(event.target.value)} placeholder='Không bắt buộc khi duyệt' /></label></CardContent></Card>
   </div>;
 }
@@ -1070,6 +1226,42 @@ function Section({ title, description, children }: { title: string; description:
 function InfoState({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) { return <div className='rounded-3xl border border-dashed border-border bg-surface-soft/60 p-7 text-center'><div className='mx-auto grid size-12 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 font-semibold text-foreground'>{title}</div><p className='mx-auto mt-1 max-w-md text-sm leading-6 text-muted'>{text}</p></div>; }
 function InfoCard({ label, value, detail, icon: Icon }: { label: string; value: string; detail?: string; icon: LucideIcon }) { return <div className='rounded-2xl border border-border bg-surface p-4'><div className='flex items-start gap-3'><div className='grid size-10 shrink-0 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-4' /></div><div className='min-w-0'><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 break-words font-semibold text-foreground'>{value}</div>{detail ? <div className='mt-1 text-xs leading-5 text-muted'>{detail}</div> : null}</div></div></div>; }
 function MiniMetric({ label, value, tone }: { label: string; value: number; tone?: 'warning' }) { return <div className={`rounded-2xl border p-4 ${tone === 'warning' && value ? 'border-warning/15 bg-warning-soft/40' : 'border-border bg-surface-soft/45'}`}><div className='text-xs font-semibold text-muted'>{label}</div><div className='mt-1 text-2xl font-bold tracking-tight text-foreground'>{value}</div></div>; }
+function InspectionChecklistSnapshotView({ snapshot }: { snapshot: InspectionChecklistSnapshot }) {
+  return <div className='grid gap-3'>
+    <div className='grid gap-3 sm:grid-cols-3'><MiniMetric label='Template version' value={snapshot.checklist.template_version} /><MiniMetric label='Khách đã khai báo' value={snapshot.customer_complete ? 1 : 0} /><MiniMetric label='Tài xế đã đối chiếu' value={snapshot.driver_complete ? 1 : 0} /></div>
+    <div className='grid gap-2'>{snapshot.items.map(item => <div key={item.id} className='rounded-2xl border border-border bg-surface p-4'><div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-start'><div><div className='font-semibold text-foreground'>{item.label}{item.required ? ' · Bắt buộc' : ''}</div><div className='mt-1 font-mono text-[10px] text-muted'>{item.key}</div></div><Badge variant={item.required && (item.customer_status !== 'present' || item.driver_status !== 'received') ? 'warning' : 'secondary'}>{item.required ? 'Required' : 'Optional'}</Badge></div><div className='mt-3 grid gap-2 sm:grid-cols-2'><div className='rounded-xl bg-surface-soft p-3'><div className='text-[10px] font-semibold uppercase tracking-[.08em] text-muted'>Khách khai báo</div><div className='mt-1 text-sm font-semibold text-foreground'>{inspectionCustomerStatus(item.customer_status)}</div>{item.customer_note ? <p className='mt-1 text-xs leading-5 text-muted'>{item.customer_note}</p> : null}</div><div className='rounded-xl bg-surface-soft p-3'><div className='text-[10px] font-semibold uppercase tracking-[.08em] text-muted'>Tài xế đối chiếu</div><div className='mt-1 text-sm font-semibold text-foreground'>{inspectionDriverStatus(item.driver_status)}</div>{item.driver_note ? <p className='mt-1 text-xs leading-5 text-muted'>{item.driver_note}</p> : null}</div></div></div>)}</div>
+  </div>;
+}
+
+function InspectionTemplateView({ template, canEdit, busy, onPublish }: { template: InspectionTemplate | null; canEdit: boolean; busy: boolean; onPublish: (items: InspectionTemplateItem[], reason: string) => Promise<void> }) {
+  const [items, setItems] = useState<InspectionTemplateItem[]>([]);
+  const [reason, setReason] = useState('');
+  const [localError, setLocalError] = useState('');
+  useEffect(() => {
+    setItems((template?.items || []).slice().sort((a, b) => a.sort_order - b.sort_order).map(item => ({ ...item })));
+    setReason('');
+    setLocalError('');
+  }, [template?.id]);
+  const updateItem = (index: number, patch: Partial<InspectionTemplateItem>) => setItems(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const move = (index: number, direction: -1 | 1) => setItems(current => { const target = index + direction; if (target < 0 || target >= current.length) return current; const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next; });
+  const publish = async () => {
+    const normalized = items.map((item, index) => ({ ...item, key: item.key.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_'), label: item.label.trim(), sort_order: (index + 1) * 10 }));
+    if (!reason.trim() || normalized.length === 0 || normalized.some(item => !item.key || !item.label) || new Set(normalized.map(item => item.key)).size !== normalized.length) {
+      setLocalError('Cần ít nhất một mục hợp lệ, key không trùng và lý do phát hành version mới.');
+      return;
+    }
+    setLocalError('');
+    try { await onPublish(normalized, reason); } catch {}
+  };
+  return <Section title='Checklist đăng kiểm' description='Template giấy tờ dùng cho job đăng kiểm mới. Mỗi lần phát hành tạo version mới; job đã tồn tại giữ nguyên snapshot cũ.'>
+    {!template ? <InfoState icon={FileCheck2} title='Chưa có template' text='Backend chưa trả về checklist đăng kiểm đang active.' /> : <div className='grid gap-5'><div className='flex flex-col justify-between gap-3 rounded-3xl border border-primary/10 bg-primary-soft/45 p-5 sm:flex-row sm:items-center'><div><div className='text-sm font-semibold text-primary'>Template active · Version {template.version}</div><div className='mt-1 text-xs text-muted'>Phát hành {formatDate(template.created_at)}{template.created_by ? ` · ${template.created_by}` : ''}</div></div><Badge variant='success'>Đang áp dụng cho job mới</Badge></div><div className='grid gap-3'>{items.map((item, index) => canEdit ? <div key={`${item.key}:${index}`} className='rounded-2xl border border-border bg-surface p-4'><div className='grid gap-3 lg:grid-cols-[1fr_1.8fr_auto]'><label className='text-xs font-semibold text-muted'>Key<Input className='mt-1.5' value={item.key} onChange={event => updateItem(index, { key: event.target.value })} /></label><label className='text-xs font-semibold text-muted'>Tên giấy tờ<Input className='mt-1.5' value={item.label} onChange={event => updateItem(index, { label: event.target.value })} /></label><label className='flex min-h-11 items-center gap-2 self-end rounded-xl bg-surface-soft px-3 text-sm font-semibold text-foreground'><input type='checkbox' className='size-4 accent-primary' checked={item.required} onChange={event => updateItem(index, { required: event.target.checked })} /> Bắt buộc</label></div><div className='mt-3 flex flex-wrap gap-2'><Button size='sm' variant='outline' disabled={index === 0 || busy} onClick={() => move(index, -1)}>Lên</Button><Button size='sm' variant='outline' disabled={index === items.length - 1 || busy} onClick={() => move(index, 1)}>Xuống</Button><Button size='sm' variant='destructive' disabled={items.length <= 1 || busy} onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))}>Xóa mục</Button></div></div> : <div key={item.key} className='flex items-start justify-between gap-3 rounded-2xl border border-border bg-surface p-4'><div><div className='font-semibold text-foreground'>{item.label}</div><div className='mt-1 font-mono text-[10px] text-muted'>{item.key}</div></div><Badge variant={item.required ? 'warning' : 'secondary'}>{item.required ? 'Bắt buộc' : 'Tùy chọn'}</Badge></div>)}</div>{canEdit ? <div className='rounded-3xl border border-border bg-surface-soft/45 p-4'><Button variant='outline' disabled={busy} onClick={() => setItems(current => [...current, { key: `document_${current.length + 1}`, label: 'Giấy tờ mới', required: false, sort_order: (current.length + 1) * 10 }])}>Thêm mục giấy tờ</Button><label className='mt-4 block text-sm font-semibold text-foreground'>Lý do phát hành version mới<Input className='mt-1.5' value={reason} onChange={event => setReason(event.target.value)} placeholder='Ví dụ: Bổ sung yêu cầu hồ sơ theo quy trình pilot mới' /></label>{localError ? <p className='mt-2 text-sm text-danger'>{localError}</p> : null}<div className='mt-4 flex justify-end'><Button disabled={busy || !reason.trim()} onClick={() => void publish()}><FileCheck2 aria-hidden='true' className='size-4' /> Phát hành version mới</Button></div></div> : <div className='rounded-2xl bg-surface-soft p-4 text-sm leading-6 text-muted'>Tài khoản Operations chỉ xem. Chỉ Super Admin được phát hành checklist version mới.</div>}</div>}
+  </Section>;
+}
+
+function inspectionCustomerStatus(status: string) { return ({ pending: 'Chưa khai báo', present: 'Sẽ bàn giao', not_available: 'Không có', not_applicable: 'Không áp dụng' } as Record<string, string>)[status] || status; }
+function inspectionDriverStatus(status: string) { return ({ pending: 'Chưa đối chiếu', received: 'Đã nhận', missing: 'Thiếu', not_applicable: 'Không áp dụng' } as Record<string, string>)[status] || status; }
+function paymentStatusLabel(status: string) { return ({ pending: 'Chờ thu', paid: 'Đã thu', failed: 'Lỗi thanh toán', cancelled: 'Đã hủy' } as Record<string, string>)[status] || status; }
+
 function AdminAccountsView({ currentAdmin, accounts, busy, onCreate, onUpdate }: { currentAdmin: AdminUser; accounts: AdminUser[]; busy: boolean; onCreate: (values: AdminAccountForm) => Promise<void>; onUpdate: (account: AdminUser, values: { display_name: string; role: AdminUser['role']; status: AdminUser['status']; reason: string }) => Promise<void> }) {
   const form = useForm<AdminAccountForm>({ resolver: zodResolver(adminAccountSchema), defaultValues: { phone: '', display_name: '', role: 'operations' } });
   const submit = form.handleSubmit(async values => { try { await onCreate(values); form.reset({ phone: '', display_name: '', role: 'operations' }); } catch {} });
@@ -1114,11 +1306,12 @@ function OperationalSettingsEditor({ settings, busy, onSave }: { settings: Opera
       vehicle_inspection_assist_enabled: settings.vehicle_inspection_assist_enabled,
       dispatch_max_distance_m: settings.dispatch_max_distance_m,
       driver_location_max_age_seconds: settings.driver_location_max_age_seconds,
+      pickup_grace_period_seconds: settings.pickup_grace_period_seconds,
       reason: '',
     },
   });
   const values = form.watch();
-  const settingsChanged = values.designated_driver_car_enabled !== settings.designated_driver_car_enabled || values.designated_driver_bike_enabled !== settings.designated_driver_bike_enabled || values.vehicle_inspection_assist_enabled !== settings.vehicle_inspection_assist_enabled || Number(values.dispatch_max_distance_m) !== settings.dispatch_max_distance_m || Number(values.driver_location_max_age_seconds) !== settings.driver_location_max_age_seconds;
+  const settingsChanged = values.designated_driver_car_enabled !== settings.designated_driver_car_enabled || values.designated_driver_bike_enabled !== settings.designated_driver_bike_enabled || values.vehicle_inspection_assist_enabled !== settings.vehicle_inspection_assist_enabled || Number(values.dispatch_max_distance_m) !== settings.dispatch_max_distance_m || Number(values.driver_location_max_age_seconds) !== settings.driver_location_max_age_seconds || Number(values.pickup_grace_period_seconds) !== settings.pickup_grace_period_seconds;
   const submit = form.handleSubmit(async data => { if (!settingsChanged) return; try { await onSave(data); } catch {} });
   const services = [
     { key: 'designated_driver_car_enabled' as const, label: 'Lái hộ ô tô', detail: 'Ngừng nhận báo giá và booking ô tô mới khi tắt.' },
@@ -1127,7 +1320,7 @@ function OperationalSettingsEditor({ settings, busy, onSave }: { settings: Opera
   ];
   return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-start'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Áp dụng ngay ở backend. Booking đang tồn tại không bị hủy khi tắt dịch vụ.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><form className='grid gap-5' onSubmit={submit}>
     <div className='grid gap-3 lg:grid-cols-3'>{services.map(service => <label key={service.key} className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border p-4 transition-colors ${values[service.key] ? 'border-primary/20 bg-primary-soft/45' : 'border-border bg-surface-soft/50'}`}><div><div className='font-semibold text-foreground'>{service.label}</div><p className='mt-1 text-xs leading-5 text-muted'>{service.detail}</p></div><input type='checkbox' className='mt-0.5 size-5 shrink-0 accent-primary' {...form.register(service.key)} /></label>)}</div>
-    <div className='grid gap-4 md:grid-cols-2'><label className='text-sm font-semibold text-foreground'>Bán kính điều phối<Input className='mt-1.5' type='number' min={1000} max={30000} step={500} inputMode='numeric' {...form.register('dispatch_max_distance_m', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{((Number(values.dispatch_max_distance_m) || 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km quanh điểm nhận</span><span className='text-xs font-normal text-danger'>{form.formState.errors.dispatch_max_distance_m?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Độ mới vị trí tài xế<Input className='mt-1.5' type='number' min={5} max={120} step={5} inputMode='numeric' {...form.register('driver_location_max_age_seconds', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>Chỉ coi vị trí trong {Number(values.driver_location_max_age_seconds) || 0} giây gần nhất là hợp lệ</span><span className='text-xs font-normal text-danger'>{form.formState.errors.driver_location_max_age_seconds?.message || ''}</span></label></div>
+    <div className='grid gap-4 md:grid-cols-3'><label className='text-sm font-semibold text-foreground'>Bán kính điều phối<Input className='mt-1.5' type='number' min={1000} max={30000} step={500} inputMode='numeric' {...form.register('dispatch_max_distance_m', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{((Number(values.dispatch_max_distance_m) || 0) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km quanh điểm nhận</span><span className='text-xs font-normal text-danger'>{form.formState.errors.dispatch_max_distance_m?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Độ mới vị trí tài xế<Input className='mt-1.5' type='number' min={5} max={120} step={5} inputMode='numeric' {...form.register('driver_location_max_age_seconds', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>Chỉ coi vị trí trong {Number(values.driver_location_max_age_seconds) || 0} giây gần nhất là hợp lệ</span><span className='text-xs font-normal text-danger'>{form.formState.errors.driver_location_max_age_seconds?.message || ''}</span></label><label className='text-sm font-semibold text-foreground'>Chờ miễn phí tại điểm nhận<Input className='mt-1.5' type='number' min={60} max={3600} step={60} inputMode='numeric' {...form.register('pickup_grace_period_seconds', { valueAsNumber: true })} /><span className='mt-1 block text-xs font-normal text-muted'>{Math.round((Number(values.pickup_grace_period_seconds) || 0) / 60)} phút trước khi mở no-show</span><span className='text-xs font-normal text-danger'>{form.formState.errors.pickup_grace_period_seconds?.message || ''}</span></label></div>
     <label className='text-sm font-semibold text-foreground'>Lý do thay đổi<Input className='mt-1.5' {...form.register('reason')} placeholder='Ví dụ: Mở rộng bán kính pilot Sầm Sơn ca tối' /><span className='mt-1 block text-xs font-normal text-danger'>{form.formState.errors.reason?.message || ''}</span></label>
     <div className='flex flex-col justify-between gap-3 rounded-2xl bg-surface-soft p-4 sm:flex-row sm:items-center'><div className='text-xs leading-5 text-muted'>Cập nhật gần nhất {formatDate(settings.updated_at)}{settings.updated_by ? ` · ${settings.updated_by}` : ''}. Secret và hạ tầng không thể chỉnh ở đây.</div><Button type='submit' disabled={busy || form.formState.isSubmitting || !settingsChanged || !values.reason.trim()}><Settings aria-hidden='true' className='size-4' />{form.formState.isSubmitting ? 'Đang áp dụng…' : 'Áp dụng cấu hình'}</Button></div>
   </form></CardContent></Card>;
@@ -1138,7 +1331,7 @@ function OperationalSettingsSummary({ settings }: { settings: OperationalSetting
     ['Lái hộ xe máy', settings.designated_driver_bike_enabled],
     ['Đăng kiểm hộ', settings.vehicle_inspection_assist_enabled],
   ] as const;
-  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Tài khoản Operations chỉ có quyền xem cấu hình đang áp dụng.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><div className='grid gap-3 md:grid-cols-3'>{serviceStates.map(([label, enabled]) => <div key={label} className='rounded-2xl border border-border p-4'><div className='flex items-center justify-between gap-3'><span className='font-semibold text-foreground'>{label}</span><Badge variant={enabled ? 'success' : 'secondary'}>{enabled ? 'Đang mở' : 'Tạm dừng'}</Badge></div></div>)}</div><div className='mt-4 grid gap-3 sm:grid-cols-2'><InfoCard label='Bán kính điều phối' value={`${(settings.dispatch_max_distance_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km`} icon={MapPin} /><InfoCard label='Độ mới vị trí' value={`${settings.driver_location_max_age_seconds} giây`} icon={Clock3} /></div></CardContent></Card>;
+  return <Card className='rounded-3xl shadow-none'><CardHeader><div className='flex items-start justify-between gap-3'><div><CardTitle className='text-base'>Điều khiển vận hành</CardTitle><CardDescription>Tài khoản Operations chỉ có quyền xem cấu hình đang áp dụng.</CardDescription></div><Badge variant='outline'>Version {settings.version}</Badge></div></CardHeader><CardContent><div className='grid gap-3 md:grid-cols-3'>{serviceStates.map(([label, enabled]) => <div key={label} className='rounded-2xl border border-border p-4'><div className='flex items-center justify-between gap-3'><span className='font-semibold text-foreground'>{label}</span><Badge variant={enabled ? 'success' : 'secondary'}>{enabled ? 'Đang mở' : 'Tạm dừng'}</Badge></div></div>)}</div><div className='mt-4 grid gap-3 sm:grid-cols-3'><InfoCard label='Bán kính điều phối' value={`${(settings.dispatch_max_distance_m / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km`} icon={MapPin} /><InfoCard label='Độ mới vị trí' value={`${settings.driver_location_max_age_seconds} giây`} icon={Clock3} /><InfoCard label='Chờ miễn phí tại điểm nhận' value={`${Math.round(settings.pickup_grace_period_seconds / 60)} phút`} icon={Clock3} /></div></CardContent></Card>;
 }
 function SystemCard({ icon: Icon, title, value, detail }: { icon: LucideIcon; title: string; value: string; detail: string }) { return <div className='rounded-2xl border border-border bg-surface p-5'><div className='grid size-10 place-items-center rounded-2xl bg-primary-soft text-primary'><Icon aria-hidden='true' className='size-5' /></div><div className='mt-4 text-sm font-semibold text-muted'>{title}</div><div className='mt-1 text-xl font-bold tracking-tight text-foreground'>{value}</div><p className='mt-2 text-sm leading-6 text-muted'>{detail}</p></div>; }
 
@@ -1161,11 +1354,13 @@ function tripSteps(trip: Trip) {
 function auditActionLabel(action: string) {
   return ({
     'driver.approval_changed': 'Đổi trạng thái tài xế',
+    'driver.qualifications_updated': 'Cập nhật năng lực tài xế',
     'driver.document_reviewed': 'Duyệt tài liệu KYC',
     'trip.incident_resolved': 'Đóng sự cố công việc',
     'trip.driver_assigned': 'Gán tài xế thủ công',
     'trip.driver_reassigned': 'Đổi tài xế thủ công',
     'pricing.rule_updated': 'Cập nhật bảng giá',
+    'inspection.checklist_template_updated': 'Phát hành checklist đăng kiểm',
     'admin.account_created': 'Thêm quản trị viên',
     'admin.account_updated': 'Cập nhật quản trị viên',
     'system.operational_settings_updated': 'Cập nhật cấu hình vận hành',

@@ -2,6 +2,7 @@ package ride
 
 import (
 	"sync"
+	"time"
 
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/trips"
@@ -43,6 +44,19 @@ func (s *Service) MarkArriving(id, driverID string) (trips.Trip, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.trips.MarkArriving(id, driverID)
+}
+
+func (s *Service) CancelCustomerNoShow(id, driverID string, grace time.Duration) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	trip, err := s.trips.CancelCustomerNoShow(id, driverID, grace)
+	if err != nil {
+		return trips.Trip{}, err
+	}
+	if _, err := s.drivers.MarkAvailable(driverID); err != nil {
+		return trip, err
+	}
+	return trip, nil
 }
 func (s *Service) MarkArrived(id, driverID string) (trips.Trip, error) {
 	s.mu.Lock()
@@ -93,6 +107,12 @@ func (s *Service) ReportIncident(id, driverID, incidentType, note string) (trips
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.trips.ReportIncident(id, driverID, incidentType, note)
+}
+
+func (s *Service) ReportIncidentByRider(id, riderID, incidentType, note string) (trips.Trip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trips.ReportIncidentForRider(id, riderID, incidentType, note)
 }
 
 func (s *Service) Complete(id, driverID string, finalFareMinor int64) (trips.Trip, error) {

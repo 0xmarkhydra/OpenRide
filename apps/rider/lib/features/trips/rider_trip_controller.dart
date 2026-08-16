@@ -18,12 +18,20 @@ class RiderTripController extends ChangeNotifier {
 
   Map<String, dynamic>? estimate;
   Map<String, dynamic>? activeTrip;
+  Map<String, dynamic>? activePayment;
   List<Map<String, dynamic>> custodyEvidence = const [];
+  Map<String, dynamic>? inspectionChecklist;
   List<Map<String, dynamic>> history = const [];
   List<Map<String, dynamic>> vehicles = const [];
   String? selectedVehicleID;
   Map<String, dynamic>? driverLocation;
-  final Set<String> ratedTripIds = <String>{};
+  Map<String, dynamic>? liveRoutes;
+  List<Map<String, dynamic>> placeResults = const [];
+  bool placesLoading = false;
+  bool placeSearchUnavailable = false;
+  DateTime? _lastRouteRefreshAt;
+  final Map<String, Map<String, dynamic>> ratingsByTripID =
+      <String, Map<String, dynamic>>{};
 
   // Thanh Hoa city fallback keeps the demo deterministic when location access
   // is denied; a real device GPS location replaces this immediately.
@@ -118,6 +126,49 @@ class RiderTripController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void selectDestination(Map<String, double>? destination) {
+    selectedDestination = destination == null
+        ? null
+        : {'lat': destination['lat']!, 'lng': destination['lng']!};
+    estimate = null;
+    notifyListeners();
+  }
+
+  Future<void> searchPlaces(String query) async {
+    final normalized = query.trim();
+    if (normalized.runes.length < 3) {
+      placeResults = const [];
+      placeSearchUnavailable = false;
+      notifyListeners();
+      return;
+    }
+    placesLoading = true;
+    placeSearchUnavailable = false;
+    notifyListeners();
+    try {
+      final params = Uri(queryParameters: {
+        'q': normalized,
+        'lat': pickup['lat']!.toString(),
+        'lng': pickup['lng']!.toString(),
+      }).query;
+      final response = await api.get('/v1/places/search?$params');
+      final list = response['data'] as List<dynamic>? ?? const [];
+      placeResults = list.cast<Map<String, dynamic>>();
+    } catch (_) {
+      placeResults = const [];
+      placeSearchUnavailable = true;
+    } finally {
+      placesLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void clearPlaceSearch() {
+    placeResults = const [];
+    placeSearchUnavailable = false;
+    notifyListeners();
+  }
+
   Future<bool> createVehicle({
     required String type,
     required String licensePlate,
@@ -152,9 +203,14 @@ class RiderTripController extends ChangeNotifier {
           .toList();
       activeTrip = candidates.isNotEmpty ? candidates.first : null;
       if (activeTrip != null) {
+        await loadPayment();
         await loadCustodyEvidence();
+        await loadInspectionChecklist();
+        await loadActiveRoutes(force: true);
       } else {
+        activePayment = null;
         custodyEvidence = const [];
+        inspectionChecklist = null;
       }
       notifyListeners();
     } catch (_) {}
@@ -214,14 +270,57 @@ class RiderTripController extends ChangeNotifier {
     });
   }
 
+  Future<Map<String, dynamic>?> loadTripRating(String tripID) async {
+    final cached = ratingsByTripID[tripID];
+    if (cached != null) return cached;
+    try {
+      final response = await api.get('/v1/trips/$tripID/rating');
+      final rating = response['data'] as Map<String, dynamic>?;
+      if (rating != null) ratingsByTripID[tripID] = rating;
+      return rating;
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<bool> rateTrip(String tripID, int stars, String comment) async {
     return _guard(() async {
-      await api.post('/v1/trips/$tripID/rating', body: {
+      final response = await api.post('/v1/trips/$tripID/rating', body: {
         'stars': stars,
         'comment': comment,
       });
-      ratedTripIds.add(tripID);
+      final rating = response['data'] as Map<String, dynamic>?;
+      if (rating != null) ratingsByTripID[tripID] = rating;
     });
+  }
+
+  Future<bool> reportIncident(String incidentType, String note) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    return _guard(() async {
+      final response = await api.post('/v1/trips/$id/incident', body: {
+        'type': incidentType,
+        'note': note,
+      });
+      activeTrip = response['data'] as Map<String, dynamic>?;
+    });
+  }
+
+  Future<void> loadPayment() async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null || id.isEmpty) {
+      activePayment = null;
+      notifyListeners();
+      return;
+    }
+    try {
+      final response = await api.get('/v1/trips/$id/payment');
+      activePayment = response['data'] as Map<String, dynamic>?;
+      notifyListeners();
+    } catch (_) {
+      // Payment visibility is secondary to the trip lifecycle; keep the trip usable.
+    }
   }
 
   Future<void> loadCustodyEvidence() async {
@@ -258,6 +357,62 @@ class RiderTripController extends ChangeNotifier {
     });
   }
 
+  Future<void> loadActiveRoutes({bool force = false}) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null || id.isEmpty || !hasActiveTrip) {
+      liveRoutes = null;
+      notifyListeners();
+      return;
+    }
+    final now = DateTime.now();
+    if (!force &&
+        _lastRouteRefreshAt != null &&
+        now.difference(_lastRouteRefreshAt!) < const Duration(seconds: 15)) {
+      return;
+    }
+    _lastRouteRefreshAt = now;
+    try {
+      final response = await api.get('/v1/trips/$id/routes');
+      liveRoutes = response['data'] as Map<String, dynamic>?;
+      notifyListeners();
+    } catch (_) {
+      // Route refresh is secondary to trip state; keep the last good snapshot.
+    }
+  }
+
+  Future<void> loadInspectionChecklist() async {
+    final trip = activeTrip;
+    final id = trip?['id']?.toString();
+    if (id == null || trip?['service_type'] != 'vehicle_inspection_assist') {
+      inspectionChecklist = null;
+      notifyListeners();
+      return;
+    }
+    try {
+      final response = await api.get('/v1/trips/$id/inspection-checklist');
+      inspectionChecklist = response['data'] as Map<String, dynamic>?;
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.statusCode == 404 || e.statusCode == 422) {
+        inspectionChecklist = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> updateInspectionChecklistItem(
+      String itemKey, String status, String note) async {
+    final id = activeTrip?['id']?.toString();
+    if (id == null) return false;
+    return _guard(() async {
+      final response = await api.patch(
+        '/v1/trips/$id/inspection-checklist/$itemKey',
+        body: {'status': status, 'note': note},
+      );
+      inspectionChecklist = response['data'] as Map<String, dynamic>?;
+    });
+  }
+
   Future<void> refreshActive() async {
     final id = activeTrip?['id']?.toString();
     if (id == null) return;
@@ -265,9 +420,14 @@ class RiderTripController extends ChangeNotifier {
       final response = await api.get('/v1/trips/$id');
       activeTrip = response['data'] as Map<String, dynamic>;
       if (hasActiveTrip) {
+        await loadPayment();
         await loadCustodyEvidence();
+        await loadInspectionChecklist();
+        await loadActiveRoutes(force: true);
       } else {
+        activePayment = null;
         custodyEvidence = const [];
+        inspectionChecklist = null;
       }
       notifyListeners();
     } catch (_) {}
@@ -279,6 +439,7 @@ class RiderTripController extends ChangeNotifier {
       final data = event['data'];
       if (data is Map<String, dynamic>) driverLocation = data;
       notifyListeners();
+      unawaited(loadActiveRoutes());
       return;
     }
     if (type == 'trip.custody_evidence_updated') {
@@ -287,6 +448,14 @@ class RiderTripController extends ChangeNotifier {
       final tripID = evidence is Map ? evidence['trip_id']?.toString() : null;
       if (tripID != null && tripID == activeTrip?['id']?.toString()) {
         unawaited(loadCustodyEvidence());
+      }
+      return;
+    }
+    if (type == 'trip.inspection_checklist_updated') {
+      final data = event['data'];
+      final tripID = data is Map ? data['trip_id']?.toString() : null;
+      if (tripID != null && tripID == activeTrip?['id']?.toString()) {
+        unawaited(loadInspectionChecklist());
       }
       return;
     }

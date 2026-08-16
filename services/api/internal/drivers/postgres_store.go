@@ -25,10 +25,12 @@ func (s *PostgresStore) Create(driver Driver) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO drivers (
 			id, phone, full_name, approval_status, availability_status,
-			service_type, capabilities, last_idle_at, created_at, updated_at, version
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			service_type, capabilities, license_class, license_expiry, can_drive_manual,
+			last_idle_at, created_at, updated_at, version
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 	`, driver.ID, phone, driver.FullName, string(driver.Approval), string(driver.Availability),
-		driver.ServiceType, driver.Capabilities, driver.LastIdleAt, driver.CreatedAt, driver.UpdatedAt, driver.Version)
+		driver.ServiceType, driver.Capabilities, driver.LicenseClass, driver.LicenseExpiry, driver.CanDriveManual,
+		driver.LastIdleAt, driver.CreatedAt, driver.UpdatedAt, driver.Version)
 	return err
 }
 
@@ -48,10 +50,12 @@ func (s *PostgresStore) Save(driver Driver) error {
 	defer cancel()
 	command, err := s.pool.Exec(ctx, `
 		UPDATE drivers SET phone=$2, full_name=$3, approval_status=$4, availability_status=$5,
-			service_type=$6, capabilities=$7, last_idle_at=$8, updated_at=$9, version=version+1
-		WHERE id=$1 AND version=$10
+			service_type=$6, capabilities=$7, license_class=$8, license_expiry=$9, can_drive_manual=$10,
+			last_idle_at=$11, updated_at=$12, version=version+1
+		WHERE id=$1 AND version=$13
 	`, driver.ID, driver.Phone, driver.FullName, string(driver.Approval), string(driver.Availability),
-		driver.ServiceType, driver.Capabilities, driver.LastIdleAt, driver.UpdatedAt, driver.Version)
+		driver.ServiceType, driver.Capabilities, driver.LicenseClass, driver.LicenseExpiry, driver.CanDriveManual,
+		driver.LastIdleAt, driver.UpdatedAt, driver.Version)
 	if err != nil {
 		return err
 	}
@@ -74,7 +78,8 @@ func (s *PostgresStore) TryMarkBusy(id string) (Driver, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE drivers SET availability_status='busy', updated_at=NOW(), version=version+1
 		WHERE id=$1 AND approval_status='approved' AND availability_status='online'
-		RETURNING id::text, COALESCE(phone,''), full_name, service_type, capabilities, approval_status,
+		RETURNING id::text, COALESCE(phone,''), full_name, service_type, capabilities,
+			license_class, license_expiry, can_drive_manual, approval_status,
 			availability_status, last_idle_at, created_at, updated_at, version
 	`, id)
 	driver, err := scanDriver(row)
@@ -106,13 +111,15 @@ func (s *PostgresStore) List() ([]Driver, error) {
 	return result, rows.Err()
 }
 
-const driverSelect = `SELECT id::text, COALESCE(phone,''), full_name, service_type, capabilities, approval_status,
+const driverSelect = `SELECT id::text, COALESCE(phone,''), full_name, service_type, capabilities,
+	license_class, license_expiry, can_drive_manual, approval_status,
 	availability_status, last_idle_at, created_at, updated_at, version FROM drivers`
 
 func scanDriver(row interface{ Scan(dest ...any) error }) (Driver, error) {
 	var driver Driver
 	var approval, availability string
 	if err := row.Scan(&driver.ID, &driver.Phone, &driver.FullName, &driver.ServiceType, &driver.Capabilities,
+		&driver.LicenseClass, &driver.LicenseExpiry, &driver.CanDriveManual,
 		&approval, &availability, &driver.LastIdleAt, &driver.CreatedAt, &driver.UpdatedAt, &driver.Version); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Driver{}, ErrNotFound

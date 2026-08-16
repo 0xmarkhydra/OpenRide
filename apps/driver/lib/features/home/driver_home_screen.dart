@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/config/app_config.dart';
 import '../../core/theme/flashx_theme.dart';
 import '../auth/auth_controller.dart';
+import '../documents/driver_document_client.dart';
 import '../trips/driver_trip_controller.dart';
 import 'driver_map_view.dart';
 
@@ -20,16 +21,28 @@ class DriverHomeScreen extends StatefulWidget {
 
 class _DriverHomeScreenState extends State<DriverHomeScreen> {
   late final DriverTripController trips;
+  late final DriverDocumentClient documents;
   Timer? _ticker;
   var _index = 0;
+  List<Map<String, dynamic>> _documents = const [];
+  bool _documentsBusy = false;
+  String? _documentsError;
 
   @override
   void initState() {
     super.initState();
     trips = DriverTripController(auth: widget.auth)..addListener(_refresh);
+    documents = DriverDocumentClient(api: widget.auth.api);
     trips.initialize();
+    unawaited(_loadDocuments());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && trips.currentOffer != null) setState(() {});
+      final status = trips.activeTrip?['status']?.toString() ?? '';
+      if (mounted &&
+          (trips.currentOffer != null ||
+              status == 'arrived' ||
+              status == 'arrived_for_pickup')) {
+        setState(() {});
+      }
     });
   }
 
@@ -42,6 +55,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     _ticker?.cancel();
     trips.removeListener(_refresh);
     trips.dispose();
+    documents.close();
     super.dispose();
   }
 
@@ -86,6 +100,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             online: trips.online,
             position: trips.lastPosition,
             trip: mapTrip,
+            liveRoutes: trips.liveRoutes,
           ),
         ),
         Positioned(
@@ -298,8 +313,23 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         custodyStage == null || trips.driverConfirmedCustody(custodyStage);
     final custodyReady =
         custodyStage == null || custodySnapshot?['ready'] == true;
+    final inspectionPickupReady = service != 'vehicle_inspection_assist' ||
+        custodyStage != 'pickup' ||
+        trips.inspectionChecklist?['ready'] == true;
     final allowDemoBypass =
         AppConfig.demoMode || trips.custodyStorageUnavailable;
+    final noShowRemaining = _remainingNoShowSeconds(trip);
+    final payment = trips.activePayment;
+    final paymentStatus = switch (payment?['status']?.toString()) {
+      'paid' => 'Đã thu từ khách',
+      'cancelled' => 'Đã hủy',
+      'failed' => 'Có lỗi',
+      _ => 'Chờ thu khi hoàn tất',
+    };
+    final paymentAmount = payment?['amount_minor'] ??
+        trip['final_fare_minor'] ??
+        trip['estimated_fare_minor'] ??
+        0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -325,6 +355,17 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         const SizedBox(height: 14),
         _JobProgress(
             status: status, inspection: service == 'vehicle_inspection_assist'),
+        if (trips.liveRoutes != null) ...[
+          const SizedBox(height: 12),
+          _DriverLiveRouteCard(snapshot: trips.liveRoutes!),
+        ],
+        const SizedBox(height: 12),
+        _InfoCard(
+          icon: Icons.payments_outlined,
+          title: 'Khách thanh toán ${_money(paymentAmount)}',
+          text:
+              'Tiền mặt · $paymentStatus. Đây là giá trị khách thanh toán, không phải thu nhập tài xế.',
+        ),
         const SizedBox(height: 14),
         if (vehicle != null)
           _InfoCard(
@@ -345,6 +386,30 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             warning: true,
           ),
         ],
+        if (!incidentOpen &&
+            (status == 'arrived' || status == 'arrived_for_pickup')) ...[
+          const SizedBox(height: 10),
+          _InfoCard(
+            icon: noShowRemaining > 0
+                ? Icons.hourglass_top_rounded
+                : Icons.person_off_outlined,
+            title: noShowRemaining > 0
+                ? 'Đang trong thời gian chờ miễn phí'
+                : 'Có thể báo khách không xuất hiện',
+            text: noShowRemaining > 0
+                ? 'Còn ${_durationCountdown(noShowRemaining)} trước khi hệ thống mở thao tác no-show. Không tự ý rời điểm nhận sớm.'
+                : 'Chỉ sử dụng khi đã cố gắng liên hệ nhưng khách vẫn không có mặt tại điểm nhận.',
+            warning: noShowRemaining <= 0,
+          ),
+          if (noShowRemaining <= 0) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: trips.busy ? null : _confirmCustomerNoShow,
+              icon: const Icon(Icons.person_off_outlined),
+              label: const Text('Khách không xuất hiện'),
+            ),
+          ],
+        ],
         if (trip['inspection_result']?.toString().isNotEmpty == true) ...[
           const SizedBox(height: 10),
           _InfoCard(
@@ -353,6 +418,16 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                 'Kết quả đăng kiểm: ${_inspectionResult(trip['inspection_result'].toString())}',
             text:
                 'Tiếp tục đưa xe về và bàn giao cho khách dù kết quả đạt hay không đạt.',
+          ),
+        ],
+        if (service == 'vehicle_inspection_assist' &&
+            trips.inspectionChecklist != null) ...[
+          const SizedBox(height: 12),
+          _DriverInspectionChecklistCard(
+            snapshot: trips.inspectionChecklist!,
+            busy: trips.busy,
+            editable: status == 'arrived_for_pickup',
+            onEdit: _editInspectionChecklistItem,
           ),
         ],
         if (custodyStage != null && !incidentOpen) ...[
@@ -394,6 +469,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         ],
         if (primary != null &&
             !incidentOpen &&
+            inspectionPickupReady &&
             (custodyReady || allowDemoBypass)) ...[
           const SizedBox(height: 10),
           if (allowDemoBypass && custodyStage != null && !custodyReady)
@@ -474,6 +550,93 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     }
     return null;
   }
+
+  Future<void> _editInspectionChecklistItem(Map<String, dynamic> item) async {
+    var status = item['driver_status']?.toString() ?? 'pending';
+    if (status == 'pending') status = 'received';
+    final required = item['required'] == true;
+    final note =
+        TextEditingController(text: item['driver_note']?.toString() ?? '');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(item['label']?.toString() ?? 'Giấy tờ đăng kiểm'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(
+                'Khách khai báo: ${_customerDocumentStatus(item['customer_status']?.toString() ?? 'pending')}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration:
+                    const InputDecoration(labelText: 'Đối chiếu thực tế'),
+                items: [
+                  const DropdownMenuItem(
+                      value: 'received', child: Text('Đã nhận giấy tờ')),
+                  const DropdownMenuItem(
+                      value: 'missing', child: Text('Không nhận được / thiếu')),
+                  if (!required)
+                    const DropdownMenuItem(
+                        value: 'not_applicable', child: Text('Không áp dụng')),
+                ],
+                onChanged: (value) =>
+                    setDialogState(() => status = value ?? status),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: note,
+                maxLines: 3,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Ghi chú · không bắt buộc',
+                  hintText: 'Ví dụ: Đã nhận bản gốc trong túi hồ sơ xanh',
+                ),
+              ),
+              if (required) ...[
+                const SizedBox(height: 8),
+                const _InfoCard(
+                  icon: Icons.lock_outline_rounded,
+                  title: 'Mục bắt buộc',
+                  text:
+                      'Phải xác nhận đã nhận thực tế trước khi hệ thống mở bước Nhận xe.',
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Đóng')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Lưu đối chiếu')),
+          ],
+        ),
+      ),
+    );
+    final noteText = note.text.trim();
+    note.dispose();
+    if (saved != true || !mounted) return;
+    final ok = await trips.updateInspectionChecklistItem(
+      item['key']?.toString() ?? '',
+      status,
+      noteText,
+    );
+    if (!mounted) return;
+    _showMessage(ok
+        ? 'Đã cập nhật đối chiếu giấy tờ.'
+        : trips.error ?? 'Không thể cập nhật giấy tờ.');
+  }
+
+  static String _customerDocumentStatus(String status) => switch (status) {
+        'present' => 'Sẽ bàn giao',
+        'not_available' => 'Không có',
+        'not_applicable' => 'Không áp dụng',
+        _ => 'Chưa khai báo',
+      };
 
   Future<void> _captureCustodyEvidence(String stage) async {
     final current = trips.custodyFor(stage);
@@ -738,6 +901,32 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     return trips.completeInspection(result);
   }
 
+  Future<void> _confirmCustomerNoShow() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xác nhận khách không xuất hiện'),
+        content: const Text(
+          'Chỉ xác nhận sau khi đã chờ đủ thời gian miễn phí và cố gắng liên hệ khách. Công việc sẽ được hủy với lý do customer_no_show và bạn trở lại trạng thái sẵn sàng.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Tiếp tục chờ')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Xác nhận no-show')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final ok = await trips.customerNoShow();
+    if (!mounted) return;
+    _showMessage(ok
+        ? 'Đã đóng công việc do khách không xuất hiện.'
+        : trips.error ?? 'Chưa thể xác nhận no-show.');
+  }
+
   Future<void> _reportIncident() async {
     var type = 'vehicle_issue';
     final note = TextEditingController();
@@ -880,6 +1069,92 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
+  Future<void> _loadDocuments() async {
+    if (!mounted) return;
+    setState(() {
+      _documentsBusy = true;
+      _documentsError = null;
+    });
+    try {
+      final items = await documents.list();
+      if (!mounted) return;
+      setState(() => _documents = items);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _documentsError = error.toString());
+    } finally {
+      if (mounted) setState(() => _documentsBusy = false);
+    }
+  }
+
+  Map<String, dynamic>? _documentFor(String type) {
+    for (final document in _documents.reversed) {
+      if (document['document_type']?.toString() == type) return document;
+    }
+    return null;
+  }
+
+  Future<void> _uploadDriverDocument(String type, String label) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(label, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded),
+              title: const Text('Chụp ảnh mới'),
+              subtitle: const Text('Đảm bảo giấy tờ rõ nét, đủ bốn góc'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Chọn từ thư viện'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+            ),
+          ]),
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      imageQuality: 88,
+      maxWidth: 2200,
+    );
+    if (picked == null || !mounted) return;
+    final contentType = picked.mimeType ?? 'image/jpeg';
+    if (!const {'image/jpeg', 'image/png', 'image/webp'}
+        .contains(contentType)) {
+      _showMessage(
+          'FlashX hiện hỗ trợ ảnh JPG, PNG hoặc WebP cho hồ sơ tài xế.');
+      return;
+    }
+    setState(() {
+      _documentsBusy = true;
+      _documentsError = null;
+    });
+    try {
+      await documents.uploadDocument(
+        file: File(picked.path),
+        documentType: type,
+        contentType: contentType,
+      );
+      _documents = await documents.list();
+      if (!mounted) return;
+      _showMessage('Đã tải $label. Hồ sơ đang chờ Operations duyệt.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _documentsError = error.toString());
+      _showMessage('Không thể tải $label.');
+    } finally {
+      if (mounted) setState(() => _documentsBusy = false);
+    }
+  }
+
   Widget _account() {
     final profile = widget.auth.profile ?? const <String, dynamic>{};
     final capabilities =
@@ -950,12 +1225,51 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                   .toList(),
             ),
           const SizedBox(height: 20),
-          const ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.badge_outlined),
-            title: Text('Hồ sơ & giấy phép lái xe'),
-            subtitle: Text('Được quản lý và duyệt bởi FlashX Operations'),
+          Row(children: [
+            Expanded(
+              child: Text('Hồ sơ KYC',
+                  style: Theme.of(context).textTheme.titleLarge),
+            ),
+            IconButton(
+              onPressed: _documentsBusy ? null : _loadDocuments,
+              tooltip: 'Làm mới hồ sơ',
+              icon: _documentsBusy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            'Tải trực tiếp lên kho bảo mật của FlashX. Operations sẽ duyệt từng tài liệu trước khi tài xế được phép nhận việc.',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
+          if (_documentsError != null) ...[
+            const SizedBox(height: 10),
+            _ErrorCard(text: _documentsError!),
+          ],
+          const SizedBox(height: 12),
+          ...const [
+            ('identity_front', 'CCCD · mặt trước', Icons.badge_outlined),
+            ('identity_back', 'CCCD · mặt sau', Icons.badge_outlined),
+            ('driver_license', 'Giấy phép lái xe', Icons.drive_eta_outlined),
+            ('portrait', 'Ảnh chân dung', Icons.account_circle_outlined),
+          ].map((requirement) {
+            final document = _documentFor(requirement.$1);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _DriverDocumentCard(
+                icon: requirement.$3,
+                label: requirement.$2,
+                document: document,
+                busy: _documentsBusy,
+                onUpload: () =>
+                    _uploadDriverDocument(requirement.$1, requirement.$2),
+              ),
+            );
+          }),
+          const SizedBox(height: 10),
           const ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.support_agent_rounded),
@@ -970,6 +1284,25 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         ],
       ),
     );
+  }
+
+  int _remainingNoShowSeconds(Map<String, dynamic> trip) {
+    final raw = trip['arrived_at']?.toString();
+    final arrived = raw == null ? null : DateTime.tryParse(raw)?.toUtc();
+    if (arrived == null) return trips.pickupGracePeriodSeconds;
+    final availableAt =
+        arrived.add(Duration(seconds: trips.pickupGracePeriodSeconds));
+    return availableAt
+        .difference(DateTime.now().toUtc())
+        .inSeconds
+        .clamp(0, trips.pickupGracePeriodSeconds)
+        .toInt();
+  }
+
+  static String _durationCountdown(int seconds) {
+    final minutes = seconds ~/ 60;
+    final remain = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remain.toString().padLeft(2, '0')}';
   }
 
   static int _remainingSeconds(String? raw) {
@@ -1122,6 +1455,160 @@ class _ServiceBadge extends StatelessWidget {
                     : Icons.directions_car_filled_rounded,
             color: FlashXTheme.navy),
       );
+}
+
+class _DriverInspectionChecklistCard extends StatelessWidget {
+  const _DriverInspectionChecklistCard({
+    required this.snapshot,
+    required this.busy,
+    required this.editable,
+    required this.onEdit,
+  });
+
+  final Map<String, dynamic> snapshot;
+  final bool busy;
+  final bool editable;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = (snapshot['items'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final ready = snapshot['ready'] == true;
+    final customerComplete = snapshot['customer_complete'] == true;
+    final driverComplete = snapshot['driver_complete'] == true;
+    final checklist = Map<String, dynamic>.from(
+      snapshot['checklist'] as Map? ?? const {},
+    );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ready ? const Color(0xFFECFDF3) : const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: ready ? const Color(0xFFABEFC6) : FlashXTheme.border,
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(Icons.fact_check_rounded,
+                color: ready ? FlashXTheme.success : FlashXTheme.navy),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Đối chiếu giấy tờ đăng kiểm',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text(
+                ready
+                    ? 'Đủ giấy tờ bắt buộc · có thể tiếp tục nhận xe'
+                    : !customerComplete
+                        ? 'Khách chưa khai báo đủ giấy tờ bắt buộc'
+                        : driverComplete
+                            ? 'Đã đối chiếu · còn mục bắt buộc chưa hợp lệ'
+                            : editable
+                                ? 'Đối chiếu từng giấy với hồ sơ khách bàn giao'
+                                : 'Chờ tới điểm nhận để đối chiếu thực tế',
+                style: TextStyle(
+                  color:
+                      ready ? FlashXTheme.success : FlashXTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ]),
+          ),
+          Text('v${checklist['template_version'] ?? '—'}',
+              style: Theme.of(context).textTheme.bodySmall),
+        ]),
+        const SizedBox(height: 12),
+        ...items.map((item) {
+          final required = item['required'] == true;
+          final customerStatus =
+              item['customer_status']?.toString() ?? 'pending';
+          final driverStatus = item['driver_status']?.toString() ?? 'pending';
+          final driverLabel = switch (driverStatus) {
+            'received' => 'Đã nhận',
+            'missing' => 'Thiếu',
+            'not_applicable' => 'Không áp dụng',
+            _ => 'Chưa đối chiếu',
+          };
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                onTap: editable && !busy ? () => onEdit(item) : null,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    Icon(
+                      driverStatus == 'received'
+                          ? Icons.check_circle_rounded
+                          : driverStatus == 'missing'
+                              ? Icons.error_outline_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                      size: 19,
+                      color: driverStatus == 'received'
+                          ? FlashXTheme.success
+                          : driverStatus == 'missing'
+                              ? FlashXTheme.danger
+                              : FlashXTheme.textSecondary,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item['label']?.toString() ?? '',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Khách: ${_customerLabel(customerStatus)} · Tài xế: $driverLabel${required ? ' · Bắt buộc' : ''}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ]),
+                    ),
+                    if (editable)
+                      const Icon(Icons.chevron_right_rounded,
+                          color: FlashXTheme.textSecondary),
+                  ]),
+                ),
+              ),
+            ),
+          );
+        }),
+        if (!ready && customerComplete && !editable)
+          const _InfoCard(
+            icon: Icons.info_outline_rounded,
+            title: 'Chưa mở bước Nhận xe',
+            text:
+                'Tài xế chỉ được đối chiếu giấy tờ khi đã tới điểm nhận. Sau khi các mục bắt buộc được xác nhận, hệ thống mới mở bước tiếp theo.',
+          ),
+      ]),
+    );
+  }
+
+  static String _customerLabel(String status) => switch (status) {
+        'present' => 'Có',
+        'not_available' => 'Không có',
+        'not_applicable' => 'Không áp dụng',
+        _ => 'Chưa khai báo',
+      };
 }
 
 class _CustodyDriverCard extends StatelessWidget {
@@ -1293,6 +1780,134 @@ class _CustodyConfirmLine extends StatelessWidget {
           ),
         ]),
       );
+}
+
+class _DriverLiveRouteCard extends StatelessWidget {
+  const _DriverLiveRouteCard({required this.snapshot});
+  final Map<String, dynamic> snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = snapshot['primary'] is Map
+        ? Map<String, dynamic>.from(snapshot['primary'] as Map)
+        : snapshot['service'] is Map
+            ? Map<String, dynamic>.from(snapshot['service'] as Map)
+            : const <String, dynamic>{};
+    final distance = (primary['distance_m'] as num?)?.toDouble() ?? 0;
+    final duration = (primary['duration_s'] as num?)?.toDouble() ?? 0;
+    final phase = snapshot['phase']?.toString() ?? 'service';
+    final title = switch (phase) {
+      'approach' => 'Đường tới điểm nhận',
+      'return' => 'Đường trả xe cho khách',
+      _ => 'Đường thực hiện dịch vụ',
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF3),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFABEFC6)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.route_rounded, color: FlashXTheme.success),
+        const SizedBox(width: 10),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(
+              distance > 0 && duration > 0
+                  ? '${(distance / 1000).toStringAsFixed(1)} km · khoảng ${(duration / 60).ceil()} phút'
+                  : 'Đang cập nhật khoảng cách và ETA',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _DriverDocumentCard extends StatelessWidget {
+  const _DriverDocumentCard({
+    required this.icon,
+    required this.label,
+    required this.document,
+    required this.busy,
+    required this.onUpload,
+  });
+
+  final IconData icon;
+  final String label;
+  final Map<String, dynamic>? document;
+  final bool busy;
+  final VoidCallback onUpload;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = document?['review_status']?.toString() ?? 'missing';
+    final statusLabel = switch (status) {
+      'approved' => 'Đã duyệt',
+      'rejected' => 'Cần tải lại',
+      'pending' => 'Chờ duyệt',
+      _ => 'Chưa tải',
+    };
+    final statusColor = switch (status) {
+      'approved' => FlashXTheme.success,
+      'rejected' => FlashXTheme.danger,
+      'pending' => FlashXTheme.warning,
+      _ => FlashXTheme.textSecondary,
+    };
+    final note = document?['review_note']?.toString().trim() ?? '';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: FlashXTheme.border),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F7FB),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: FlashXTheme.navy),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(statusLabel,
+                  style: TextStyle(
+                      color: statusColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ]),
+          ),
+          OutlinedButton(
+            onPressed: busy || status == 'approved' ? null : onUpload,
+            child: Text(document == null || status == 'missing'
+                ? 'Tải lên'
+                : status == 'rejected'
+                    ? 'Tải lại'
+                    : 'Thay ảnh'),
+          ),
+        ]),
+        if (note.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('Operations: $note',
+              style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ]),
+    );
+  }
 }
 
 class _InfoCard extends StatelessWidget {

@@ -186,6 +186,33 @@ func (s *Service) Cancel(id, riderID, reason string) (Trip, error) {
 	return s.persist(trip)
 }
 
+// CancelCustomerNoShow lets the assigned driver end a pickup only after the
+// configured grace period has elapsed. This is enforced server-side so a
+// modified client cannot bypass waiting policy.
+func (s *Service) CancelCustomerNoShow(id, driverID string, grace time.Duration) (Trip, error) {
+	trip, err := s.driverTrip(id, driverID)
+	if err != nil {
+		return Trip{}, err
+	}
+	if trip.IncidentOpen || (trip.Status != StatusArrived && trip.Status != StatusArrivedForPickup) || trip.ArrivedAt == nil {
+		return Trip{}, ErrInvalidState
+	}
+	if grace < time.Minute {
+		grace = time.Minute
+	}
+	now := s.now()
+	if now.Before(trip.ArrivedAt.Add(grace)) {
+		return Trip{}, ErrInvalidState
+	}
+	if !ValidTransitionForService(trip.ServiceType, trip.Status, StatusCancelled) {
+		return Trip{}, ErrInvalidState
+	}
+	trip.Status = StatusCancelled
+	trip.CancelledAt = &now
+	trip.CancellationReason = "customer_no_show"
+	return s.persist(trip)
+}
+
 func (s *Service) AssignDriver(id, driverID string) (Trip, error) {
 	trip, err := s.store.Get(id)
 	if err != nil {
@@ -359,15 +386,28 @@ func (s *Service) ReportIncident(id, driverID, incidentType, note string) (Trip,
 	if err != nil {
 		return Trip{}, err
 	}
+	return s.reportIncident(trip, incidentType, note)
+}
+
+func (s *Service) ReportIncidentForRider(id, riderID, incidentType, note string) (Trip, error) {
+	trip, err := s.GetForRider(id, riderID)
+	if err != nil {
+		return Trip{}, err
+	}
+	return s.reportIncident(trip, incidentType, note)
+}
+
+func (s *Service) reportIncident(trip Trip, incidentType, note string) (Trip, error) {
 	if !IsDriverOccupiedStatus(trip.Status) {
 		return Trip{}, ErrInvalidState
 	}
 	incidentType = strings.TrimSpace(incidentType)
-	if incidentType == "" {
+	note = strings.TrimSpace(note)
+	if incidentType == "" || len(incidentType) > 80 || len(note) > 1000 {
 		return Trip{}, ErrInvalidInput
 	}
 	trip.IncidentType = incidentType
-	trip.IncidentNote = strings.TrimSpace(note)
+	trip.IncidentNote = note
 	trip.IncidentOpen = true
 	return s.persistWithoutTransition(trip)
 }

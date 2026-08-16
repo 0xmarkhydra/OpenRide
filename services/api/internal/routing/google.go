@@ -63,6 +63,9 @@ type googleRouteResponse struct {
 	Routes []struct {
 		DistanceMeters int64  `json:"distanceMeters"`
 		Duration       string `json:"duration"`
+		Polyline       struct {
+			EncodedPolyline string `json:"encodedPolyline"`
+		} `json:"polyline"`
 	} `json:"routes"`
 }
 
@@ -90,7 +93,7 @@ func (p *GoogleProvider) Route(pickup, destination trips.Point, serviceType stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", p.apiKey)
-	req.Header.Set("X-Goog-FieldMask", "routes.distanceMeters,routes.duration")
+	req.Header.Set("X-Goog-FieldMask", "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -116,9 +119,10 @@ func (p *GoogleProvider) Route(pickup, destination trips.Point, serviceType stri
 		return Result{}, ErrUnavailable
 	}
 	return Result{
-		DistanceM: decoded.Routes[0].DistanceMeters,
-		DurationS: durationS,
-		Source:    "google_routes",
+		DistanceM:       decoded.Routes[0].DistanceMeters,
+		DurationS:       durationS,
+		Source:          "google_routes",
+		EncodedPolyline: decoded.Routes[0].Polyline.EncodedPolyline,
 	}, nil
 }
 

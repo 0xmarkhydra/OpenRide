@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"flashx/services/api/internal/auth"
 	"flashx/services/api/internal/custodyevidence"
 	"flashx/services/api/internal/dispatch"
 	"flashx/services/api/internal/drivers"
+	"flashx/services/api/internal/inspectionchecklist"
 	"flashx/services/api/internal/trips"
 )
 
@@ -206,10 +208,60 @@ func (s *Server) driverTripArrived(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) driverOperationalPolicy(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.driverID(w, r); !ok {
+		return
+	}
+	grace := 600
+	if s.deps.OperationalSettings != nil {
+		grace = s.deps.OperationalSettings.Get().PickupGracePeriodSeconds
+	}
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{
+		"pickup_grace_period_seconds": grace,
+	}})
+}
+
+func (s *Server) driverTripCustomerNoShow(w http.ResponseWriter, r *http.Request) {
+	driverID, ok := s.driverID(w, r)
+	if !ok {
+		return
+	}
+	graceSeconds := 600
+	if s.deps.OperationalSettings != nil {
+		graceSeconds = s.deps.OperationalSettings.Get().PickupGracePeriodSeconds
+	}
+	trip, err := s.deps.Ride.CancelCustomerNoShow(r.PathValue("id"), driverID, time.Duration(graceSeconds)*time.Second)
+	if err != nil {
+		s.writeDomainError(w, err)
+		return
+	}
+	if s.deps.Payments != nil {
+		_, _ = s.deps.Payments.CancelCash(trip)
+	}
+	s.publishTrip(trip, "trip.cancelled", trip)
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: trip})
+}
+
 func (s *Server) driverTripVehicleReceived(w http.ResponseWriter, r *http.Request) {
 	s.driverTripCommand(w, r, func(id, driverID string) (trips.Trip, error) {
 		if err := s.requireCustodyReady(id, custodyevidence.StagePickup); err != nil {
 			return trips.Trip{}, err
+		}
+		trip, err := s.deps.Trips.GetForDriver(id, driverID)
+		if err != nil {
+			return trips.Trip{}, err
+		}
+		if trips.IsInspectionService(trip.ServiceType) {
+			if s.deps.InspectionChecklist == nil {
+				return trips.Trip{}, inspectionchecklist.ErrNotReady
+			}
+			ready, checklistErr := s.deps.InspectionChecklist.IsReady(id)
+			if checklistErr != nil {
+				return trips.Trip{}, checklistErr
+			}
+			if !ready {
+				return trips.Trip{}, inspectionchecklist.ErrNotReady
+			}
 		}
 		return s.deps.Ride.MarkVehicleReceived(id, driverID)
 	})

@@ -4,7 +4,7 @@
 > **Mục đích:** nguồn sự thật để Founder/Product/BA/Design/Engineering mở lại và biết ngay **mỗi màn phải có gì, phần nào đã làm, phần nào mới làm một phần, logic nào còn thiếu và thứ tự phải hoàn thiện**.  
 > **Baseline production/dev đã merge:** `dev @ 30c7fd0` — `merge: vehicle custody evidence end-to-end`.  
 > **Nhánh đang phát triển:** `feat/inspection-checklist`.  
-> **Worktree hiện tại:** có code checklist đăng kiểm chưa commit tại `infrastructure/migrations/010_inspection_checklist.sql` và `services/api/internal/inspectionchecklist/`.
+> **Cập nhật triển khai:** 16/08/2026 — branch hiện tại đã mở rộng vượt checklist: route/ETA, place search, scheduler, no-show, rating, KYC, payment visibility, driver qualification và push foundation đều đã được nối source và test; chưa merge `dev` tại thời điểm cập nhật tài liệu này.
 
 ---
 
@@ -47,21 +47,21 @@ Phần mạnh nhất hiện tại:
 - RBAC/audit/settings.
 - Landing mới.
 
-Nhưng **chưa được gọi là hoàn thiện production 3 dịch vụ** vì còn các blocker quan trọng:
+Ở checkpoint **16/08/2026**, phần lớn blocker sản phẩm đã được xử lý trên branch hiện tại và đã qua test kỹ thuật:
 
-1. 🚧 Checklist giấy tờ Đăng kiểm hộ chưa end-to-end.
-2. 🔴 Mobile map chưa có route/polyline + ETA thật.
-3. 🔴 Chọn địa chỉ hiện còn hard-code demo, chưa Places/search/pin đầy đủ.
-4. 🟡 Scheduled booking chưa có scheduler độc lập.
-5. 🔴 Push/background notification chưa có.
-6. 🔴 Cancellation/no-show/waiting fee policy chưa được code đầy đủ.
-7. 🟡 Pricing chưa có waiting/night/holiday/cancellation surcharge.
-8. 🔴 Rider rating UI chưa nối dù backend đã có.
-9. 🟡 Payment cash-first có foundation nhưng payout/settlement/refund/invoice chưa đủ.
-10. 🟡 Driver capability mới ở mức service capability, chưa quản lý đầy đủ GPLX class/expiry/manual-auto suitability.
-11. 🟡 KYC backend/direct-upload/Admin review có, nhưng Driver-facing KYC upload onboarding chưa nối thành flow UI hoàn chỉnh.
-12. 🔴 Customer/Driver mobile chưa được migrate hoàn toàn sang design system iOS-inspired xanh lá/trắng như Admin/Landing.
-13. 🔴 Pháp lý/bảo hiểm/ủy quyền đăng kiểm cần review cuối trước Go-Live.
+1. ✅ Checklist giấy tờ Đăng kiểm hộ end-to-end, có template version + snapshot theo job + gate nhận xe.
+2. ✅ Mobile map có route/polyline + ETA, refresh có throttle và fallback khi provider ngoài lỗi.
+3. ✅ Chọn điểm đến có 3 đường: tìm địa chỉ bằng chữ, shortcut demo và ghim pin trên bản đồ; cùng dùng một tọa độ chuẩn cho estimate/booking.
+4. ✅ Scheduled booking có worker kích hoạt độc lập, không phụ thuộc heartbeat tài xế.
+5. 🟡 Push notification: device registration + durable outbox + event hook + worker đã xong; **gửi push thật** còn phụ thuộc FCM/APNs credential và mobile SDK.
+6. ✅ Pickup grace/no-show đã có policy server-side + countdown Driver + cấu hình Admin. **Waiting fee/cancellation fee bằng tiền chưa tự tính** vì chưa có chính sách tài chính được Founder chốt.
+7. 🟡 Pricing core/versioned đã ổn; waiting/night/holiday/cancellation surcharge chưa bật vì công thức chưa được chốt.
+8. ✅ Rider rating UI + backend rating đã nối.
+9. ✅ Payment cash-first có ledger/reconciliation + trạng thái Rider/Driver/Admin. Payout/commission/refund/invoice vẫn tách riêng, không tự suy diễn.
+10. ✅ Driver capability có Admin control, GPLX class/expiry và quyền lái số sàn; dispatch lọc lại cả lúc offer/accept/manual assign.
+11. ✅ Driver KYC direct-upload onboarding + trạng thái review đã nối, Admin review giữ nguyên presigned-object-storage flow.
+12. 🟡 Mobile đã chuyển token màu canonical xanh-trắng và nhiều màn chính đã cập nhật; vẫn cần một vòng visual polish cuối trên thiết bị thật trước release store.
+13. 🔴 Pháp lý/bảo hiểm/ủy quyền đăng kiểm vẫn cần review cuối trước Go-Live; đây không phải thứ nên tự suy diễn bằng code.
 
 ---
 

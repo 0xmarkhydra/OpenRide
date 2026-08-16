@@ -13,9 +13,10 @@ var (
 )
 
 type Result struct {
-	DistanceM int64
-	DurationS int64
-	Source    string
+	DistanceM       int64  `json:"distance_m"`
+	DurationS       int64  `json:"duration_s"`
+	Source          string `json:"source"`
+	EncodedPolyline string `json:"encoded_polyline,omitempty"`
 }
 
 type Provider interface {

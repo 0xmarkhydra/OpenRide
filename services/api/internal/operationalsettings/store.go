@@ -14,6 +14,7 @@ type Config struct {
 	VehicleInspectionEnabled    bool      `json:"vehicle_inspection_assist_enabled"`
 	DispatchMaxDistanceM        int64     `json:"dispatch_max_distance_m"`
 	DriverLocationMaxAgeSeconds int       `json:"driver_location_max_age_seconds"`
+	PickupGracePeriodSeconds    int       `json:"pickup_grace_period_seconds"`
 	Version                     int64     `json:"version"`
 	UpdatedBy                   string    `json:"updated_by,omitempty"`
 	UpdatedAt                   time.Time `json:"updated_at"`

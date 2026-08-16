@@ -22,13 +22,14 @@ var (
 const maxPricingAmountMinor int64 = 100_000_000
 
 type Estimate struct {
-	ServiceType string              `json:"service_type"`
-	DistanceM   int64               `json:"distance_m"`
-	DurationS   int64               `json:"duration_s"`
-	Fare        trips.FareBreakdown `json:"fare"`
-	Currency    string              `json:"currency"`
-	PricingVer  string              `json:"pricing_version"`
-	RouteSource string              `json:"route_source"`
+	ServiceType   string              `json:"service_type"`
+	DistanceM     int64               `json:"distance_m"`
+	DurationS     int64               `json:"duration_s"`
+	Fare          trips.FareBreakdown `json:"fare"`
+	Currency      string              `json:"currency"`
+	PricingVer    string              `json:"pricing_version"`
+	RouteSource   string              `json:"route_source"`
+	RoutePolyline string              `json:"route_polyline,omitempty"`
 }
 
 type rule struct {
@@ -206,8 +207,25 @@ func (s *Service) Estimate(pickup, destination trips.Point, serviceType string) 
 			ServiceMinor:  current.serviceMinor,
 			TotalMinor:    total,
 		},
-		Currency: "VND", PricingVer: current.version, RouteSource: route.Source,
+		Currency: "VND", PricingVer: current.version, RouteSource: route.Source, RoutePolyline: route.EncodedPolyline,
 	}, nil
+}
+
+// Route exposes the configured routing provider for live trip route/ETA
+// snapshots without coupling HTTP handlers to a concrete maps provider.
+func (s *Service) Route(origin, destination trips.Point, serviceType string) (routing.Result, error) {
+	serviceType = trips.NormalizeServiceType(serviceType)
+	if !trips.IsSupportedService(serviceType) {
+		return routing.Result{}, ErrUnsupportedServiceType
+	}
+	result, err := s.routing.Route(origin, destination, serviceType)
+	if err != nil {
+		if errors.Is(err, routing.ErrInvalidRoute) {
+			return routing.Result{}, ErrInvalidRoute
+		}
+		return routing.Result{}, fmt.Errorf("%w: %v", ErrRouteUnavailable, err)
+	}
+	return result, nil
 }
 
 func ruleFromRecord(item RuleRecord) rule {

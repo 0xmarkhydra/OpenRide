@@ -9,11 +9,19 @@ class RiderMapView extends StatelessWidget {
     required this.pickup,
     this.activeTrip,
     this.driverLocation,
+    this.selectedDestination,
+    this.estimatePolyline,
+    this.liveRoutes,
+    this.onDestinationSelected,
   });
 
   final Map<String, double> pickup;
   final Map<String, dynamic>? activeTrip;
   final Map<String, dynamic>? driverLocation;
+  final Map<String, double>? selectedDestination;
+  final String? estimatePolyline;
+  final Map<String, dynamic>? liveRoutes;
+  final ValueChanged<Map<String, double>>? onDestinationSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -21,9 +29,27 @@ class RiderMapView extends StatelessWidget {
 
     final pickupPoint = _point(pickup) ?? const LatLng(19.8067, 105.7852);
     final tripPickup = _point(activeTrip?['pickup']) ?? pickupPoint;
-    final destination = _point(activeTrip?['destination']);
+    final destination =
+        _point(activeTrip?['destination']) ?? _point(selectedDestination);
     final driverPayload = driverLocation?['location'] ?? driverLocation;
     final driver = _point(driverPayload);
+    final primaryRoute = liveRoutes?['primary'];
+    final serviceRoute = liveRoutes?['service'];
+    final encoded = activeTrip == null
+        ? (estimatePolyline ?? '')
+        : primaryRoute is Map &&
+                (primaryRoute['encoded_polyline']?.toString().isNotEmpty ??
+                    false)
+            ? primaryRoute['encoded_polyline'].toString()
+            : serviceRoute is Map
+                ? serviceRoute['encoded_polyline']?.toString() ?? ''
+                : '';
+    final decodedRoute = _decodePolyline(encoded);
+    final fallbackRoute = <LatLng>[
+      if (activeTrip != null && driver != null) driver else tripPickup,
+      if (destination != null) destination,
+    ];
+    final routePoints = decodedRoute.length >= 2 ? decodedRoute : fallbackRoute;
 
     final markers = <Marker>{
       Marker(
@@ -50,6 +76,22 @@ class RiderMapView extends StatelessWidget {
     return GoogleMap(
       initialCameraPosition: CameraPosition(target: tripPickup, zoom: 14.5),
       markers: markers,
+      polylines: routePoints.length >= 2
+          ? {
+              Polyline(
+                polylineId: const PolylineId('flashx-route'),
+                points: routePoints,
+                width: 5,
+                color: const Color(0xFF079455),
+                geodesic: true,
+              ),
+            }
+          : const <Polyline>{},
+      onTap: activeTrip == null && onDestinationSelected != null
+          ? (point) => onDestinationSelected!(
+                {'lat': point.latitude, 'lng': point.longitude},
+              )
+          : null,
       compassEnabled: true,
       mapToolbarEnabled: false,
       zoomControlsEnabled: false,
@@ -63,6 +105,34 @@ class RiderMapView extends StatelessWidget {
     final lng = value['lng'];
     if (lat is! num || lng is! num) return null;
     return LatLng(lat.toDouble(), lng.toDouble());
+  }
+
+  static List<LatLng> _decodePolyline(String encoded) {
+    if (encoded.isEmpty) return const [];
+    final points = <LatLng>[];
+    var index = 0;
+    var lat = 0;
+    var lng = 0;
+    while (index < encoded.length) {
+      int decodeValue() {
+        var result = 0;
+        var shift = 0;
+        var byte = 0;
+        do {
+          if (index >= encoded.length) return 0;
+          byte = encoded.codeUnitAt(index++) - 63;
+          result |= (byte & 0x1f) << shift;
+          shift += 5;
+        } while (byte >= 0x20);
+        return (result & 1) != 0 ? ~(result >> 1) : result >> 1;
+      }
+
+      lat += decodeValue();
+      if (index > encoded.length) break;
+      lng += decodeValue();
+      points.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return points;
   }
 }
 

@@ -52,6 +52,27 @@ func (s *Service) GetForTrip(trip trips.Trip) (Payment, error) {
 	return s.store.GetByTrip(trip.ID)
 }
 
+// ReconcileCash makes the persisted cash ledger reflect the authoritative trip
+// lifecycle. It is intentionally limited to customer payment state; driver
+// payout/commission is a separate marketplace concern and is not inferred here.
+func (s *Service) ReconcileCash(trip trips.Trip) (Payment, error) {
+	payment, err := s.EnsureCash(trip)
+	if err != nil {
+		return Payment{}, err
+	}
+	switch trip.Status {
+	case trips.StatusCompleted:
+		return s.MarkCashCollected(trip)
+	case trips.StatusCancelled:
+		if payment.Status == StatusCancelled {
+			return payment, nil
+		}
+		return s.CancelCash(trip)
+	default:
+		return payment, nil
+	}
+}
+
 func (s *Service) MarkCashCollected(trip trips.Trip) (Payment, error) {
 	if trip.Status != trips.StatusCompleted {
 		return Payment{}, ErrInvalidState

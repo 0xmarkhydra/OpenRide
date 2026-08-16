@@ -70,6 +70,29 @@ def data(payload: Any) -> Any:
     return payload["data"]
 
 
+def upload_signed(request: dict[str, Any], payload: bytes) -> None:
+    method = str(request.get("method") or "PUT")
+    url = str(request.get("url") or "")
+    if not url:
+        raise SmokeFailure(f"Presigned upload has no URL: {request}")
+    headers: dict[str, str] = {}
+    for key, values in (request.get("headers") or {}).items():
+        if isinstance(values, list) and values:
+            headers[key] = str(values[0])
+        elif values:
+            headers[key] = str(values)
+    req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            if response.status < 200 or response.status >= 300:
+                raise SmokeFailure(f"Presigned upload -> HTTP {response.status}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SmokeFailure(f"Presigned upload -> HTTP {exc.code}: {detail}") from exc
+    except OSError as exc:
+        raise SmokeFailure(f"Cannot upload custody photo: {exc}") from exc
+
+
 def login_rider(phone: str) -> tuple[str, str]:
     _, requested = call(
         "POST", "/v1/auth/otp/request",
@@ -206,6 +229,99 @@ def driver_action(driver_headers: dict[str, str], job_id: str, action: str,
     return data(response)
 
 
+def prepare_inspection_checklist(token: str, driver_headers: dict[str, str], job_id: str) -> None:
+    rider_headers = {"Authorization": f"Bearer {token}"}
+    _, response = call(
+        "GET", f"/v1/trips/{job_id}/inspection-checklist", headers=rider_headers,
+    )
+    snapshot = data(response)
+    for item in snapshot.get("items", []):
+        customer_status = "present" if item.get("required") else "not_applicable"
+        call(
+            "PATCH", f"/v1/trips/{job_id}/inspection-checklist/{item['key']}",
+            headers=rider_headers,
+            body={"status": customer_status, "note": "Smoke test declaration"},
+        )
+
+    _, response = call(
+        "GET", f"/v1/driver/trips/{job_id}/inspection-checklist", headers=driver_headers,
+    )
+    snapshot = data(response)
+    latest = snapshot
+    for item in snapshot.get("items", []):
+        driver_status = "received" if item.get("customer_status") == "present" else "not_applicable"
+        _, updated = call(
+            "PATCH", f"/v1/driver/trips/{job_id}/inspection-checklist/{item['key']}",
+            headers=driver_headers,
+            body={"status": driver_status, "note": "Smoke test verification"},
+        )
+        latest = data(updated)
+    if not latest.get("ready"):
+        raise SmokeFailure(f"Inspection checklist is not ready: {latest}")
+
+
+def prepare_custody(token: str, driver_headers: dict[str, str], job_id: str, stage: str) -> bool:
+    rider_headers = {"Authorization": f"Bearer {token}"}
+    _, updated = call(
+        "PUT", f"/v1/driver/trips/{job_id}/custody/{stage}",
+        headers=driver_headers,
+        body={
+            "condition_note": f"Smoke test {stage}: vehicle condition normal",
+            "odometer_km": 12345,
+            "fuel_percent": 70,
+        },
+    )
+    if data(updated).get("evidence", {}).get("stage") != stage:
+        raise SmokeFailure(f"Custody evidence stage mismatch: {updated}")
+
+    photo_payload = b"\xff\xd8\xff\xe0FLASHX-SMOKE\xff\xd9"
+    for photo_type in ("front", "rear"):
+        status, prepared = call(
+            "POST", f"/v1/driver/trips/{job_id}/custody/{stage}/photos/upload-url",
+            headers=driver_headers,
+            body={
+                "photo_type": photo_type,
+                "filename": f"{photo_type}.jpg",
+                "content_type": "image/jpeg",
+                "size_bytes": len(photo_payload),
+            },
+            expected=(200, 503),
+        )
+        if status == 503:
+            error_code = (prepared or {}).get("error", {}).get("code") if isinstance(prepared, dict) else None
+            if error_code == "OBJECT_STORAGE_UNAVAILABLE":
+                return False
+            raise SmokeFailure(f"Custody upload unavailable unexpectedly: {prepared}")
+        ticket = data(prepared)
+        upload_signed(ticket["upload"], photo_payload)
+        _, completed = call(
+            "POST", f"/v1/driver/trips/{job_id}/custody/{stage}/photos/complete",
+            headers=driver_headers,
+            body={
+                "photo_id": ticket["photo_id"],
+                "photo_type": ticket["photo_type"],
+                "object_key": ticket["object_key"],
+                "filename": f"{photo_type}.jpg",
+                "content_type": "image/jpeg",
+                "size_bytes": len(photo_payload),
+            },
+        )
+        if len(data(completed).get("photos", [])) < 1:
+            raise SmokeFailure(f"Custody photo was not persisted: {completed}")
+
+    call(
+        "POST", f"/v1/driver/trips/{job_id}/custody/{stage}/confirm",
+        headers=driver_headers,
+    )
+    _, confirmed = call(
+        "POST", f"/v1/trips/{job_id}/custody/{stage}/confirm",
+        headers=rider_headers,
+    )
+    if not data(confirmed).get("ready"):
+        raise SmokeFailure(f"Custody {stage} is not ready after bilateral confirmation: {confirmed}")
+    return True
+
+
 def run_service(token: str, suffix: str, service_type: str, vehicle_id: str,
                 driver_headers: dict[str, str]) -> dict[str, Any]:
     job = create_job(token, suffix, service_type, vehicle_id)
@@ -232,33 +348,30 @@ def run_service(token: str, suffix: str, service_type: str, vehicle_id: str,
     if accepted_job.get("status") != "accepted":
         raise SmokeFailure(f"Offer accept failed for {service_type}: {accepted_job}")
 
-    if service_type == "vehicle_inspection_assist":
-        steps: list[tuple[str, dict[str, Any] | None]] = [
-            ("arriving", None),
-            ("arrived", None),
-            ("vehicle-received", None),
-            ("start", None),
-            ("arrive-inspection", None),
-            ("start-inspection", None),
-            ("complete-inspection", {"result": "passed"}),
-            ("returning", None),
-            ("arrived-return", None),
-            ("handover", None),
-            ("complete", None),
-        ]
-    else:
-        steps = [
-            ("arriving", None),
-            ("arrived", None),
-            ("vehicle-received", None),
-            ("start", None),
-            ("handover", None),
-            ("complete", None),
-        ]
+    latest = driver_action(driver_headers, job_id, "arriving")
+    latest = driver_action(driver_headers, job_id, "arrived")
 
-    latest: dict[str, Any] = accepted_job
-    for action, body in steps:
-        latest = driver_action(driver_headers, job_id, action, body)
+    if service_type == "vehicle_inspection_assist":
+        prepare_inspection_checklist(token, driver_headers, job_id)
+
+    prepare_custody(token, driver_headers, job_id, "pickup")
+    latest = driver_action(driver_headers, job_id, "vehicle-received")
+    latest = driver_action(driver_headers, job_id, "start")
+
+    if service_type == "vehicle_inspection_assist":
+        latest = driver_action(driver_headers, job_id, "arrive-inspection")
+        latest = driver_action(driver_headers, job_id, "start-inspection")
+        latest = driver_action(
+            driver_headers, job_id, "complete-inspection", {"result": "passed"}
+        )
+        latest = driver_action(driver_headers, job_id, "returning")
+        latest = driver_action(driver_headers, job_id, "arrived-return")
+        prepare_custody(token, driver_headers, job_id, "return")
+    else:
+        prepare_custody(token, driver_headers, job_id, "return")
+
+    latest = driver_action(driver_headers, job_id, "handover")
+    latest = driver_action(driver_headers, job_id, "complete")
 
     if latest.get("status") != "completed":
         raise SmokeFailure(f"{service_type} did not complete: {latest}")

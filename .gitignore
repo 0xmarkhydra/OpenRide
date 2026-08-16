@@ -8,6 +8,10 @@ bin/
 coverage.out
 /services/api/api
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Node
 node_modules/
 .next/

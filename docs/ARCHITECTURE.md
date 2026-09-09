@@ -1,322 +1,340 @@
 # OpenRide System Architecture V2
 
-## 1. Architectural direction
+## 1. Direction
 
-OpenRide keeps the current Go modular-monolith foundation and changes the business kernel from platform-priced dispatch into an open mobility marketplace.
+OpenRide uses **microservices at deployment boundaries** and clean/hexagonal architecture inside each service.
 
-The architecture target is:
+The goal is not to maximize service count. The goal is independent ownership, deployment, data isolation, failure containment and clear bounded contexts.
 
 ```text
-Rider Flutter -----------\
-                         \
-Driver Flutter ------------> OpenRide Go API + WebSocket
-                         /           |
-Operator Next.js --------/           +--> PostgreSQL + PostGIS
-                                     +--> Redis GEO / Cache / Locks / TTL
-                                     +--> Object Storage
-                                     +--> Background workers
-                                     |
-                                     +--> Maps / SMS / Push / Payment providers
+Rider / Driver / Operator
+          |
+          v
+   Edge Gateway / BFF
+          |
+  +-------+--------+----------------+
+  |       |        |                |
+Identity Market  Ride             Trust
+          |
+          +---- gRPC ----> Location
+
+All domain services <----> NATS JetStream
 ```
 
-We do not split into microservices by default. Business boundaries must be clean enough to extract later when scale or ownership justifies it.
+The compatibility `services/api` runtime remains during migration but is not the target place for new Marketplace V2 ownership.
 
-## 2. Business kernel
+## 2. Hard architecture rules
 
-The target marketplace flow is:
+1. Every domain service is independently deployable.
+2. Every service owns its persistence model and migrations.
+3. No service reads another service's database directly.
+4. Cross-service IDs are references, not database foreign keys.
+5. Public clients enter through an Edge Gateway/BFF.
+6. Internal synchronous communication uses gRPC when an immediate answer is required.
+7. Asynchronous integration uses NATS JetStream.
+8. Cross-service workflows use Saga/process-manager patterns, never distributed DB transactions.
+9. Transactional state + integration event uses an Outbox.
+10. Event consumers use Inbox/idempotency before side effects.
+11. Every service exposes health, readiness, structured logs, metrics and traces.
+12. Shared packages may contain value objects/contracts/invariants but never shared repositories for service-owned state.
+
+## 3. Bounded contexts
+
+### Edge Gateway / BFF
+
+Owns transport concerns:
+- public REST/WebSocket edge;
+- token verification;
+- request correlation;
+- API versioning;
+- rate limits;
+- BFF composition;
+- migration/proxy compatibility.
+
+It must not own marketplace pricing, agreements or ride state.
+
+### Identity Service
+
+Owns:
+- authentication;
+- accounts;
+- sessions/tokens;
+- identity roles;
+- KYC identity status/references.
+
+### Marketplace Service
+
+Owns:
+- MobilityRequest;
+- DriverTariff;
+- Quote;
+- ranking orchestration;
+- Agreement;
+- service-module catalog and request validation.
+
+This is the first extracted V2 service.
+
+### Location Service
+
+Owns:
+- driver online/offline state;
+- latest location;
+- location freshness;
+- nearby candidate discovery;
+- Redis GEO/hot geo indexes;
+- optional durable geo history.
+
+Marketplace may synchronously ask Location for candidates. Marketplace must not read Location Redis keys directly.
+
+### Ride Service
+
+Owns execution after Agreement:
+- ride/job lifecycle;
+- state history;
+- execution cancellation;
+- incidents tied to execution;
+- service-specific lifecycle state.
+
+### Payment Service
+
+Owns:
+- payment intents;
+- capture/refund state;
+- driver earnings;
+- operator/platform fee records;
+- settlement ledger.
+
+### Trust Service
+
+Owns:
+- ratings;
+- reputation;
+- safety reports;
+- moderation/fraud signals;
+- trust decisions.
+
+### Realtime Service
+
+Owns client realtime transport:
+- WebSocket/SSE sessions;
+- event fanout;
+- reconnect/replay transport behavior;
+- connected-client presence.
+
+Durable business truth stays with domain services.
+
+### Notification Service
+
+Owns:
+- push/SMS/email jobs;
+- templates;
+- provider retries;
+- delivery receipts.
+
+### Operator Service
+
+Owns operator workflows and read models. It consumes events and invokes owning services rather than joining their databases.
+
+## 4. Marketplace kernel
+
+The cross-cutting marketplace model remains:
 
 ```text
 MobilityRequest
-    -> Candidate Discovery
     -> DriverTariff
     -> Quote
-    -> Marketplace Ranking
-    -> Rider Selection / Quick Match
+    -> Ranking
     -> Agreement
     -> Ride
-    -> Payment / Rating
 ```
 
-The key architectural rule is that `Request`, `Quote`, `Agreement` and `Ride` are different concepts and should not be collapsed into one giant Trip aggregate.
+`Request`, `Quote`, `Agreement` and `Ride` are separate concepts.
 
-## 3. Target module boundaries
+- Request is demand.
+- Tariff is a driver's commercial policy.
+- Quote is a driver-authorized offer for one request.
+- Agreement is immutable accepted commercial truth.
+- Ride is execution.
 
-### identity / auth
-Authentication, OTP, sessions and authorization primitives.
+Stable invariants live in `packages/core-go`; service-owned persistence and orchestration live in the owning service.
 
-### users
-User profile and account state.
+## 5. Communication model
 
-### drivers
-Driver profile, KYC status, capabilities, vehicle references and availability.
+Use synchronous calls only when the caller cannot continue without the answer.
 
-### tariffs
-Driver-owned commercial rules:
-- base/minimum fare;
-- per-km/per-minute rates;
-- pickup rule;
-- time/zone/long-distance adjustments;
-- manual/auto/hybrid mode;
-- automatic quote bounds.
-
-### requests
-Mobility demand:
-- pickup/destination/stops;
-- service type;
-- rider constraints/preferences;
-- lifecycle and expiry.
-
-### marketplace
-Candidate discovery, eligibility and orchestration of request-to-quote discovery.
-
-### quotes
-Driver-authorized commercial offers, expiry, withdrawal and acceptance state.
-
-### ranking
-Multi-objective ordering of offers using explainable signals such as ETA, price fit, quality and reliability.
-
-### fairness
-Exposure/fairness signals used as a bounded ranking input. It must not force rider selection.
-
-### agreements
-Immutable accepted commercial snapshot connecting rider, driver, request and quote.
-
-### rides
-Execution state after agreement. Service-specific workflows can live behind policies/handlers.
-
-### location
-Realtime driver location ingestion, freshness, GEO indexing and ride fan-out.
-
-### payments
-Payment transaction state, provider abstraction, refund and settlement hooks.
-
-### ratings / trust
-Ratings, reputation, safety reports and trust signals.
-
-### notifications
-Push/SMS/email orchestration and delivery jobs.
-
-### operator
-Operator/admin use cases, KYC review, support, disputes, policy, RBAC and audit.
-
-### instances
-Future self-host/operator boundary. `instance_id` should be introduced before federation is required.
-
-## 4. Data ownership
-
-### PostgreSQL/PostGIS
-Durable source of truth for:
-- users and driver profiles;
-- KYC metadata;
-- driver tariffs;
-- mobility requests;
-- quotes and pricing snapshots;
-- agreements;
-- rides and status history;
-- payment records;
-- ratings/reports;
-- operator policy and audit.
-
-### Redis
-Hot/ephemeral state only:
-- online driver GEO index;
-- latest locations;
-- websocket presence;
-- quote/offer TTL;
-- matching/accept locks;
-- idempotency/rate-limit cache;
-- short-lived marketplace state.
-
-Redis must not be the only durable source of truth for accepted commercial terms.
-
-### Object Storage
-Private files such as:
-- KYC documents;
-- avatars;
-- driver vehicle images;
-- incident/support attachments.
-
-## 5. Request-to-agreement flow
+Examples:
 
 ```text
-Rider
-  -> create MobilityRequest
-  -> route/distance enrichment
-  -> request becomes OPEN
-
-Marketplace
-  -> Redis GEO candidate discovery
-  -> eligibility filters
-  -> load driver tariff/preferences
-  -> generate or request Quote
-  -> rank valid quotes
-  -> stream offers to Rider
-
-Rider
-  -> selects Quote
-  -> atomic agreement transaction
-     * verify request open
-     * verify quote valid/not expired
-     * verify driver available
-     * lock request/driver
-     * create Agreement snapshot
-     * mark request AGREED
-     * reserve driver
-  <- Agreement
+Gateway -> Marketplace: create request                HTTP/gRPC sync
+Marketplace -> Location: discover nearby candidates   gRPC sync
+Marketplace -> NATS: agreement.created.v1             async
+Ride <- NATS: agreement.created.v1                    async
+Payment <- NATS: ride.completed.v1                    async
+Notification <- NATS: quote.created.v1                async
+Operator <- NATS: domain events                       async projection
 ```
 
-Quick Match uses the same valid quote set but lets the ranking/constraint engine select on the rider's behalf.
+## 6. Event naming and envelope
 
-## 6. Pricing architecture
-
-The old global Pricing module becomes a compatibility/recommendation layer during migration.
-
-Target pricing rule:
+Event names follow:
 
 ```text
-DriverTariff
-+ route facts
-+ transparent contextual rules
-= Quote
+openride.<context>.<aggregate>.<event>.v<major>
 ```
 
-Platform/operator policy may enforce visible guardrails such as legal min/max or service-area rules, but it should not silently replace driver-owned pricing.
-
-The quote stores a pricing breakdown and tariff/rule snapshot/version for auditability.
-
-## 7. Ranking architecture
-
-Initial ranking should remain deterministic and explainable.
-
-Example normalized score:
+Examples:
 
 ```text
-score =
-    w_eta         * eta_score
-  + w_price_fit   * price_fit_score
-  + w_quality     * quality_score
-  + w_reliability * reliability_score
-  + w_preference  * preference_score
-  + w_fairness    * bounded_fairness_score
+openride.marketplace.request.opened.v1
+openride.marketplace.quote.created.v1
+openride.marketplace.agreement.created.v1
+openride.ride.ride.completed.v1
+openride.payment.payment.captured.v1
 ```
 
-Do not sort solely by fare.
+Every integration event carries:
+- event ID;
+- event name/version;
+- aggregate ID/type;
+- instance/operator ID;
+- occurred_at;
+- correlation ID;
+- causation ID when available;
+- payload.
 
-Ranking output should include reason codes such as:
-- `FAST_PICKUP`;
-- `LOWEST_PRICE`;
-- `BEST_OVERALL`;
-- `HIGH_RATING`;
-- `PREFERRED_VEHICLE`.
+## 7. Data ownership
 
-## 8. Agreement consistency
+Development can use one PostgreSQL cluster, but logical ownership remains isolated:
 
-Agreement creation is one of the strongest consistency boundaries in the system.
+```text
+identity_db       -> identity-service
+marketplace_db    -> marketplace-service
+location_db       -> location-service
+ride_db           -> ride-service
+payment_db        -> payment-service
+trust_db          -> trust-service
+operator_db       -> operator projections
+```
 
-Guards:
-- request can only have one accepted agreement unless a service explicitly supports multi-provider jobs;
-- quote must belong to request and driver;
-- quote must be pending and unexpired;
-- driver cannot be reserved for incompatible concurrent work;
-- accepted price is snapshotted;
-- endpoint is idempotent;
-- database conditional updates are source of truth;
-- Redis locks reduce races but do not replace database invariants.
+No service may perform SQL joins across these boundaries.
 
-## 9. Location flow
+Redis namespaces/instances also have an owner. For example, hot driver GEO data belongs to Location Service, not Marketplace.
+
+## 8. Reliability model
+
+Critical command endpoints should be retry-safe and idempotent.
+
+Transactional event publication:
+
+```text
+BEGIN DB TX
+  mutate owned state
+  insert outbox event
+COMMIT
+   |
+   v
+outbox relay
+   |
+   v
+NATS JetStream
+   |
+   v
+consumer inbox dedupe
+   |
+   v
+consumer-owned state change
+```
+
+This prevents state being committed while its required integration event is lost.
+
+## 9. Agreement consistency
+
+Agreement acceptance is a strong consistency boundary **inside Marketplace Service**.
+
+Marketplace must atomically verify:
+- request is still open;
+- quote belongs to request/driver;
+- quote is pending and unexpired;
+- quote has not already been accepted;
+- accepted terms are snapshotted;
+- idempotency constraints hold;
+- outbox event is written in the same DB transaction.
+
+Other services react to `agreement.created` asynchronously.
+
+Do not attempt a distributed transaction across Marketplace, Ride and Payment.
+
+## 10. Location path
 
 ```text
 Driver GPS
- -> app
- -> WebSocket/HTTP ingestion
- -> timestamp/accuracy validation
- -> Redis latest location + GEO index
- -> active ride fan-out to Rider room
- -> optional durable sampling for support/analytics
+  -> Edge/Realtime ingress
+  -> Location Service
+  -> validation/freshness
+  -> Redis GEO + latest position
+  -> candidate discovery API
+  -> realtime fanout where required
 ```
 
-Do not write every raw GPS ping into primary transactional tables.
+Raw GPS pings should not flood transactional business tables.
 
-## 10. Background processing
+## 11. Observability
 
-Workers handle non-blocking tasks:
-- push notifications;
-- quote expiry cleanup/reconciliation;
-- scheduled request activation;
-- receipts;
-- settlement/earning computation;
-- analytics events;
-- provider callback retries.
+Every service should emit:
+- structured JSON logs;
+- OpenTelemetry traces;
+- correlation IDs;
+- RED metrics (rate/errors/duration);
+- event-consumer lag/retry/DLQ metrics;
+- business metrics such as matching latency, quote conversion and agreement success.
 
-A Redis-backed queue is sufficient initially. NATS/Kafka should only be introduced after real event topology or throughput requires it.
+## 12. Self-hosting
 
-## 11. Failure behavior
+OpenRide must work for a community/operator running a small deployment as well as a larger operator.
 
-### Redis unavailable
-- do not create unsafe new matches/agreements that depend on unavailable locks/geo state;
-- durable requests, quotes, agreements and rides remain queryable from PostgreSQL;
-- active rides degrade location freshness safely.
+A small deployment may run all services on one host and one Postgres cluster with separate logical databases. The service ownership rules do not disappear just because infrastructure is colocated.
 
-### Routing provider unavailable
-- new route-dependent quote generation should fail clearly or use an explicitly configured fallback;
-- never fabricate a commercial agreement from unknown distance data.
-
-### WebSocket disconnect
-- mobile reconnects with backoff;
-- after reconnect, fetch durable snapshot over REST then resume realtime events.
-
-### Payment failure
-- Ride and Payment remain separate state machines;
-- a completed ride may have pending/failed payment requiring recovery.
-
-## 12. Instance/self-host path
-
-OpenRide should prepare for self-hosted operator instances without implementing federation too early.
-
-Target boundary:
+## 13. Current extraction order
 
 ```text
-OpenRide Core
-  ├── Instance A / local operator
-  ├── Instance B / cooperative
-  └── Instance C / community
+1. Marketplace Service      ✅ first slice
+2. Location Service
+3. Ride Service
+4. Identity Service
+5. Payment Service
+6. Trust Service
+7. Realtime Service
+8. Notification Service
+9. Operator Service
+10. retire compatibility API capability-by-capability
 ```
 
-Core marketplace-owned rows should eventually carry `instance_id` and provider configuration should remain abstracted.
+Extraction order can change when product priorities require it, but data ownership cannot become ambiguous.
 
-## 13. Scale path
+## 14. Technology baseline
 
-Possible extraction order when justified:
-1. Location Service.
-2. Realtime Gateway.
-3. Marketplace Matching/Ranking Service.
-4. Notification Worker.
-5. Payment/Settlement Service.
-6. Analytics pipeline.
+- Go domain services;
+- Flutter Rider/Driver apps;
+- Next.js Operator UI;
+- PostgreSQL/PostGIS;
+- Redis for owned hot-state use cases;
+- NATS JetStream for durable async integration;
+- gRPC for required synchronous service-to-service calls;
+- REST/WebSocket at public edge;
+- S3-compatible object storage;
+- OpenTelemetry for observability.
 
-Do not extract solely for architecture aesthetics.
+Kubernetes/service mesh are deployment choices, not business-architecture requirements. Docker Compose remains a valid small/self-hosted deployment path.
 
-## 14. Technology rules
+## 15. Compatibility policy
 
-Initial target remains:
-- Go backend;
-- Flutter rider/driver apps;
-- Next.js operator web;
-- PostgreSQL + PostGIS;
-- Redis;
-- WebSocket;
-- S3-compatible object storage.
+Legacy `trips`, platform pricing and dispatch remain temporarily in `services/api`.
 
-Avoid by default in early phases:
-- Kubernetes;
-- service mesh;
-- global event sourcing;
-- complex CQRS;
-- multi-region active-active;
-- ML-based ranking before trustworthy data exists.
+A legacy capability is deleted only when:
+1. its owning V2 service exists;
+2. data migration/projection is defined;
+3. traffic is migrated;
+4. compatibility tests pass;
+5. rollback is understood.
 
-## 15. Migration compatibility
-
-The repository currently contains `trips`, `pricing`, `dispatch`, designated-driver and inspection semantics. These remain compatibility/runtime modules while marketplace replacements are introduced.
-
-See [`OPENRIDE_MIGRATION_PLAN_V2.md`](./OPENRIDE_MIGRATION_PLAN_V2.md).
+See `MICROSERVICES_ARCHITECTURE.md` and `OPENRIDE_MIGRATION_PLAN_V2.md` for the migration source of truth.

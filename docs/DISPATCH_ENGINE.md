@@ -1,180 +1,292 @@
-# Dispatch Engine
+# OpenRide Marketplace Matching Engine
 
-## 1. Mục tiêu
+> Historical filename retained for compatibility. This document supersedes the old one-driver dispatch model.
 
-Dispatch chọn và gán tài xế phù hợp cho Trip mới với ba ưu tiên:
-1. match nhanh;
-2. tránh double assignment;
-3. có thể giải thích/tuning được.
+## 1. Goal
 
-MVP không dùng ML. Thuật toán deterministic trước để dễ debug và vận hành.
+The matching engine does not exist to choose one driver and push a platform-owned fare.
 
-## 2. Input
+Its target responsibilities are:
 
-- trip_id
-- pickup lat/lng
-- service_type
-- city/zone
-- rider context cần thiết
-- candidate search policy
+```text
+discover candidates
+-> check eligibility
+-> obtain/generate driver-authorized quotes
+-> rank valid offers
+-> expose meaningful choices
+-> create agreement safely when selected
+```
+
+## 2. Inputs
+
+Typical request context:
+- request_id;
+- pickup/destination/stops;
+- service_type;
+- route distance/duration;
+- city/zone/instance;
+- rider preferences and constraints;
+- candidate search policy.
 
 ## 3. Candidate discovery
 
-Redis GEO index theo city/service type:
+Redis GEO remains the primary hot index for online driver discovery.
+
+Suggested key shape:
 
 ```text
-geo:drivers:{city}:{service_type}
+geo:drivers:{instance}:{city}:{service_type}
 ```
 
 Flow:
 
 ```text
-Trip SEARCHING
-  -> GEOSEARCH radius R1
-  -> filter stale/unavailable
-  -> score candidates
-  -> offer
-  -> nếu không thành công: expand R2/R3 hoặc retry policy
+Request OPEN
+ -> GEOSEARCH radius R1
+ -> filter stale/ineligible drivers
+ -> expand R2/R3 if needed
+ -> produce candidate set
 ```
 
-Không query toàn bộ drivers trong PostgreSQL cho mỗi booking.
+Do not scan PostgreSQL driver tables for every realtime request.
 
-## 4. Candidate filters
+## 4. Eligibility filters
 
-Driver bị loại nếu:
-- không approved;
+A driver is excluded when:
+- KYC/approval invalid;
+- account suspended;
 - offline;
-- busy;
-- latest location quá stale;
-- sai service type;
-- sai region;
-- suspended;
-- đang có active dispatch lock/trip;
-- vehicle không hợp lệ.
+- location stale;
+- wrong capability/service type;
+- wrong service region/instance;
+- required vehicle invalid;
+- already reserved/busy for incompatible work;
+- tariff/quote mode cannot serve the request;
+- request violates driver-defined hard constraints.
 
-## 5. Scoring MVP
+## 5. Quote generation
 
-Score có thể chuẩn hóa về higher-is-better:
+Candidate discovery and pricing are separate concerns.
+
+### Auto mode
+
+System generates a quote using the driver's active tariff and explicit auto-quote bounds.
+
+### Manual mode
+
+The request is delivered to the driver. Driver enters/submits a quote.
+
+### Hybrid mode
+
+System proposes a quote from driver tariff. Driver may edit it before submission when policy/time permits.
+
+A quote must retain enough information to explain:
+- route facts;
+- tariff version;
+- rule adjustments;
+- final total.
+
+## 6. Ranking
+
+Ranking is multi-objective and higher-is-better after normalization.
+
+Example:
 
 ```text
 score =
-  w_distance * distance_score
-+ w_idle     * idle_time_score
-+ w_accept   * acceptance_score
-+ w_quality  * quality_score
-- w_cancel   * cancellation_penalty
+    w_eta         * eta_score
+  + w_price_fit   * price_fit_score
+  + w_quality     * quality_score
+  + w_reliability * reliability_score
+  + w_preference  * preference_score
+  + w_fairness    * fairness_score
 ```
 
-MVP có thể bắt đầu rất đơn giản bằng distance + idle time, sau đó tuning khi có dữ liệu.
+Initial implementation should be deterministic.
 
-Không đưa những tín hiệu chưa có dữ liệu đáng tin vào scoring chỉ để làm hệ thống “thông minh”.
+Do not use ML until there is trustworthy production data and clear observability.
 
-## 6. Offer strategies
+## 7. Price fit is not cheapest wins
 
-### Sequential
-Offer D1, timeout, rồi D2.
-- ít race;
-- match chậm hơn khi driver không phản hồi.
+`price_fit_score` measures how suitable an offer is relative to rider constraints/market context, not simply whether it is the minimum fare.
 
-### Small batch
-Offer top N nhỏ, driver đầu tiên accept thắng.
-- match nhanh;
-- phải xử lý race/lock tốt.
+UI/ranking should be able to label different offers:
+- CHEAPEST;
+- FASTEST_PICKUP;
+- BEST_OVERALL;
+- HIGH_RATING.
 
-MVP nên cấu hình được strategy và batch size. Bắt đầu sequential hoặc batch rất nhỏ.
+The cheapest offer must not automatically receive `BEST_OVERALL`.
 
-## 7. Atomic accept
+## 8. Fairness
 
-Accept phải là thao tác atomic.
+Fairness is a bounded exposure signal.
+
+It may help avoid repeatedly hiding otherwise-qualified drivers when other scores are nearly equal.
+
+It must not:
+- force riders to choose a driver;
+- override safety/eligibility;
+- become a hidden quota system;
+- overpower large ETA/quality differences.
+
+Fairness logic and weight changes must be observable and auditable.
+
+## 9. Explainability
+
+Every ranked result should expose reason codes suitable for API/UI use.
+
+Example:
+
+```json
+{
+  "rank": 1,
+  "score": 0.91,
+  "reasons": ["BEST_OVERALL", "FAST_PICKUP", "HIGH_RATING"]
+}
+```
+
+Internal debug output may include component scores and configuration version.
+
+## 10. Offer delivery strategy
+
+The old sequential single-offer model is replaced by configurable market exposure.
+
+Possible strategies:
+
+### Small marketplace batch
+Expose request to top N eligible candidates and collect quotes for a short window.
+
+### Progressive waves
+Expose to a small nearby set first, then expand radius/driver count if too few usable quotes arrive.
+
+### Manual-only driver pools
+Requests may remain open longer to allow manual quotes.
+
+The strategy can vary by density/service type but must preserve rider response-time goals.
+
+## 11. Quote TTL
+
+Every quote has an explicit expiry.
+
+Expiry should account for:
+- request freshness;
+- driver location movement;
+- service type;
+- manual vs auto quote;
+- market density.
+
+Expired quotes cannot be accepted.
+
+## 12. Rider selection
+
+Marketplace mode:
+
+```text
+Rider receives ranked offers
+-> selects one valid quote
+-> agreement transaction
+```
+
+Quick Match:
+
+```text
+Rider supplies constraints
+-> engine chooses highest-ranked quote satisfying constraints
+-> agreement transaction
+```
+
+Quick Match is delegated choice, not platform-owned pricing.
+
+## 13. Atomic agreement creation
+
+Selection must be atomic.
 
 Pseudo flow:
 
 ```text
-BEGIN ACCEPT
-  verify offer exists + not expired
-  acquire trip assignment lock
-  verify trip == SEARCHING
-  acquire/check driver availability lock
-  verify driver == AVAILABLE
-  assign driver to trip
-  mark driver BUSY
-  invalidate other offers
+BEGIN
+  verify request is OPEN/RECEIVING_QUOTES
+  verify quote belongs to request
+  verify quote == PENDING and not expired
+  lock/check driver availability
+  verify driver still eligible
+  create immutable agreement snapshot
+  mark request AGREED
+  mark quote ACCEPTED
+  invalidate/close remaining quote paths
+  reserve driver
 COMMIT
 ```
 
-Có thể dùng Redis distributed lock kết hợp DB transaction/conditional update. DB vẫn là source of truth cho assignment durable.
+Use database conditions/invariants as durable truth. Redis locks are only a race-reduction layer.
 
-## 8. Double assignment protection
+## 14. Double-assignment protection
 
-Các guard tối thiểu:
-- unique/conditional invariant cho active trip per driver ở application/database level;
-- trip version hoặc `WHERE status='searching' AND driver_id IS NULL` khi update;
-- Redis short lock để giảm race;
-- idempotent accept endpoint.
+Minimum protections:
+- unique/conditional invariant for incompatible active work per driver;
+- optimistic version/conditional request update;
+- short Redis request/driver lock;
+- idempotent accept endpoint;
+- agreement unique key for normal single-provider request.
 
-## 9. Offer TTL
+## 15. Cancellation interaction
 
-Offer có expiry rõ ràng, ví dụ 8–15 giây để bắt đầu thử nghiệm. Giá trị thực tế cần tuning bằng telemetry.
+If rider cancels before agreement:
+- request -> CANCELLED;
+- stop new quote generation;
+- invalidate/expire outstanding quote visibility;
+- notify relevant drivers as needed.
 
-Driver accept sau expiry nhận business error `OFFER_EXPIRED`.
+If agreement already exists, cancellation follows Ride/Agreement policy and may have explicit fees/compensation rules.
 
-## 10. Search expansion
+## 16. Driver goes stale/offline
 
-Ví dụ policy ban đầu:
-- Wave 1: 1.5 km
-- Wave 2: 3 km
-- Wave 3: 5 km
+Before agreement:
+- remove/exclude from candidate discovery;
+- invalidate new auto quoting;
+- existing quote may be marked unavailable or allowed to expire according to policy.
 
-Đây chỉ là default thử nghiệm; city density và service type quyết định radius phù hợp.
+After agreement:
+- do not silently rematch without explicit ride recovery policy;
+- surface degraded location/operator alerts.
 
-## 11. Cancellation interaction
+## 17. Metrics
 
-Nếu Rider hủy khi SEARCHING:
-- transition trip CANCELLED;
-- cancel all offers;
-- release locks;
-- notify candidate/assigned driver nếu cần.
-
-Nếu đã ACCEPTED trở đi, cancellation rule có thể phát sinh fee/business policy riêng.
-
-## 12. Driver goes offline/stale
-
-Nếu driver mất heartbeat/location freshness:
-- không đưa vào candidate mới;
-- active offer có thể expire;
-- nếu đang active trip, không tự cancel ngay; chuyển sang degraded/ops monitoring theo policy.
-
-## 13. Metrics
-
-Bắt buộc đo:
-- dispatch requests/sec;
-- candidates found per wave;
+Required metrics:
+- requests/sec;
+- candidates/request;
 - zero-candidate rate;
-- offer acceptance rate;
-- median/p95 time-to-match;
-- offer timeout rate;
-- assignment conflict rate;
-- search radius at success;
-- cancellation before match;
-- stale driver exclusion count.
+- quotes/request;
+- time-to-first-quote;
+- time-to-3-quotes or configured offer target;
+- quote expiration rate;
+- rider selection time;
+- quick-match success rate;
+- agreement conflict rate;
+- pickup ETA distribution;
+- price distribution by service/zone;
+- driver exposure distribution;
+- cancellation before agreement;
+- request expiry rate;
+- stale-driver exclusion count.
 
-## 14. Future improvements
+## 18. Migration from current engine
 
-Sau khi có data thật:
-- ETA-to-pickup thay vì straight-line distance;
-- supply/demand balancing;
-- driver fairness;
-- batching/multi-objective optimization;
-- zone heatmap/repositioning;
-- surge pricing signal;
-- ML acceptance probability;
-- Rust matching engine nếu Go service được profiling là CPU bottleneck thực sự.
+Current behavior roughly does:
 
-## 15. Không làm ở MVP
+```text
+nearby -> score by distance/idle -> choose driver[0] -> offer -> accept -> trip assignment
+```
 
-- Không global optimizer toàn thành phố.
-- Không reinforcement learning.
-- Không tự xây routing engine.
-- Không rank theo hàng chục feature chưa có dữ liệu.
+Migration stages:
+1. reuse candidate discovery;
+2. introduce DriverTariff;
+3. persist Quote;
+4. return multiple quotes to new endpoints;
+5. add ranking/reasons;
+6. add Agreement transaction;
+7. move rider UI to offer selection;
+8. deprecate legacy one-driver offer flow.
 
-MVP phải dễ quan sát và giải thích trước khi tối ưu sâu.
+The current engine remains a compatibility path until the marketplace flow is production-ready.

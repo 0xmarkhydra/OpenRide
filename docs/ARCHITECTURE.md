@@ -1,194 +1,322 @@
-# FlashX System Architecture
+# OpenRide System Architecture V2
 
-## 1. Kiến trúc Phase 1
+## 1. Architectural direction
 
-Phase 1 dùng Go modular monolith với module boundary rõ ràng. Mục tiêu là tốc độ phát triển cao nhưng vẫn có đường tách service khi tải thực tế yêu cầu.
+OpenRide keeps the current Go modular-monolith foundation and changes the business kernel from platform-priced dispatch into an open mobility marketplace.
+
+The architecture target is:
 
 ```text
 Rider Flutter -----------\
                          \
-Driver Flutter ------------> Go API + WebSocket
-                         /        |
-Admin Next.js -----------/        +--> PostgreSQL + PostGIS
-                                  +--> Redis GEO / Cache / Locks
-                                  +--> Object Storage
-                                  +--> Background workers
-                                  |
-                                  +--> Maps / SMS / Push / Payment
+Driver Flutter ------------> OpenRide Go API + WebSocket
+                         /           |
+Operator Next.js --------/           +--> PostgreSQL + PostGIS
+                                     +--> Redis GEO / Cache / Locks / TTL
+                                     +--> Object Storage
+                                     +--> Background workers
+                                     |
+                                     +--> Maps / SMS / Push / Payment providers
 ```
 
-## 2. Module boundaries
+We do not split into microservices by default. Business boundaries must be clean enough to extract later when scale or ownership justifies it.
 
-### auth
-Authentication, token/session, OTP orchestration, authorization primitives.
+## 2. Business kernel
+
+The target marketplace flow is:
+
+```text
+MobilityRequest
+    -> Candidate Discovery
+    -> DriverTariff
+    -> Quote
+    -> Marketplace Ranking
+    -> Rider Selection / Quick Match
+    -> Agreement
+    -> Ride
+    -> Payment / Rating
+```
+
+The key architectural rule is that `Request`, `Quote`, `Agreement` and `Ride` are different concepts and should not be collapsed into one giant Trip aggregate.
+
+## 3. Target module boundaries
+
+### identity / auth
+Authentication, OTP, sessions and authorization primitives.
 
 ### users
-Rider/customer profile, account status.
+User profile and account state.
 
 ### drivers
-Driver profile, KYC state, vehicle, availability.
+Driver profile, KYC status, capabilities, vehicle references and availability.
 
-### trips
-Trip aggregate, lifecycle/state machine, history.
+### tariffs
+Driver-owned commercial rules:
+- base/minimum fare;
+- per-km/per-minute rates;
+- pickup rule;
+- time/zone/long-distance adjustments;
+- manual/auto/hybrid mode;
+- automatic quote bounds.
 
-### dispatch
-Candidate search, filtering, scoring, offer, timeout, assignment lock.
+### requests
+Mobility demand:
+- pickup/destination/stops;
+- service type;
+- rider constraints/preferences;
+- lifecycle and expiry.
+
+### marketplace
+Candidate discovery, eligibility and orchestration of request-to-quote discovery.
+
+### quotes
+Driver-authorized commercial offers, expiry, withdrawal and acceptance state.
+
+### ranking
+Multi-objective ordering of offers using explainable signals such as ETA, price fit, quality and reliability.
+
+### fairness
+Exposure/fairness signals used as a bounded ranking input. It must not force rider selection.
+
+### agreements
+Immutable accepted commercial snapshot connecting rider, driver, request and quote.
+
+### rides
+Execution state after agreement. Service-specific workflows can live behind policies/handlers.
 
 ### location
-GPS ingestion, Redis GEO update, freshness, trip location fan-out.
-
-### pricing
-Fare estimate, final fare, service type, promotion hooks.
+Realtime driver location ingestion, freshness, GEO indexing and ride fan-out.
 
 ### payments
-Payment provider abstraction, payment transaction state, webhook handling.
+Payment transaction state, provider abstraction, refund and settlement hooks.
+
+### ratings / trust
+Ratings, reputation, safety reports and trust signals.
 
 ### notifications
 Push/SMS/email orchestration and delivery jobs.
 
-### admin
-Admin-only use cases, RBAC và operational actions.
+### operator
+Operator/admin use cases, KYC review, support, disputes, policy, RBAC and audit.
 
-## 3. Data ownership
+### instances
+Future self-host/operator boundary. `instance_id` should be introduced before federation is required.
+
+## 4. Data ownership
 
 ### PostgreSQL/PostGIS
-Dùng cho dữ liệu cần bền vững:
-- riders;
-- drivers;
-- vehicles;
-- trips;
-- trip status history;
-- pricing config;
+Durable source of truth for:
+- users and driver profiles;
+- KYC metadata;
+- driver tariffs;
+- mobility requests;
+- quotes and pricing snapshots;
+- agreements;
+- rides and status history;
 - payment records;
-- promotions;
-- audit records.
+- ratings/reports;
+- operator policy and audit.
 
 ### Redis
-Dùng cho state thay đổi nhanh:
-- online driver geo index;
-- latest driver location;
-- current driver availability;
-- dispatch locks;
-- trip/socket ephemeral state;
-- cache;
-- rate limit/idempotency ngắn hạn khi phù hợp.
+Hot/ephemeral state only:
+- online driver GEO index;
+- latest locations;
+- websocket presence;
+- quote/offer TTL;
+- matching/accept locks;
+- idempotency/rate-limit cache;
+- short-lived marketplace state.
 
-Redis không phải source of truth cho lịch sử nghiệp vụ lâu dài.
+Redis must not be the only durable source of truth for accepted commercial terms.
 
 ### Object Storage
-Dùng cho:
+Private files such as:
 - KYC documents;
 - avatars;
-- vehicle images;
-- support attachments.
+- driver vehicle images;
+- incident/support attachments.
 
-## 4. Request flow — create trip
+## 5. Request-to-agreement flow
 
 ```text
 Rider
-  -> REST POST /v1/trips/estimate
-  -> Maps provider route/distance
-  -> Pricing module
-  <- Estimate
+  -> create MobilityRequest
+  -> route/distance enrichment
+  -> request becomes OPEN
+
+Marketplace
+  -> Redis GEO candidate discovery
+  -> eligibility filters
+  -> load driver tariff/preferences
+  -> generate or request Quote
+  -> rank valid quotes
+  -> stream offers to Rider
 
 Rider
-  -> REST POST /v1/trips
-  -> Trip persisted: SEARCHING
-  -> Dispatch starts
-  -> Redis GEO candidate lookup
-  -> Offer driver via realtime/push
-  -> Driver accepts
-  -> Atomic assignment lock
-  -> Trip: ACCEPTED
-  -> Notify Rider
+  -> selects Quote
+  -> atomic agreement transaction
+     * verify request open
+     * verify quote valid/not expired
+     * verify driver available
+     * lock request/driver
+     * create Agreement snapshot
+     * mark request AGREED
+     * reserve driver
+  <- Agreement
 ```
 
-## 5. Location flow
+Quick Match uses the same valid quote set but lets the ranking/constraint engine select on the rider's behalf.
+
+## 6. Pricing architecture
+
+The old global Pricing module becomes a compatibility/recommendation layer during migration.
+
+Target pricing rule:
+
+```text
+DriverTariff
++ route facts
++ transparent contextual rules
+= Quote
+```
+
+Platform/operator policy may enforce visible guardrails such as legal min/max or service-area rules, but it should not silently replace driver-owned pricing.
+
+The quote stores a pricing breakdown and tariff/rule snapshot/version for auditability.
+
+## 7. Ranking architecture
+
+Initial ranking should remain deterministic and explainable.
+
+Example normalized score:
+
+```text
+score =
+    w_eta         * eta_score
+  + w_price_fit   * price_fit_score
+  + w_quality     * quality_score
+  + w_reliability * reliability_score
+  + w_preference  * preference_score
+  + w_fairness    * bounded_fairness_score
+```
+
+Do not sort solely by fare.
+
+Ranking output should include reason codes such as:
+- `FAST_PICKUP`;
+- `LOWEST_PRICE`;
+- `BEST_OVERALL`;
+- `HIGH_RATING`;
+- `PREFERRED_VEHICLE`.
+
+## 8. Agreement consistency
+
+Agreement creation is one of the strongest consistency boundaries in the system.
+
+Guards:
+- request can only have one accepted agreement unless a service explicitly supports multi-provider jobs;
+- quote must belong to request and driver;
+- quote must be pending and unexpired;
+- driver cannot be reserved for incompatible concurrent work;
+- accepted price is snapshotted;
+- endpoint is idempotent;
+- database conditional updates are source of truth;
+- Redis locks reduce races but do not replace database invariants.
+
+## 9. Location flow
 
 ```text
 Driver GPS
-  -> Driver App
-  -> WebSocket/HTTP location ingestion
-  -> validate timestamp/accuracy
-  -> Redis latest location + GEO index
-  -> if active trip: fan-out location event to Rider room
-  -> periodically/sample durable trip path if required
+ -> app
+ -> WebSocket/HTTP ingestion
+ -> timestamp/accuracy validation
+ -> Redis latest location + GEO index
+ -> active ride fan-out to Rider room
+ -> optional durable sampling for support/analytics
 ```
 
-Không ghi mọi GPS point trực tiếp vào bảng chính của PostgreSQL.
+Do not write every raw GPS ping into primary transactional tables.
 
-## 6. Consistency strategy
+## 10. Background processing
 
-- Strong consistency ở assignment/payment transition quan trọng.
-- Eventual consistency được chấp nhận cho map marker/location display.
-- Trip state transition phải transactional hoặc guarded bằng compare-and-set/version.
-- Dispatch phải có distributed lock/idempotent accept.
-
-## 7. Background processing
-
-Worker xử lý các tác vụ không cần block request:
+Workers handle non-blocking tasks:
 - push notifications;
-- SMS;
-- receipt;
-- analytics event;
-- cleanup expired offers;
-- retry provider callbacks;
-- settlement/earning computation sau này.
+- quote expiry cleanup/reconciliation;
+- scheduled request activation;
+- receipts;
+- settlement/earning computation;
+- analytics events;
+- provider callback retries.
 
-MVP có thể dùng Redis-backed queue. Khi throughput/event topology yêu cầu mới cân nhắc NATS/Kafka.
+A Redis-backed queue is sufficient initially. NATS/Kafka should only be introduced after real event topology or throughput requires it.
 
-## 8. API style
-
-- REST cho command/query thông thường.
-- WebSocket cho realtime trip/location events.
-- Webhook cho Payment provider và third-party callback.
-- OpenAPI/Swagger cho REST API.
-
-## 9. Failure handling
+## 11. Failure behavior
 
 ### Redis unavailable
-- Không tạo dispatch mới nếu không đảm bảo assignment safety.
-- Existing trip phải degrade an toàn; location có thể tạm stale.
+- do not create unsafe new matches/agreements that depend on unavailable locks/geo state;
+- durable requests, quotes, agreements and rides remain queryable from PostgreSQL;
+- active rides degrade location freshness safely.
 
-### Maps provider unavailable
-- Estimate/route-dependent booking có thể fail rõ ràng hoặc dùng cached/static fallback theo policy.
+### Routing provider unavailable
+- new route-dependent quote generation should fail clearly or use an explicitly configured fallback;
+- never fabricate a commercial agreement from unknown distance data.
 
 ### WebSocket disconnect
-- Mobile reconnect với exponential backoff.
-- Sau reconnect phải query snapshot state từ REST trước/hoặc sync event sequence.
+- mobile reconnects with backoff;
+- after reconnect, fetch durable snapshot over REST then resume realtime events.
 
-### Payment provider failure
-- Trip completion và payment state tách biệt.
-- Webhook/idempotency đảm bảo không double-charge.
+### Payment failure
+- Ride and Payment remain separate state machines;
+- a completed ride may have pending/failed payment requiring recovery.
 
-## 10. Scale path
+## 12. Instance/self-host path
 
-Không tách service vì “trông enterprise”. Chỉ extract khi có ít nhất một lý do rõ:
-- module cần scale độc lập;
-- deployment cadence độc lập;
-- ownership/team boundary;
-- resource profile rất khác;
-- measured bottleneck.
+OpenRide should prepare for self-hosted operator instances without implementing federation too early.
 
-Thứ tự có khả năng:
+Target boundary:
+
+```text
+OpenRide Core
+  ├── Instance A / local operator
+  ├── Instance B / cooperative
+  └── Instance C / community
+```
+
+Core marketplace-owned rows should eventually carry `instance_id` and provider configuration should remain abstracted.
+
+## 13. Scale path
+
+Possible extraction order when justified:
 1. Location Service.
-2. Dispatch Service.
-3. Notification Worker Service.
-4. Payment Service.
-5. Analytics pipeline.
+2. Realtime Gateway.
+3. Marketplace Matching/Ranking Service.
+4. Notification Worker.
+5. Payment/Settlement Service.
+6. Analytics pipeline.
 
-## 11. Go vs Rust
+Do not extract solely for architecture aesthetics.
 
-Backend chính dùng Go để tối ưu tốc độ phát triển, concurrency và khả năng tuyển/mở rộng team. Rust chỉ được cân nhắc cho measured hot-path như custom routing, dense geospatial matching hoặc stream processor khi profiling chứng minh cần thiết.
+## 14. Technology rules
 
-## 12. Nguyên tắc tránh over-engineering
+Initial target remains:
+- Go backend;
+- Flutter rider/driver apps;
+- Next.js operator web;
+- PostgreSQL + PostGIS;
+- Redis;
+- WebSocket;
+- S3-compatible object storage.
 
-Phase 1 không mặc định dùng:
+Avoid by default in early phases:
 - Kubernetes;
-- Kafka;
 - service mesh;
-- event sourcing toàn hệ thống;
-- CQRS phức tạp;
-- multi-region active-active.
+- global event sourcing;
+- complex CQRS;
+- multi-region active-active;
+- ML-based ranking before trustworthy data exists.
 
-Các công nghệ trên chỉ được thêm sau khi có yêu cầu vận hành thực tế.
+## 15. Migration compatibility
+
+The repository currently contains `trips`, `pricing`, `dispatch`, designated-driver and inspection semantics. These remain compatibility/runtime modules while marketplace replacements are introduced.
+
+See [`OPENRIDE_MIGRATION_PLAN_V2.md`](./OPENRIDE_MIGRATION_PLAN_V2.md).

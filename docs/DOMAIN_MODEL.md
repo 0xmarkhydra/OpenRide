@@ -1,203 +1,391 @@
-# Domain Model
+# OpenRide Domain Model V2
 
-> **Business rebaseline 12/08/2026:** domain trong file này đang được migrate từ ride-hailing semantics cũ sang designated-driver/vehicle-assistance. Source of truth hiện tại là [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và `PRD_MVP.md`. Đặc biệt, vehicle trung tâm của booking mới là **phương tiện của khách hàng**, và service MVP là Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ.
+## 1. Domain rule
 
-## 1. Core domains
+OpenRide is modeled as a marketplace first and a ride executor second.
 
-FlashX chia domain theo business capability, không chia theo database table.
+The primary business chain is:
 
-## 2. Rider
-
-### Entity
-`Rider`
-
-Thuộc tính chính:
-- id
-- phone
-- full_name
-- status
-- created_at
-
-Các trạng thái account tối thiểu:
-- active
-- suspended
-- deleted/disabled theo policy
-
-## 3. Driver
-
-### Aggregate
-`Driver`
-
-Bao gồm:
-- driver profile
-- approval/KYC status
-- availability status
-- vehicle references
-
-### Approval status
 ```text
-pending -> approved
-pending -> rejected
-pending -> more_info_required
-more_info_required -> pending/approved/rejected
+MobilityRequest -> Quote -> Agreement -> Ride
 ```
 
-### Availability status
-```text
-offline -> online -> busy -> online -> offline
-```
+Legacy `Trip` semantics remain temporarily for compatibility but are no longer the target business model.
 
-Chỉ driver `approved` mới được `online`.
+## 2. Identity
 
-## 4. Customer Vehicle
+### User
 
-> Bảng `vehicles` gắn `driver_id` trong schema hiện tại là compatibility/legacy của mô hình ride-hailing và **không phải domain vehicle mục tiêu**.
+Shared account identity.
 
-Target Full Marketplace: phương tiện thuộc khách hàng và được chọn khi tạo yêu cầu.
-
-Thuộc tính chính:
+Core attributes:
 - id;
-- owner/customer_id;
-- type: car/motorbike;
-- license_plate;
+- phone/email identity;
+- status;
+- locale;
+- created_at/updated_at.
+
+A user may participate in more than one role over time.
+
+### RiderProfile
+
+Rider-specific preferences and trust context.
+
+### DriverProfile
+
+Driver identity, approval/KYC state, availability, rating aggregates and service capabilities.
+
+Approval example:
+
+```text
+PENDING -> APPROVED
+PENDING -> REJECTED
+PENDING -> MORE_INFO_REQUIRED
+MORE_INFO_REQUIRED -> PENDING / APPROVED / REJECTED
+```
+
+Availability example:
+
+```text
+OFFLINE -> ONLINE -> RESERVED/BUSY -> ONLINE -> OFFLINE
+```
+
+Only eligible/approved drivers can participate in live marketplace matching.
+
+## 3. DriverVehicle and Capability
+
+For passenger ride verticals, the provider vehicle belongs to the driver/provider side.
+
+Suggested `DriverVehicle` attributes:
+- id;
+- driver_id;
+- type;
+- plate_number;
 - brand/model;
-- color;
-- transmission: automatic/manual/n/a;
-- seats nếu áp dụng;
-- notes;
-- photo_object_key optional.
+- year/color;
+- seats;
+- service eligibility;
+- document/inspection status;
+- active status.
 
-Driver không cần sở hữu phương tiện để nhận chuyến. Thay vào đó Driver có **capability** cho loại dịch vụ, hạng bằng và khả năng lái số sàn/số tự động.
+`DriverCapability` represents what work a driver is qualified/willing to perform.
 
-## 5. Trip aggregate
+Examples:
+- passenger_car;
+- passenger_motorbike;
+- designated_driver_car;
+- designated_driver_bike;
+- vehicle_inspection_assist;
+- delivery.
 
-`Trip` là aggregate quan trọng nhất.
+Legacy customer-owned vehicle support remains relevant for designated-driver/inspection verticals but must not define the entire OpenRide core.
 
-Thuộc tính chính hiện tại:
-- id
-- rider_id
-- driver_id nullable trước match
-- service_type
-- pickup
-- destination
-- estimated_distance_m
-- estimated_duration_s
-- estimated_fare_minor
-- final_fare_minor
-- currency
-- status
-- timestamps
+## 4. DriverTariff
 
-### State machine
+`DriverTariff` is a first-class aggregate and represents driver-owned commercial policy.
+
+Core attributes:
+- id;
+- driver_id;
+- instance_id;
+- service_type;
+- status;
+- quote_mode: manual | auto | hybrid;
+- currency;
+- base_fare;
+- minimum_fare;
+- per_km;
+- per_minute;
+- pickup_fee/rules;
+- auto_quote_min;
+- auto_quote_max;
+- version;
+- effective time range.
+
+Rules can cover:
+- night/time windows;
+- zones;
+- holidays;
+- long distance;
+- pickup distance;
+- service-specific conditions.
+
+Important invariant:
+
+> The platform may recommend a price but must not silently exceed the bounds accepted by the driver when auto quoting.
+
+## 5. MobilityRequest
+
+`MobilityRequest` captures rider demand before a driver is selected.
+
+Core attributes:
+- id;
+- instance_id;
+- rider_id;
+- service_type;
+- pickup;
+- destination;
+- optional stops;
+- route facts;
+- rider preferences;
+- rider constraints;
+- status;
+- requested_at;
+- expires_at;
+- version.
+
+Suggested states:
 
 ```text
-SEARCHING
-  | accept
-  v
-ACCEPTED
-  |
-  v
-ARRIVING
-  |
-  v
-ARRIVED
-  |
-  v
-IN_PROGRESS
-  |
-  v
-COMPLETED
+DRAFT
+  -> OPEN
+  -> RECEIVING_QUOTES
+  -> AGREED
+  -> CLOSED
 
-CANCELLED là terminal state theo policy từ các trạng thái cho phép.
+OPEN/RECEIVING_QUOTES -> CANCELLED
+OPEN/RECEIVING_QUOTES -> EXPIRED
 ```
 
-### Invariants
+A request is demand, not an assigned trip.
 
-- Trip `COMPLETED` phải có driver.
-- Một trip chỉ có một assigned driver tại một thời điểm.
-- Một driver không được có hai active trips trừ khi business model sau này cho phép.
-- `final_fare` chỉ được chốt bởi backend.
-- State transition trái thứ tự phải bị từ chối.
-- Mọi transition quan trọng ghi `trip_status_history`.
+## 6. Candidate
 
-## 6. Dispatch
+A candidate is an eligible driver discovered for a request.
 
-Dispatch không phải chỉ là query nearest driver. Domain này quản lý:
-- candidate set;
-- candidate ranking;
-- trip offer;
-- offer expiry;
-- accept race;
-- assignment lock;
-- retry/search expansion.
+Candidate discovery considers:
+- geographic proximity/ETA;
+- online/fresh location;
+- capability/service type;
+- vehicle eligibility;
+- KYC/account status;
+- service area;
+- existing reservation/busy state;
+- tariff/quote eligibility.
 
-Entity/record dự kiến:
-- DispatchAttempt
-- DriverOffer
-- Assignment
+Candidate data may be ephemeral and does not always require a durable row unless audit/analytics require it.
 
-Các record này có thể ban đầu tồn tại ở Redis + logs; khi cần audit sâu sẽ bổ sung persistent table.
+## 7. Quote
 
-## 7. Location
+`Quote` is a driver-authorized commercial offer for one request.
 
-Location chia thành hai loại:
+Core attributes:
+- id;
+- request_id;
+- driver_id;
+- driver_vehicle_id nullable;
+- tariff_id/version;
+- total fare;
+- currency;
+- pricing breakdown;
+- pickup ETA/distance snapshot;
+- status;
+- expires_at;
+- created_at;
+- accepted_at.
 
-### LatestDriverLocation
-Hot state, Redis:
-- driver_id
-- lat/lng
-- accuracy
-- heading
-- speed
-- captured_at
-- received_at
+Suggested states:
 
-### TripPath
-Durable/analytics state, không nhất thiết ghi mọi point. Có thể sample hoặc encode polyline sau này.
-
-## 8. Pricing
-
-Domain pricing nhận:
-- service type;
-- route distance;
-- estimated duration;
-- zone/time rules;
-- promotions;
-
-Và trả:
-- base fare;
-- components;
-- discount;
-- estimated total.
-
-Pricing engine phải deterministic với cùng version/config để dễ audit.
-
-## 9. Payment
-
-Payment state tách khỏi Trip state.
-
-Ví dụ:
 ```text
-pending -> authorized -> captured
-pending/authorized -> failed
-captured -> refunded (nếu provider hỗ trợ)
+PENDING -> ACCEPTED
+PENDING -> REJECTED
+PENDING -> WITHDRAWN
+PENDING -> EXPIRED
 ```
 
-Trip có thể completed nhưng payment vẫn pending/failed; không ép hai state machine thành một.
+Important invariants:
+- quote belongs to exactly one request and one driver;
+- accepted quote must not be expired;
+- quote stores enough pricing context to explain the number shown to users;
+- platform ranking does not mutate quote commercial terms.
 
-## 10. Notification
+## 8. CounterOffer
 
-Notification là orchestration domain, không phải source of truth cho Trip. Nếu push thất bại, trip state vẫn đúng và app phải sync lại từ backend.
+Counter-offer negotiation is optional and can be introduced after the basic marketplace is stable.
 
-## 11. Admin/Audit
+A future `CounterOffer` may support:
+- rider proposes budget;
+- driver counters;
+- rider accepts/rejects;
+- bounded negotiation rounds/TTL.
 
-Các action nhạy cảm phải audit:
-- approve/reject driver;
-- suspend rider/driver;
-- manual trip intervention;
-- pricing change;
-- promotion change;
-- role/permission change;
-- refund/payment override khi có.
+Do not block the initial marketplace on full negotiation support.
 
-Audit record cần actor, action, target, timestamp và metadata tối thiểu.
+## 9. RankingResult
+
+Ranking is not necessarily a durable aggregate, but it must produce explainable output.
+
+Typical signals:
+- pickup ETA;
+- price fit;
+- rating/quality;
+- completion reliability;
+- rider preferences;
+- bounded fairness/exposure.
+
+Typical reason codes:
+- BEST_OVERALL;
+- FAST_PICKUP;
+- LOWEST_PRICE;
+- HIGH_RATING;
+- PREFERRED_VEHICLE.
+
+Cheapest must not automatically equal best.
+
+## 10. Agreement
+
+`Agreement` is created when a rider accepts a valid quote or Quick Match selects one under rider-authorized constraints.
+
+It is the commercial source of truth.
+
+Snapshot fields should include:
+- id;
+- instance_id;
+- request_id;
+- quote_id;
+- rider_id;
+- driver_id;
+- vehicle/service context;
+- pickup/destination;
+- fare total;
+- currency;
+- full pricing breakdown;
+- accepted terms/policy version;
+- created_at.
+
+Key invariants:
+- one active accepted agreement per normal single-driver request;
+- immutable accepted fare snapshot;
+- idempotent creation;
+- driver cannot be assigned to incompatible concurrent rides;
+- request and quote status transition atomically with agreement creation.
+
+## 11. Ride
+
+`Ride` represents actual execution after agreement.
+
+Passenger ride example:
+
+```text
+ASSIGNED
+ -> DRIVER_EN_ROUTE
+ -> DRIVER_ARRIVED
+ -> PASSENGER_ONBOARD
+ -> IN_PROGRESS
+ -> COMPLETED
+```
+
+Terminal/exception paths:
+- CANCELLED;
+- FAILED;
+- incident/dispute lifecycle as separate records where appropriate.
+
+A service vertical may define additional execution states without changing marketplace primitives.
+
+## 12. Service Vertical
+
+OpenRide should support service-specific behavior through policy/capability boundaries rather than putting every state into one universal Ride enum.
+
+Examples:
+
+### Passenger ride
+Driver uses their eligible vehicle to transport rider.
+
+### Designated driver
+Driver travels to customer and drives customer-owned vehicle.
+
+### Vehicle inspection assistance
+Provider receives customer vehicle/documents, completes a workflow and returns vehicle.
+
+All can share:
+
+```text
+Request -> Quote -> Agreement -> Execution
+```
+
+while their execution state machines differ.
+
+## 13. Payment
+
+Payment state is separate from Ride state.
+
+Example:
+
+```text
+PENDING -> AUTHORIZED -> CAPTURED
+PENDING/AUTHORIZED -> FAILED
+CAPTURED -> REFUNDED
+```
+
+A completed ride may still have payment recovery work.
+
+## 14. DriverEarning / PlatformFee
+
+Earnings should be represented transparently.
+
+Suggested concepts:
+- gross agreed fare;
+- rider-paid fees;
+- operator/platform fee;
+- driver earning;
+- tax/withholding if applicable;
+- settlement status.
+
+OpenRide should avoid hiding deductions inside an opaque final number.
+
+## 15. Rating and Trust
+
+Trust domain includes:
+- rider-to-driver rating;
+- driver-to-rider rating where enabled;
+- KYC state;
+- incident reports;
+- fraud/risk signals;
+- moderation/suspension;
+- reliability aggregates.
+
+Trust signals can influence ranking only through documented/bounded rules.
+
+## 16. Instance
+
+`Instance` is the future self-host/operator boundary.
+
+Possible attributes:
+- id;
+- name;
+- service area;
+- currency;
+- supported service types;
+- payment configuration references;
+- KYC policy;
+- operator fee policy;
+- legal/price guardrails;
+- ranking configuration/version.
+
+Federation is not required initially, but avoiding one-global-operator assumptions now reduces later migration cost.
+
+## 17. Operator / Audit
+
+Sensitive actions require append-only audit records:
+- KYC decisions;
+- suspensions;
+- policy/ranking config changes;
+- legal price guardrail changes;
+- manual agreement/ride intervention;
+- payment/refund overrides;
+- dispute resolution.
+
+Audit records should capture actor, action, target, time, reason and metadata.
+
+## 18. Compatibility mapping
+
+During migration:
+
+```text
+legacy trips              -> compatibility execution/request projection
+legacy pricing_rules      -> fallback/operator recommendation layer
+legacy dispatch offers    -> precursor to marketplace quote delivery
+legacy customer_vehicles  -> designated-driver vertical support
+```
+
+Do not remove these until replacement flows and migrations are tested.

@@ -41,7 +41,7 @@ class _FlashXRiderAppState extends State<FlashXRiderApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'FlashX',
+      title: 'OpenRide',
       debugShowCheckedModeBanner: false,
       theme: FlashXTheme.light(),
       home: !auth.initialized

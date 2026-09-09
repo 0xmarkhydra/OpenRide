@@ -41,7 +41,7 @@ class _FlashXDriverAppState extends State<FlashXDriverApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'FlashX Driver',
+      title: 'OpenRide Driver',
       debugShowCheckedModeBanner: false,
       theme: FlashXTheme.light(),
       home: !auth.initialized

@@ -1,516 +1,578 @@
-# FlashX — Mong muốn khách hàng & phạm vi sản phẩm hiện tại
+# OpenRide — Product Requirements / Source of Truth
 
-> **Source of truth nghiệp vụ — cập nhật 12/08/2026**
+> **Business rebaseline: September 2026**
 >
-> Tài liệu này ghi nhận yêu cầu mới nhất của khách hàng và **thay thế giả định cũ rằng FlashX là một Grab/Uber clone thuần túy**. Nếu tài liệu cũ còn dùng từ `ride-hailing`, `bike/car` theo nghĩa xe của tài xế chở khách, phải diễn giải lại theo tài liệu này và cập nhật dần trong cùng đợt refactor domain.
+> This document replaces the previous FlashX-only product definition as the primary product requirement source for OpenRide.
 >
-> **Cách vận hành chi tiết của 3 dịch vụ MVP** được khóa tại [`BA_MVP_OPERATING_RULES_2026-08-12.md`](./BA_MVP_OPERATING_RULES_2026-08-12.md). Khi thiết kế UI/API/state/test, tài liệu BA này được dùng cùng với file hiện tại.
+> Legacy designated-driver and vehicle-inspection requirements remain useful as future service vertical requirements, but they no longer define the OpenRide core business model.
 
-## 1. Kết luận nghiệp vụ đã chốt
+## 1. Product definition
 
-FlashX là nền tảng **tài xế lái hộ / hỗ trợ phương tiện theo yêu cầu**.
+OpenRide is an **open-source mobility marketplace**.
 
-Khách hàng sử dụng **phương tiện của chính mình**; FlashX kết nối khách với tài xế/đối tác phù hợp để thực hiện dịch vụ.
+Its job is to connect rider demand with driver/provider supply while keeping commercial choice transparent:
 
-### MVP chỉ tập trung 3 dịch vụ
+- drivers define their own tariffs/quote rules;
+- riders compare offers and choose;
+- the platform performs discovery, routing, ranking, realtime tracking, trust, payment and operations;
+- the platform must not silently replace driver-owned pricing with one hidden central fare.
 
-1. **Lái hộ ô tô** — tài xế tới vị trí khách, nhận bàn giao và lái ô tô của khách tới điểm đến.
-2. **Lái hộ xe máy** — tài xế tới vị trí khách, nhận bàn giao và lái xe máy của khách tới điểm đến.
-3. **Đăng kiểm hộ** — nhận xe/giấy tờ theo quy trình, đưa xe đi thực hiện đăng kiểm và bàn giao lại cho khách.
+Core phrase:
 
-### Không còn là định hướng MVP
+> **Drivers set their terms. Riders choose. Algorithms connect.**
 
-- Grab/Uber clone theo mô hình tài xế dùng xe của mình để chở khách.
-- Food delivery.
-- Giao hàng đại trà.
-- Thuê xe tự lái.
-- Mở rộng nhiều vertical không liên quan trước khi 3 dịch vụ lõi chạy ổn định.
-
-## 2. Định vị sản phẩm
-
-Định vị đề xuất:
-
-> **FlashX — Tài xế của bạn, khi bạn cần.**
-
-Giá trị cốt lõi:
-- **An toàn:** KYC tài xế chặt, lịch sử rõ ràng, GPS realtime, quy trình bàn giao xe.
-- **Nhanh chóng:** tìm tài xế gần/phù hợp và hiển thị ETA rõ ràng.
-- **Minh bạch:** giá, trạng thái công việc, lịch sử, thanh toán và hỗ trợ đều theo dõi được.
-- **Tin cậy:** khách đang giao tài sản có giá trị lớn cho tài xế, nên trust phải là ưu tiên số 1.
-
-## 3. Nhóm người dùng
-
-### 3.1 Khách hàng
-
-Khách có ô tô/xe máy và cần:
-- người lái hộ ngay bây giờ;
-- đặt trước tài xế;
-- người thay mặt đưa xe đi đăng kiểm;
-- theo dõi người thực hiện và trạng thái xe/công việc.
-
-### 3.2 Tài xế / đối tác dịch vụ
-
-Tài xế cần:
-- đăng ký và KYC;
-- khai báo năng lực/loại dịch vụ nhận được;
-- online/offline;
-- nhận/từ chối yêu cầu;
-- dẫn đường tới khách;
-- thực hiện quy trình nhận xe → làm việc → bàn giao;
-- xem lịch sử và thu nhập.
-
-### 3.3 Admin / Operations
-
-Operations cần:
-- theo dõi job realtime;
-- duyệt và quản lý tài xế/KYC;
-- cấu hình dịch vụ và giá;
-- hỗ trợ khách/tài xế;
-- xử lý job chờ lâu, sự cố, khiếu nại;
-- audit hành động nhạy cảm.
-
-## 4. Customer App — yêu cầu MVP
-
-### 4.1 Auth & hồ sơ
-
-- Đăng nhập/đăng ký bằng số điện thoại + OTP.
-- Access/refresh session.
-- Hồ sơ khách hàng cơ bản.
-
-### 4.2 Trang chủ
-
-UI theo hướng mobility hiện đại, dễ dùng như các app lớn tại Việt Nam nhưng mang nhận diện FlashX riêng.
-
-Trang chủ cần ưu tiên 3 CTA rõ ràng:
-- **Lái hộ ô tô**
-- **Lái hộ xe máy**
-- **Đăng kiểm hộ**
-
-Không đưa quá nhiều dịch vụ phụ làm loãng MVP.
-
-### 4.3 “Xe của tôi” — domain bắt buộc cần bổ sung
-
-Khách phải có thể lưu/chọn phương tiện khi tạo yêu cầu.
-
-Thông tin tối thiểu:
-- `id`
-- `owner_user_id`
-- `type`: `car | motorbike`
-- `license_plate`
-- `brand`
-- `model`
-- `year` nếu có
-- `color`
-- `transmission`: `automatic | manual | n/a`
-- `seats` nếu là ô tô
-- `notes`
-- `photo_object_key`/ảnh đại diện nếu có
-
-### 4.4 Flow — Lái hộ ô tô
+## 2. Core business flow
 
 ```text
-Chọn Lái hộ ô tô
-→ Chọn xe của tôi
-→ Chọn điểm nhận xe/đón khách
-→ Chọn điểm đến
-→ Ngay bây giờ / Hẹn giờ
-→ Xem ETA + giá dự kiến
-→ Xác nhận yêu cầu
-→ Tìm tài xế
-→ Tài xế tới
-→ Xác nhận bàn giao xe
-→ Bắt đầu hành trình
-→ Theo dõi realtime
-→ Hoàn thành
-→ Bàn giao xe
-→ Thanh toán
-→ Đánh giá
+Rider creates Mobility Request
+-> OpenRide finds eligible nearby drivers
+-> Drivers submit / authorize Quotes
+-> OpenRide ranks and explains offers
+-> Rider chooses OR uses Quick Match
+-> OpenRide creates Agreement
+-> Driver executes Ride
+-> Payment / Rating / Settlement
 ```
 
-Thông tin nên hiển thị trước khi xác nhận:
-- phương tiện;
-- điểm nhận xe;
-- điểm đến;
-- quãng đường/ETA;
-- giá dự kiến;
-- thời gian đặt;
-- ghi chú cho tài xế.
+The product must preserve the distinction between:
+- Request;
+- Quote;
+- Agreement;
+- Ride.
 
-### 4.5 Flow — Lái hộ xe máy
+## 3. User groups
 
-Tương tự ô tô nhưng form phương tiện đơn giản hơn.
+### 3.1 Rider
+
+Needs to:
+- sign in quickly;
+- choose pickup and destination;
+- choose service type;
+- see route/distance context;
+- receive multiple transparent offers when available;
+- compare price, ETA, driver, vehicle and rating;
+- choose manually or Quick Match;
+- track driver realtime after agreement;
+- contact/support/cancel according to policy;
+- pay;
+- review ride and driver;
+- see history and receipts.
+
+### 3.2 Driver
+
+Needs to:
+- register and pass KYC;
+- declare vehicle/capabilities;
+- go online/offline;
+- configure own tariff/pricing policy;
+- select manual/auto/hybrid quote mode;
+- receive relevant requests;
+- skip unsuitable work without arbitrary punishment;
+- submit or confirm quotes;
+- navigate to rider;
+- execute ride lifecycle;
+- view earnings, fees and settlement transparently;
+- view history and ratings.
+
+### 3.3 Operator
+
+Needs to:
+- review KYC;
+- monitor marketplace health and active rides;
+- handle safety, fraud and disputes;
+- configure legal/service-area policies;
+- configure providers and payments;
+- inspect ranking/quote explanations when supporting users;
+- manage transparent platform/operator fees;
+- audit sensitive actions.
+
+The operator is not the default owner of every driver's price.
+
+## 4. Rider App requirements
+
+### 4.1 Authentication
+
+MVP target:
+- phone + OTP;
+- access/refresh session;
+- basic profile;
+- account status handling.
+
+### 4.2 Home / create request
+
+Primary flow should be mobility-first:
 
 ```text
-Chọn Lái hộ xe máy
-→ Chọn xe máy
-→ Điểm nhận
-→ Điểm đến
-→ Ngay / Hẹn giờ
-→ Báo giá
-→ Match tài xế
-→ Nhận xe
-→ Thực hiện
-→ Bàn giao
-→ Thanh toán / đánh giá
+Where are you going?
+-> pickup
+-> destination
+-> service type
+-> optional preferences
+-> request offers
 ```
 
-### 4.6 Flow — Đăng kiểm hộ
-
-Đây là workflow công việc, không nên ép y hệt trip chở khách.
-
-Form MVP cần:
-- xe cần đăng kiểm;
-- địa chỉ nhận xe;
-- địa chỉ trả xe nếu khác;
-- thời gian mong muốn/hẹn giờ;
-- trung tâm đăng kiểm (nếu khách chọn hoặc hệ thống điều phối);
-- ghi chú;
-- checklist giấy tờ cần bàn giao.
-
-State UX đề xuất:
-
-```text
-Đã tạo yêu cầu
-→ Đã ghép người thực hiện
-→ Đang đến nhận xe
-→ Đã nhận xe/giấy tờ
-→ Đang di chuyển tới trung tâm
-→ Đang thực hiện đăng kiểm
-→ Đã hoàn tất đăng kiểm
-→ Đang trả xe
-→ Đã bàn giao
-→ Hoàn thành
-```
-
-MVP có thể rút gọn state kỹ thuật nhưng UI phải thể hiện đúng bản chất công việc.
-
-### 4.7 Theo dõi realtime và hành trình — BẮT BUỘC
-
-UI trang chủ có thể đơn giản, nhưng sau khi khách đặt dịch vụ FlashX **bắt buộc có màn hình bản đồ realtime**.
-
-Giai đoạn tài xế đang đến nhận khách/nhận xe:
-- hiển thị vị trí realtime của tài xế trên bản đồ;
-- hiển thị pickup của khách;
-- vẽ tuyến đường tài xế → điểm nhận;
-- hiển thị ETA còn bao lâu tài xế tới;
-- hiển thị thông tin tài xế, trạng thái và nút liên hệ phù hợp.
-
-Sau khi nhận xe và bắt đầu dịch vụ lái hộ:
-- tiếp tục hiển thị vị trí realtime của tài xế/xe;
-- vẽ hành trình từ điểm nhận → điểm đến;
-- hiển thị tiến trình chuyến, quãng đường/ETA còn lại khi có dữ liệu;
-- cập nhật trạng thái qua WebSocket/realtime;
-- reconnect được khi app mất mạng/ngắt nền tạm thời;
-- không để khách phải refresh thủ công để thấy tài xế di chuyển.
-
-Đối với Đăng kiểm hộ:
-- hiển thị vị trí người thực hiện khi policy cho phép;
-- timeline nhận xe → đến trung tâm → đăng kiểm → trả xe;
-- có thể hiển thị map hành trình nhận/trả xe thay vì ép toàn bộ workflow thành một trip duy nhất.
-
-Ngoài tracking realtime:
-- Timeline trạng thái dễ hiểu.
-- Gọi/nhắn tin/hỗ trợ theo khả năng MVP.
-- Lịch sử dịch vụ.
-- Rating/feedback.
-
-> **Quy tắc sản phẩm:** “App đơn giản” chỉ nói về số lượng chức năng/độ gọn của UI; **không được cắt GPS realtime, ETA, bản đồ tài xế đến đón và bản đồ hành trình chuyến đi** khỏi Full Marketplace.
-
-## 5. Driver App — yêu cầu MVP
-
-### 5.1 Onboarding/KYC
-
-KYC ưu tiên **năng lực con người**, không coi xe của tài xế là tài sản phục vụ chuyến như Grab.
-
-Tối thiểu nên có:
-- CCCD/giấy tờ định danh;
-- ảnh chân dung/selfie;
-- GPLX + hạng bằng;
-- ngày hết hạn GPLX;
-- số năm kinh nghiệm;
-- lý lịch tư pháp theo chính sách vận hành;
-- tài khoản ngân hàng;
-- năng lực xe số sàn/số tự động;
-- loại dịch vụ có thể nhận;
-- loại/dòng xe có kinh nghiệm nếu cần.
-
-### 5.2 Upload tài liệu
-
-**Nguyên tắc kiến trúc đã chốt:**
-
-```text
-Driver App → S3/Object Storage trực tiếp
-Backend → chỉ cấp presigned URL/chữ ký + lưu metadata
-```
-
-Backend **không nhận/proxy file binary**.
-
-Flow:
-1. Client xin `upload-url`.
-2. Backend kiểm tra auth/quyền/type/metadata và ký presigned PUT.
-3. Client PUT file trực tiếp lên object storage.
-4. Client gọi `complete`.
-5. Backend lưu object key + metadata.
-6. Khi xem tài liệu, backend cấp presigned GET theo quyền.
-
-### 5.3 Driver Home
-
-- ONLINE/OFFLINE cực rõ.
-- GPS/status realtime.
-- Số job/thu nhập tóm tắt.
-- Capability/service preferences.
-- Cảnh báo KYC nếu hồ sơ chưa đủ.
-
-### 5.4 Offer
-
-Offer phải hiển thị:
-- loại dịch vụ: Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ;
+At minimum show:
 - pickup;
-- destination/trung tâm đăng kiểm nếu áp dụng;
-- khoảng cách/ETA tới khách;
-- giá/thu nhập theo policy;
-- thông tin phương tiện cần thiết;
-- **countdown**;
-- Accept/Reject CTA lớn.
+- destination;
+- route distance/duration when available;
+- current service type;
+- rider constraints/preferences where enabled.
 
-### 5.5 Workflow thực hiện
+### 4.3 Request states
 
-Lái hộ:
+Rider-friendly states:
 
 ```text
-Accepted
-→ Arriving
-→ Arrived
-→ Nhận xe / xác nhận tình trạng
-→ Start
-→ In progress
-→ Complete
-→ Bàn giao
+Preparing request
+-> Finding drivers
+-> Offers arriving
+-> Choose an offer
+-> Driver confirmed
+-> Driver is coming
+-> Driver arrived
+-> Trip in progress
+-> Completed
 ```
 
-Đăng kiểm hộ:
-- cần workflow riêng hoặc state/substate đủ biểu diễn nhận xe → đăng kiểm → trả xe.
+Technical states may differ but UI wording must remain understandable.
 
-### 5.6 Earnings & history
+### 4.4 Offer list
 
-- job history;
-- thu nhập theo ngày/tuần/tháng tối thiểu;
-- trạng thái thanh toán/đối soát theo phase.
+This is a P0 differentiator for OpenRide.
 
-## 6. Admin / Operations — yêu cầu MVP
+Each offer card should show as available:
+- total fare;
+- pickup ETA;
+- pickup distance;
+- driver name/avatar;
+- rating and ride count/reliability context;
+- vehicle summary;
+- expiry/countdown when useful;
+- recommendation label/reason.
 
-### Dashboard
-- tổng job hôm nay;
-- job theo 3 loại dịch vụ;
-- tài xế online;
-- doanh thu;
-- completion/cancellation/no-match;
-- cảnh báo job chờ lâu/KYC sắp hết hạn.
+Possible labels:
+- **Best overall**;
+- **Cheapest**;
+- **Fastest pickup**;
+- **Highest rated**.
 
-### Live Jobs
-- filter theo 3 service type;
-- trạng thái;
-- khách;
-- tài xế;
+Do not make `Cheapest == Best overall` by default.
+
+### 4.5 Rider choice
+
+Marketplace Mode:
+- rider taps one valid offer;
+- sees final accepted terms;
+- confirms;
+- Agreement is created atomically.
+
+The rider must not see a different fare immediately after confirmation unless an explicit, separately agreed change process exists.
+
+### 4.6 Quick Match
+
+For riders who do not want to compare manually.
+
+Example constraints:
+- fare <= 60,000 VND;
+- ETA <= 8 min;
+- rating >= 4.7.
+
+Quick Match chooses from valid driver-authorized quotes using ranking rules.
+
+It does not generate a new platform-owned fare.
+
+### 4.7 Realtime tracking
+
+After Agreement:
+- driver live location;
+- pickup marker;
+- route driver -> rider when available;
+- ETA to pickup;
+- driver/vehicle information;
+- ride state realtime;
+- route during active ride;
+- reconnect after network loss;
+- REST snapshot sync after reconnect.
+
+Realtime tracking is core functionality, not an optional visual extra.
+
+### 4.8 Cancellation
+
+Before Agreement:
+- rider can cancel open request according to simple policy;
+- pending quotes stop being selectable.
+
+After Agreement:
+- cancellation reason required when policy requires;
+- any fee/driver compensation must be displayed before final cancellation where possible;
+- no hidden fee calculation.
+
+### 4.9 Payment
+
+MVP should support a provider abstraction with at least:
+- cash/offline settlement option if market requires;
+- digital payment provider(s) by deployment;
+- payment status independent from ride status;
+- receipt/history;
+- retry/recovery for failed payment.
+
+### 4.10 Rating
+
+After completed ride:
+- rating score;
+- optional tags/comment;
+- support/report path for safety/serious incidents.
+
+## 5. Driver App requirements
+
+### 5.1 Onboarding / KYC
+
+Minimum concepts:
+- identity document;
+- selfie/profile image;
+- driving license;
+- license class/expiry;
+- bank/settlement information where required;
+- driver vehicle documents for passenger ride services;
+- service capabilities;
+- review status.
+
+Files should continue using direct client -> S3-compatible object storage with backend-issued presigned URLs; backend stores business metadata rather than proxying all binary bytes.
+
+### 5.2 Driver Home
+
+Must make these obvious:
+- ONLINE/OFFLINE;
+- current availability/reservation state;
+- current location/GPS status;
+- pending request/quote activity;
+- today's earnings summary;
+- KYC/document warnings;
+- quick access to **My Price / Tariff**.
+
+### 5.3 My Price / Tariff
+
+This is a primary feature, not a hidden settings page.
+
+Driver can configure, depending on deployment/service:
+- base fare;
+- minimum fare;
+- per-km rate;
+- per-minute rate;
+- pickup fee;
+- maximum pickup distance;
+- night/time rule;
+- long-distance rule;
+- zone rule;
+- automatic quote minimum/maximum;
+- Manual / Auto / Hybrid mode.
+
+The UI must explain how rules combine.
+
+Example:
+
+```text
+Base distance fare      50,000
+Night adjustment         5,000
+Pickup distance          3,000
+------------------------------
+Quote                    58,000 VND
+```
+
+### 5.4 Manual quote mode
+
+Driver sees a relevant request with:
 - pickup/destination;
-- live map khi phù hợp;
-- detail drawer/timeline.
+- trip route distance/time;
+- distance/ETA from driver to pickup;
+- service type;
+- rider constraints where appropriate;
+- suggested market range if enabled and clearly labeled as suggestion.
 
-### Driver/KYC
-- danh sách pending/approved/rejected;
-- xem document bằng presigned GET;
-- approve/reject/request-more-info;
-- audit decision.
+Actions:
+- enter/send quote;
+- skip.
 
-### Pricing
-- cấu hình giá theo service;
-- version/effective time;
-- phụ phí giờ đêm/giờ cao điểm/ngày lễ nếu áp dụng;
-- waiting/cancellation rules;
-- không hard-code giá trong mobile.
+Skip must not automatically reduce rating.
 
-### Support
-- tra cứu job;
-- xem timeline;
-- liên hệ khách/tài xế;
-- support note;
-- incident/audit trail.
+### 5.5 Auto quote mode
 
-## 7. Service types — nguồn chuẩn mới
+System generates a quote from the driver's active tariff inside explicit driver bounds.
 
-Tên business đề xuất:
+Driver can review how auto quoting is configured.
+
+### 5.6 Hybrid mode
+
+System proposes the tariff-derived quote and driver can modify/approve according to configured response time.
+
+### 5.7 Agreement / assigned ride
+
+After rider chooses driver:
+- notify driver immediately;
+- freeze/display accepted fare and terms;
+- transition driver to reserved/busy;
+- show navigation to pickup;
+- prevent incompatible double assignment.
+
+### 5.8 Passenger ride lifecycle
 
 ```text
-designated_driver_car
-designated_driver_bike
-vehicle_inspection_assist
+Accepted/Assigned
+-> En route
+-> Arrived
+-> Passenger onboard
+-> Start ride
+-> In progress
+-> Complete
 ```
 
-Các giá trị `car`/`bike` cũ mang nghĩa ride-hailing phải được migrate/compat theo kế hoạch, không tiếp tục mở rộng semantics cũ.
+State transitions must be backend-validated and idempotent.
 
-## 8. Pricing — thay đổi bắt buộc
+### 5.9 Earnings
 
-Pricing cũ dạng “base + giá/km theo xe chở khách” không đủ cho business mới.
+Driver should see:
+- accepted fare;
+- any rider-paid fee;
+- operator/platform fee;
+- other explicit deductions;
+- net driver earning;
+- payment/settlement state.
 
-Pricing engine cần hỗ trợ các component:
-- minimum/base service fee;
-- distance component;
-- duration component;
-- waiting fee;
-- scheduled booking fee nếu có;
-- night/holiday surcharge;
-- intercity component nếu mở rộng;
-- fixed fee/package cho đăng kiểm hộ;
-- cancellation fee theo policy;
-- promotion/discount sau MVP nếu cần.
+Transparency is a core product requirement.
 
-Tất cả cấu hình từ backend/Admin và có version để audit.
+## 6. Operator App requirements
 
-## 9. Trust & Safety — khác biệt sản phẩm quan trọng
+### 6.1 Dashboard
 
-Khách giao phương tiện có giá trị lớn, nên FlashX phải coi trust là feature cốt lõi.
+Key marketplace health metrics:
+- open requests;
+- active drivers;
+- quotes/request;
+- time to first quote;
+- time to agreement;
+- no-candidate rate;
+- no-quote rate;
+- request expiry/cancellation;
+- active rides;
+- completion rate;
+- payment failures;
+- safety/dispute alerts.
 
-Nên triển khai theo mức ưu tiên:
+### 6.2 Live marketplace
 
-### P0/MVP
-- KYC tài xế;
-- GPLX và expiry;
-- GPS realtime;
-- lịch sử job;
-- rating;
-- support;
-- audit Admin;
-- xác nhận nhận/bàn giao xe;
-- **evidence tối thiểu trước/sau bàn giao**: ảnh tổng quan xe, dashboard/odometer khi phù hợp, ghi chú bất thường, thời gian/vị trí và người xác nhận;
-- **incident workflow tối thiểu** để tài xế/Operations xử lý tai nạn, xe hỏng, mất giấy tờ, mất liên lạc hoặc tranh chấp mà không biến thành normal cancellation;
-- sau `VEHICLE_RECEIVED` không cho hủy/reassign theo flow bình thường nếu chưa qua return/support/handover có kiểm soát.
+Operator can inspect:
+- open requests;
+- candidate/quote count;
+- current offer distribution;
+- agreement status;
+- active ride map/timeline;
+- degraded/stale-driver alerts.
 
-### P1
-- bộ ảnh/evidence chi tiết hơn theo loại xe;
-- fuel/battery/odometer structured fields nâng cao;
-- damage annotation;
-- OTP/PIN/signature bàn giao nâng cao;
-- claim workflow hoàn chỉnh;
-- share trip/job;
-- SOS nâng cao;
-- bảo hiểm/quy trình claim theo đối tác kinh doanh.
+Sensitive pricing/ranking debug details require appropriate RBAC/audit.
 
-## 10. UX/UI direction đã chốt
+### 6.3 Driver/KYC
 
-### Phong cách
-- chất lượng/độ rõ tương đương các mobility app lớn tại Việt Nam;
-- tham khảo cách tổ chức thông tin của Green SM nhưng **không sao chép nhận diện**;
-- FlashX có identity riêng: **Deep Navy + Electric Yellow + White**, lightning X;
-- rounded cards, hierarchy rõ, ít nhiễu, thao tác một tay tốt.
+- pending/approved/rejected/more-info filters;
+- document review via signed access;
+- capability/vehicle review;
+- approve/reject/request-more-info;
+- audit every decision.
 
-### Customer App
-- service-first + map/context;
-- 3 dịch vụ MVP nổi bật ngay trang chủ;
-- một primary CTA/màn hình;
-- trạng thái công việc viết bằng tiếng Việt, không phơi technical state.
+### 6.4 Tariff / pricing operations
 
-### Driver App
-- cockpit navy;
-- CTA lớn;
-- countdown offer;
-- trạng thái tiếp theo luôn rõ;
-- ưu tiên đọc ngoài trời/khi di chuyển.
+Operator should not have a default page saying "set every driver's per-km price".
 
-### Admin
-- desktop SaaS/operations;
-- dark navy sidebar + yellow accent;
-- table/filter/drawer/map/KPI;
-- density cao nhưng dễ scan.
+Operator may configure:
+- legal min/max guardrails;
+- service-area restrictions;
+- allowed currency;
+- allowed tariff rule types;
+- market recommendation parameters;
+- platform/operator fees;
+- safety/fraud price anomaly alerts.
 
-Mock đã được xây theo 3 nhóm:
-1. Customer/Rider UX board.
-2. FlashX Driver UX board.
-3. FlashX Admin/Operations board.
+All price-related policies should be versioned/auditable.
 
-Các mock là **visual target**, không phải bằng chứng mọi feature đã implement.
+### 6.5 Ranking operations
 
-## 11. Technical baseline đã có và nên tái sử dụng
+Operator may tune bounded ranking weights by instance/service, but changes should be:
+- versioned;
+- auditable;
+- observable;
+- explainable.
 
-- Flutter Rider/Customer App.
-- Flutter Driver App.
-- Next.js Admin.
-- Go modular backend.
-- PostgreSQL + PostGIS.
-- Redis + Redis GEO.
-- WebSocket realtime.
-- OTP/auth + refresh token.
-- Dispatch offers + TTL + distributed lock.
-- GPS/location pipeline.
-- Trip/job lifecycle foundation.
-- Payment ledger cash-first.
-- Rating/history foundation.
-- Docker Compose project `flashx`.
-- CI baseline.
-- S3-compatible presigned object storage flow.
+Metrics must make it possible to detect harmful effects such as always hiding one driver cohort.
 
-Không đập lại các foundation này nếu business refactor có thể tái sử dụng.
+## 7. Marketplace ranking requirements
 
-## 12. Third-party / ENV cần cho dev và production
+Initial ranking should be deterministic.
 
-### Dev hiện tại
-- GPS của thiết bị **không cần Google API key**.
-- Map/routes/place search có thể dùng Google Maps Demo Key hoặc provider dev phù hợp.
-- S3/object storage cần endpoint/bucket/access credentials ở local env, không gửi secret vào chat/docs.
+Candidate factors:
+- pickup ETA;
+- fare fit;
+- driver rating/quality;
+- completion reliability;
+- rider preferences;
+- bounded fairness/exposure.
 
-### Production sau này
-- restricted Maps keys theo Android/iOS/backend;
-- SMS OTP provider thật;
-- push FCM/APNs;
-- object storage production;
-- JWT/secret production;
-- payment gateway nếu khách đưa vào scope;
-- monitoring/error tracking.
+Hard requirements:
+- cheapest is not automatically best;
+- safety/eligibility overrides ranking;
+- reason codes returned to client;
+- ranking config version available for support/debug;
+- no ML requirement for MVP.
 
-## 13. Out of scope MVP mặc định
+## 8. Pricing requirements
 
-Trừ khi khách Change Request:
-- food delivery;
-- parcel delivery;
-- taxi fleet;
-- ví điện tử nội bộ;
-- referral/loyalty phức tạp;
-- dynamic ML surge;
-- call masking riêng;
-- embedded navigation tự xây;
-- mở rộng toàn quốc trước pilot.
+### 8.1 Driver ownership
 
-## 14. Definition of Done — MVP theo business mới
+Commercial quote must originate from:
+- driver's active tariff/rules; or
+- driver's manual quote.
 
-MVP chỉ được gọi là bàn giao khi tối thiểu:
+### 8.2 Platform recommendations
 
-1. Customer tạo được yêu cầu **Lái hộ ô tô** end-to-end.
-2. Customer tạo được yêu cầu **Lái hộ xe máy** end-to-end.
-3. Customer tạo được yêu cầu **Đăng kiểm hộ** end-to-end với workflow phù hợp.
-4. Customer chọn/lưu được phương tiện của mình.
-5. Driver approved nhận đúng loại offer và accept atomically.
-6. Realtime location/status hoạt động và reconnect được.
-7. Driver KYC upload trực tiếp object storage; Admin review được bằng signed access.
-8. Pricing của 3 service nằm ở backend/Admin.
-9. Cash-first payment/history/rating hoạt động ở các flow áp dụng.
-10. Admin xem được job/driver/KYC/timeline và hỗ trợ vận hành.
-11. Rider/Driver/Admin test/build release gate xanh.
-12. Có full E2E/UAT trên thiết bị thật.
-13. Không còn dev secret/mock provider trong production config.
-14. Tài liệu deploy/runbook/handover được cập nhật theo domain mới.
+OpenRide may calculate:
+- demand/supply context;
+- suggested range;
+- predicted acceptance context.
 
-## 15. Những điểm cần khách hàng quyết định trước production
+But recommendations must be clearly labeled and must not silently rewrite accepted driver bounds.
 
-- Thành phố/khu vực pilot đầu tiên.
-- Giá từng dịch vụ và cancellation/waiting policy.
-- Hẹn giờ bắt buộc ở MVP hay rollout ngay sau MVP.
-- Quy trình nhận/bàn giao xe và bằng chứng hiện trạng tối thiểu.
-- Quy trình đăng kiểm hộ chi tiết và giấy tờ khách phải bàn giao.
-- KYC/lý lịch tư pháp/đào tạo tài xế theo chính sách vận hành.
-- Mô hình bảo hiểm/trách nhiệm khi có sự cố.
-- SMS OTP provider.
-- Payment online có nằm trong MVP không hay cash-first.
-- SLA hỗ trợ khách hàng.
+### 8.3 Agreement integrity
 
----
+After accepted quote:
+- fare is frozen in Agreement;
+- pricing breakdown is snapshotted;
+- policy/tariff version is auditable;
+- subsequent surge/demand change does not mutate the agreement.
 
-**Quy tắc:** Khi yêu cầu khách hàng thay đổi, cập nhật file này trước; sau đó mới cập nhật PRD/domain/API/data model/backlog để tránh các tài liệu mâu thuẫn nhau.
+## 9. Safety and trust
+
+Minimum architecture/product hooks:
+- KYC;
+- account suspension;
+- document expiry;
+- incident/report workflow;
+- rider/driver support;
+- audit log;
+- payment fraud/risk hooks;
+- location freshness;
+- abnormal pricing/fraud monitoring where appropriate.
+
+Open marketplace does not mean absence of safety rules.
+
+## 10. Service types
+
+### Phase A — primary marketplace vertical
+
+Start with normal passenger ride semantics because this is the clearest validation of the OpenRide marketplace model.
+
+At minimum support architecture for:
+- car passenger ride;
+- motorbike passenger ride when local deployment wants it.
+
+### Phase B — reuse legacy FlashX capabilities
+
+Add/retain as verticals:
+- designated driver car;
+- designated driver motorbike;
+- vehicle inspection assistance.
+
+Their execution states differ, but they still use:
+
+```text
+Request -> Quote -> Agreement -> Execution
+```
+
+### Future
+
+- carpool;
+- intercity;
+- delivery;
+- truck/logistics;
+- other community-defined mobility services.
+
+## 11. Self-host / instance requirements
+
+The system should progressively support one deployment representing an `Instance`/operator/community.
+
+Instance configuration can include:
+- service area;
+- timezone/currency;
+- KYC requirements;
+- payment providers;
+- supported services;
+- operator fee policy;
+- legal price guardrails;
+- ranking configuration.
+
+Full federation is not MVP.
+
+## 12. Non-functional requirements
+
+### Reliability
+- idempotent critical writes;
+- atomic agreement creation;
+- no compatible double assignment;
+- graceful reconnect;
+- durable source of truth in PostgreSQL.
+
+### Performance
+- Redis GEO candidate lookup;
+- avoid DB full scans per request;
+- websocket fan-out for realtime states;
+- do not persist every GPS ping transactionally.
+
+### Observability
+Required metrics/logging for:
+- request lifecycle;
+- quote generation;
+- ranking;
+- agreement conflicts;
+- location freshness;
+- ride state;
+- payments;
+- operator actions.
+
+### Security
+- private KYC objects;
+- presigned upload/download;
+- JWT/session controls;
+- RBAC for operator actions;
+- audit sensitive changes;
+- rate limit/idempotency on exposed critical endpoints.
+
+## 13. Migration requirement
+
+Do not perform a big-bang rewrite.
+
+Current `trips`, `pricing` and `dispatch` remain compatibility paths until V2 marketplace equivalents are ready.
+
+Required migration path:
+
+```text
+MobilityRequest
+-> DriverTariff
+-> Quote
+-> Marketplace Ranking
+-> Agreement
+-> Ride
+```
+
+See [`OPENRIDE_MIGRATION_PLAN_V2.md`](./OPENRIDE_MIGRATION_PLAN_V2.md).
+
+## 14. Definition of OpenRide MVP success
+
+A meaningful OpenRide marketplace MVP is achieved when:
+
+1. driver can configure own tariff;
+2. rider can create mobility request;
+3. multiple eligible drivers can produce valid quotes;
+4. rider can compare and select an offer;
+5. Quick Match can choose from valid quotes under rider constraints;
+6. accepted fare is stored in immutable agreement snapshot;
+7. realtime ride tracking works after agreement;
+8. driver sees transparent gross/net earning;
+9. operator can perform KYC/support/safety without being the hidden owner of every fare;
+10. all critical marketplace flows are covered by automated tests.

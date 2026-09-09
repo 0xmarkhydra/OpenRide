@@ -16,6 +16,7 @@ import (
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/objectstorage"
+	"flashx/services/api/internal/openridecore"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/config"
 	"flashx/services/api/internal/platform/httpserver"
@@ -176,8 +177,9 @@ func main() {
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
+	serviceManifests := openridecore.DefaultServiceManifests()
 
-	server := httpserver.New(cfg.HTTPAddr, httpserver.Dependencies{
+	server := httpserver.NewV2(cfg.HTTPAddr, httpserver.Dependencies{
 		AppEnv:           cfg.AppEnv,
 		Persistence:      cfg.Persistence,
 		Trips:            tripService,
@@ -196,11 +198,11 @@ func main() {
 		Realtime:         realtimeHub,
 		AllowDevIdentity: cfg.AllowDevIdentity,
 		ReadyCheck:       readyCheck,
-	})
+	}, serviceManifests)
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("flashx api listening on %s (%s, persistence=%s)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence)
+		log.Printf("openride api listening on %s (%s, persistence=%s, modules=%d)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence, len(serviceManifests))
 		errCh <- server.ListenAndServe()
 	}()
 

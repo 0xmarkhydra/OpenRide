@@ -1,17 +1,10 @@
 FROM golang:1.25-alpine AS build
 
-WORKDIR /src/services/api
-COPY services/api/go.mod services/api/go.sum ./
-RUN GOWORK=off go mod download
-
 WORKDIR /src
-COPY services/api ./services/api
-COPY packages/core-go ./packages/core-go
-COPY packages/modules-go ./packages/modules-go
-RUN go work init ./services/api ./packages/core-go ./packages/modules-go
-
-WORKDIR /src/services/api
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/openride-api ./cmd/api
+COPY services/api/go.mod services/api/go.sum ./
+RUN go mod download
+COPY services/api/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/openride-compat-api ./cmd/api
 
 FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates postgresql-client \
@@ -19,7 +12,7 @@ RUN apk add --no-cache ca-certificates postgresql-client \
     && adduser -S -G openride -u 10001 openride
 
 WORKDIR /app
-COPY --from=build /out/openride-api /app/openride-api
+COPY --from=build /out/openride-compat-api /app/openride-compat-api
 COPY infrastructure/migrations /app/migrations
 COPY scripts/railway_migrate.sh /app/railway_migrate.sh
 RUN chmod 0755 /app/railway_migrate.sh \
@@ -27,4 +20,4 @@ RUN chmod 0755 /app/railway_migrate.sh \
 
 USER openride
 EXPOSE 8080
-ENTRYPOINT ["/app/openride-api"]
+ENTRYPOINT ["/app/openride-compat-api"]

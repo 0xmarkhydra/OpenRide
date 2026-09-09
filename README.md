@@ -8,6 +8,8 @@
 
 **Drivers set their terms. Riders choose. Algorithms connect. Communities can self-host.**
 
+**English** · [简体中文](README.zh-CN.md) · [हिन्दी](README.hi.md) · [Español](README.es.md)
+
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-0b7285)](LICENSE)
 ![Stage](https://img.shields.io/badge/stage-pre--1.0-f59f00)
 ![Architecture](https://img.shields.io/badge/architecture-microservices-5f3dc4)
@@ -46,12 +48,14 @@ A platform may recommend. It must not silently rewrite what the two sides agreed
 
 ## Why OpenRide
 
+Each driver owns their own tariff. Pricing is **not a country-wide driver price**. Country/instance configuration may define currency, legal constraints or safety limits, while every driver independently declares commercial terms such as `per_km`.
+
 For the same 10 km request:
 
 ```text
-Driver A  →  50,000 VND  →  pickup in 10 min
-Driver B  →  60,000 VND  →  pickup in  3 min
-Driver C  →  55,000 VND  →  pickup in  6 min
+Driver A  →  5,000 VND/km  →  50,000 VND  →  pickup in 10 min
+Driver B  →  6,000 VND/km  →  60,000 VND  →  pickup in  3 min
+Driver C  →  5,500 VND/km  →  55,000 VND  →  pickup in  6 min
 ```
 
 OpenRide does **not** reduce the marketplace to `sort(price ASC)`.
@@ -60,7 +64,7 @@ A rider can understand the trade-off between fare, pickup ETA, quality, reliabil
 
 ### Non-negotiable principles
 
-1. **Drivers control their commercial terms.**
+1. **Drivers control their commercial terms, including their own per-km price.**
 2. **Riders keep the final choice.**
 3. **Cheapest must not automatically mean best.**
 4. **Declining an unsuitable request is not automatically bad behavior.**
@@ -138,22 +142,9 @@ Service-module catalog and validation
 Outbox / Inbox records
 ```
 
-It currently ships with:
-
-```text
-services/marketplace/
-├── cmd/marketplace/
-├── internal/httpapi/
-├── migrations/
-├── Dockerfile
-└── go.mod
-```
-
 Today the process exposes health/readiness, first-party service catalog and request validation. Initial Marketplace-owned schema exists, but the complete durable request/quote/agreement API is still being implemented. The legacy `services/api` remains a **compatibility gateway/runtime** during extraction; new marketplace ownership belongs in `marketplace-service`, not in the gateway.
 
 ## Packageable by design
-
-Microservices do not mean duplicating every invariant in every repository folder. Stable cross-cutting domain primitives remain packageable:
 
 ```text
 packages/
@@ -163,30 +154,17 @@ packages/
 └── sdk/           zero-dependency JavaScript/TypeScript client
 ```
 
-### `core-go`
-
-The Core module has no PostgreSQL, Redis, NATS, HTTP, WebSocket, map-provider or payment-provider dependency.
-
-```go
-import (
-    "github.com/0xmarkhydra/OpenRide/packages/core-go/engine"
-    "github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
-    "github.com/0xmarkhydra/OpenRide/packages/core-go/ranking"
-)
-```
-
 Core owns invariants such as:
 
 ```text
 Request → Quote → Agreement → Ride
 money uses integer minor units
+each driver owns their tariff
 accepted commercial terms are immutable snapshots
 ranking may score/reorder but cannot rewrite quotes
 ```
 
 ### Service modules
-
-Mobility verticals plug into the kernel instead of expanding one giant service-type switch:
 
 ```text
 passenger.car        ✅
@@ -197,8 +175,6 @@ designated-driver    planned
 vehicle-assistance   planned
 your.community.*     extensible
 ```
-
-`carpool.intercity` demonstrates a lifecycle and request model different from a normal passenger ride without modifying marketplace Core.
 
 ### JavaScript / TypeScript SDK
 
@@ -221,39 +197,9 @@ The SDK uses the Web Fetch API and has zero runtime dependencies. Some V2 SDK me
 
 ## Marketplace guardrails
 
-Ranking is a policy extension — **not a place to mutate commercial truth**.
-
-OpenRide Core rejects rankers that attempt to:
-
-```text
-hide valid offers
-fabricate or duplicate offers
-change fare / driver / expiry
-return NaN or infinite scores
-omit explanation reasons
-mark multiple offers as the single recommendation
-```
-
-Default pricing uses integer arithmetic and respects each driver's automatic-quote bounds.
-
-## Cross-language contracts
-
-`packages/contracts` contains versioned JSON Schemas so Go, Dart, JavaScript/TypeScript, Rust or other implementations can interoperate without importing one service's source code.
-
-Current contracts include:
-
-```text
-service-manifest.v1
-marketplace-event.v1
-request.passenger-car.v1
-request.carpool-intercity.v1
-```
-
-Breaking wire changes create a new major contract version rather than silently changing existing meaning.
+Ranking is a policy extension — **not a place to mutate commercial truth**. OpenRide Core rejects rankers that attempt to hide valid offers, fabricate/duplicate offers, change commercial terms, return invalid scores, omit explanations or mark multiple offers as the single recommendation.
 
 ## Event-driven reliability
-
-OpenRide's required cross-service reliability pattern is:
 
 ```text
 DB transaction
@@ -270,78 +216,30 @@ consumer inbox dedupe
 consumer-owned state change
 ```
 
-Initial Outbox/Inbox schema and NATS development topology exist. The production Outbox relay and complete consumer/Saga coverage are **not complete yet**; they remain 🟡 in [`PROJECT_STATUS`](docs/PROJECT_STATUS.md).
-
-Target event naming:
-
-```text
-openride.marketplace.request.opened.v1
-openride.marketplace.quote.created.v1
-openride.marketplace.agreement.created.v1
-openride.ride.ride.completed.v1
-openride.payment.payment.captured.v1
-```
+Initial Outbox/Inbox schema and NATS development topology exist. The production Outbox relay and complete consumer/Saga coverage are not complete yet.
 
 ## Repository map
 
 ```text
 OpenRide/
-├── assets/
-│   └── openride-hero.svg
-├── apps/
-│   ├── rider/
-│   ├── driver/
-│   ├── admin/
-│   └── landing/
-├── packages/
-│   ├── core-go/
-│   ├── modules-go/
-│   ├── contracts/
-│   └── sdk/
-├── services/
-│   ├── api/             # compatibility edge/runtime during migration
-│   └── marketplace/     # first extracted V2 microservice
+├── apps/            rider / driver / admin / landing
+├── packages/        core-go / modules-go / contracts / sdk
+├── services/        compatibility api / marketplace
 ├── infrastructure/
 ├── docs/
-├── docker-compose.yml
-├── docker-compose.microservices.yml
 └── go.work
 ```
 
-Target service topology expands toward:
-
-```text
-edge-gateway
-identity-service
-marketplace-service
-location-service
-ride-service
-payment-service
-trust-service
-realtime-service
-notification-service
-operator-service
-```
-
-We split by **bounded context and ownership**, not by arbitrary table count.
-
 ## Try it
-
-### Portable packages
 
 ```bash
 make packages-test
 make core-example
-```
-
-### Marketplace microservice
-
-```bash
 make marketplace-test
 make marketplace-run
 ```
 
-### Microservices development stack
+Microservices development stack:
 
 ```bash
 make micro-config
@@ -350,76 +248,26 @@ make micro-logs
 make micro-down
 ```
 
-The current microservices stack boots the Marketplace foundation with a dedicated PostgreSQL database and NATS JetStream. It is a development slice, not yet a complete passenger-booking stack.
+## Documentation
 
-### Compatibility runtime
+Documentation follows the same four-language policy as the README: **English, Simplified Chinese, Hindi and Spanish**. See [`docs/README.md`](docs/README.md) for the language index and translation-status rules. English is the canonical technical source when translations temporarily lag behind a code change.
 
-```bash
-make api-test
-make api-run
-```
+Key documents:
 
-Legacy V1 flows remain available while traffic is progressively migrated to owning V2 services.
-
-## Migration strategy
-
-No big-bang rewrite, but ownership is unambiguous:
-
-```text
-Legacy API / Trip / Dispatch
-          │
-          │ compatibility proxy + staged traffic migration
-          ▼
-      Edge boundary
-          │
-          ├── Marketplace Service ✅/🟡 first extraction
-          ├── Location Service ⏳
-          ├── Ride Service ⏳
-          ├── Identity Service ⏳
-          ├── Payment Service ⏳
-          └── Trust / Realtime / Notification / Operator ⏳
-```
-
-A capability is removed from the legacy runtime only after its owning service is deployed, traffic is migrated and compatibility tests pass.
-
-## Read the design
-
-- [`PROJECT_STATUS`](docs/PROJECT_STATUS.md) — what is actually implemented vs foundational/planned.
+- [`PROJECT_STATUS`](docs/PROJECT_STATUS.md)
 - [`PRODUCT_VISION`](docs/PRODUCT_VISION.md)
 - [`OPENRIDE_MANIFESTO`](docs/OPENRIDE_MANIFESTO.md)
 - [`MICROSERVICES_ARCHITECTURE`](docs/MICROSERVICES_ARCHITECTURE.md)
 - [`PACKAGE_ARCHITECTURE`](docs/PACKAGE_ARCHITECTURE.md)
-- [`VERSIONING`](docs/VERSIONING.md) — multi-module Go/package/contract release policy.
-- [`ARCHITECTURE`](docs/ARCHITECTURE.md)
-- [`DOMAIN_MODEL`](docs/DOMAIN_MODEL.md)
-- [`DATA_MODEL`](docs/DATA_MODEL.md)
 - [`API_CONTRACT_V2`](docs/API_CONTRACT_V2.md)
-- [`OPENRIDE_MIGRATION_PLAN_V2`](docs/OPENRIDE_MIGRATION_PLAN_V2.md)
-- [`ADR_OPENRIDE_V2`](docs/ADR_OPENRIDE_V2.md)
 
 ## Project status
 
-OpenRide is **pre-1.0**. The architecture and packages are intentionally usable for development, but the project does not claim production readiness for carrying real passengers yet.
-
-For an exact capability-by-capability matrix, read [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md). A real-world operator must also validate local transport regulation, insurance, KYC, payment, incident response, fraud prevention, privacy and safety requirements before launch.
+OpenRide is **pre-1.0**. It does not claim production readiness for carrying real passengers yet. See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the capability matrix.
 
 ## Contributing
 
-OpenRide is being built as a commons, not source code only one company understands.
-
-Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Architecture contributions should preserve:
-
-```text
-driver autonomy
-rider choice
-algorithm transparency
-bounded-context ownership
-data isolation
-self-hostability
-backward compatibility during migration
-```
-
-Security issues follow [`SECURITY.md`](SECURITY.md). Community participation follows [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+OpenRide is being built as a commons, not source code only one company understands. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

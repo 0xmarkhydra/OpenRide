@@ -28,20 +28,20 @@ func validQuote(now time.Time) Quote {
 }
 
 func TestDriverTariffAllowsAutoQuote(t *testing.T) {
-	t := DriverTariff{
+	tariff := DriverTariff{
 		ID: "tariff_1", InstanceID: "default", DriverID: "driver_1", ServiceType: "passenger.car",
 		QuoteMode: QuoteModeHybrid,
 		BaseFare: money.Must("VND", 10_000), MinimumFare: money.Must("VND", 20_000),
 		PerKM: money.Must("VND", 5_000), PerMinute: money.Must("VND", 0), PickupFee: money.Must("VND", 0),
 		AutoQuoteMinimum: money.Must("VND", 40_000), AutoQuoteMaximum: money.Must("VND", 80_000), Version: 1,
 	}
-	if err := tt.Validate(); err != nil {
+	if err := tariff.Validate(); err != nil {
 		t.Fatalf("tariff should be valid: %v", err)
 	}
-	if !tt.AllowsAutoQuote(money.Must("VND", 52_000)) {
+	if !tariff.AllowsAutoQuote(money.Must("VND", 52_000)) {
 		t.Fatal("expected quote inside driver bounds to be allowed")
 	}
-	if tt.AllowsAutoQuote(money.Must("VND", 90_000)) {
+	if tariff.AllowsAutoQuote(money.Must("VND", 90_000)) {
 		t.Fatal("quote above driver maximum must be rejected")
 	}
 }
@@ -52,6 +52,10 @@ func TestNewAgreementSnapshotsAcceptedQuote(t *testing.T) {
 	q := validQuote(now)
 	q.TariffID = "tariff_1"
 	q.TariffVersion = 7
+	q.Metadata = map[string]any{
+		"surge": false,
+		"breakdown": map[string]any{"base_minor": int64(10_000)},
+	}
 
 	agreement, err := NewAgreement("agreement_1", r, q, now.Add(5*time.Second))
 	if err != nil {
@@ -60,8 +64,18 @@ func TestNewAgreementSnapshotsAcceptedQuote(t *testing.T) {
 	if agreement.Fare.Minor != 52_000 || agreement.DriverID != "driver_1" || agreement.QuoteID != "quote_1" {
 		t.Fatalf("agreement did not snapshot accepted terms: %+v", agreement)
 	}
-	if agreement.TermsSnapshot["tariff_version"] != int64(7) {
+	if agreement.TermsSnapshot.TariffVersion != 7 {
 		t.Fatalf("expected tariff version in terms snapshot")
+	}
+
+	q.Metadata["surge"] = true
+	q.Metadata["breakdown"].(map[string]any)["base_minor"] = int64(99_999)
+	if agreement.TermsSnapshot.QuoteMetadata["surge"] != false {
+		t.Fatal("agreement snapshot must not alias quote metadata")
+	}
+	breakdown := agreement.TermsSnapshot.QuoteMetadata["breakdown"].(map[string]any)
+	if breakdown["base_minor"] != int64(10_000) {
+		t.Fatal("agreement snapshot must deep-copy nested quote metadata")
 	}
 }
 

@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrNotConfigured = errors.New("engine: marketplace is not fully configured")
-	ErrNoOffers      = errors.New("engine: no valid offers")
+	ErrNotConfigured  = errors.New("engine: marketplace is not fully configured")
+	ErrNoOffers       = errors.New("engine: no valid offers")
 	ErrInvalidRanking = errors.New("engine: ranker returned an invalid or non-transparent result")
 )
 
@@ -127,11 +127,13 @@ func (m Marketplace) FindOffers(ctx context.Context, request marketplace.Request
 		return report, ErrNoOffers
 	}
 
-	ranked, err := m.Ranker.Rank(ctx, request, validQuotes)
+	canonicalQuotes := cloneQuotes(validQuotes)
+	rankInput := cloneQuotes(validQuotes)
+	ranked, err := m.Ranker.Rank(ctx, request, rankInput)
 	if err != nil {
 		return report, fmt.Errorf("engine: rank quotes: %w", err)
 	}
-	ranked, err = canonicalizeRanking(validQuotes, ranked)
+	ranked, err = canonicalizeRanking(canonicalQuotes, ranked)
 	if err != nil {
 		return report, err
 	}
@@ -147,8 +149,8 @@ func (m Marketplace) FindOffers(ctx context.Context, request marketplace.Request
 			Name:       "marketplace.offers_ready.v1",
 			OccurredAt: clock.Now(),
 			Payload: map[string]any{
-				"request_id":     request.ID,
-				"service_type":   request.ServiceType,
+				"request_id":      request.ID,
+				"service_type":    request.ServiceType,
 				"candidate_count": report.CandidateCount,
 				"offer_count":     report.OfferCount,
 			},
@@ -156,6 +158,44 @@ func (m Marketplace) FindOffers(ctx context.Context, request marketplace.Request
 	}
 
 	return report, nil
+}
+
+func cloneQuotes(src []marketplace.Quote) []marketplace.Quote {
+	out := make([]marketplace.Quote, len(src))
+	for i := range src {
+		out[i] = src[i]
+		out[i].Explanation = append([]string(nil), src[i].Explanation...)
+		out[i].Metadata = cloneStringAnyMap(src[i].Metadata)
+	}
+	return out
+}
+
+func cloneStringAnyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = cloneAny(value)
+	}
+	return out
+}
+
+func cloneAny(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneStringAnyMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i := range typed {
+			out[i] = cloneAny(typed[i])
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 // canonicalizeRanking makes ranking an ordering/scoring concern only. A ranker
@@ -191,8 +231,6 @@ func canonicalizeRanking(quotes []marketplace.Quote, ranked []RankedQuote) ([]Ra
 			}
 		}
 		seen[quoteID] = struct{}{}
-		// Always restore the canonical quote so a ranking plugin cannot mutate
-		// fare, expiry, driver identity or any accepted commercial field.
 		ranked[i].Quote = original
 	}
 	return ranked, nil

@@ -44,6 +44,7 @@ func (q testQuoter) Quote(_ context.Context, request marketplace.Request, candid
 		ID: "quote_" + candidate.DriverID, RequestID: request.ID, DriverID: candidate.DriverID,
 		Status: marketplace.QuotePending, Fare: money.Must("VND", fare),
 		PickupDistanceM: candidate.PickupDistanceM, PickupETAS: candidate.PickupETAS,
+		Metadata: map[string]any{"pricing": map[string]any{"source": "driver_tariff"}},
 		CreatedAt: q.now, ExpiresAt: q.now.Add(time.Minute),
 	}, nil
 }
@@ -57,6 +58,17 @@ func (testRanker) Rank(_ context.Context, _ marketplace.Request, quotes []market
 		out = append(out, RankedQuote{Quote: q, Score: float64(len(quotes) - i), Reasons: []string{"demo: lower fare"}, Recommended: i == 0})
 	}
 	return out, nil
+}
+
+type mutatingRanker struct{}
+
+func (mutatingRanker) Rank(_ context.Context, _ marketplace.Request, quotes []marketplace.Quote) ([]RankedQuote, error) {
+	quotes[0].Fare = money.Must("VND", 1)
+	quotes[0].Metadata["pricing"].(map[string]any)["source"] = "tampered"
+	return []RankedQuote{
+		{Quote: quotes[0], Score: 1, Reasons: []string{"tampered"}, Recommended: true},
+		{Quote: quotes[1], Score: 0.5, Reasons: []string{"other"}},
+	}, nil
 }
 
 func TestFindOffersKeepsHealthyDriversWhenOneQuoteFails(t *testing.T) {
@@ -79,6 +91,30 @@ func TestFindOffersKeepsHealthyDriversWhenOneQuoteFails(t *testing.T) {
 	}
 	if !report.Offers[0].Recommended || report.Offers[0].Quote.DriverID != "driver_a" {
 		t.Fatalf("unexpected recommendation: %+v", report.Offers)
+	}
+}
+
+func TestFindOffersIsolatesRankerFromCanonicalQuotes(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	destination := geo.Point{Lat: 21.0285, Lng: 105.8542}
+	request := marketplace.Request{
+		ID: "req_1", InstanceID: "default", RiderID: "rider_1", ServiceType: "passenger.car",
+		Status: marketplace.RequestOpen, Pickup: geo.Point{Lat: 21.0278, Lng: 105.8342}, Destination: &destination,
+		RequestedAt: now, Version: 1,
+	}
+	registry := extension.MustRegistry(testService{})
+	engine := Marketplace{Services: registry, Candidates: testCandidates{}, Quotes: testQuoter{now: now}, Ranker: mutatingRanker{}, MaxParallelQuotes: 2}
+
+	report, err := engine.FindOffers(context.Background(), request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Offers[0].Quote.Fare.Minor == 1 {
+		t.Fatal("ranker must not be able to mutate canonical fare")
+	}
+	pricing := report.Offers[0].Quote.Metadata["pricing"].(map[string]any)
+	if pricing["source"] != "driver_tariff" {
+		t.Fatal("ranker must not be able to mutate nested canonical metadata")
 	}
 }
 

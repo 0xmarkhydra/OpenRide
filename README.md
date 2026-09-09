@@ -2,9 +2,27 @@
 
 > **Open-source mobility marketplace where drivers set their terms, riders choose, and algorithms connect.**
 
-OpenRide is not a Grab/Uber clone and it is not a platform whose core job is to impose one fare on every driver.
+**OpenRide is not another Grab/Uber clone.** It is an open-source foundation for communities, cooperatives, local operators and startups to run fair mobility marketplaces without rebuilding the entire technical stack from zero.
 
-OpenRide is an open-source foundation for communities, cooperatives, local operators and startups to run fair mobility marketplaces. Drivers can define their own pricing rules. Riders can compare transparent offers. The platform provides routing, discovery, matching, realtime location, trust, payments and operational tooling without silently taking ownership of the commercial terms between the two sides.
+Drivers can define their own pricing rules. Riders can compare transparent offers. OpenRide provides routing, discovery, matching, realtime location, trust, payments and operational tooling without silently taking ownership of the commercial terms between the two sides.
+
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
+![Stage](https://img.shields.io/badge/stage-marketplace%20V2%20foundation-orange)
+
+## Why OpenRide exists
+
+Traditional ride-hailing platforms solve difficult technical problems, but the platform can also become the party that controls pricing, matching visibility and access to customers.
+
+OpenRide explores a different model:
+
+```text
+Drivers set their terms.
+Riders choose.
+Algorithms connect.
+Communities can self-host.
+```
+
+The goal is not to remove algorithms. The goal is to make them **serve a transparent marketplace instead of silently becoming the marketplace owner**.
 
 ## Core principles
 
@@ -18,9 +36,7 @@ OpenRide is an open-source foundation for communities, cooperatives, local opera
 
 See [`docs/OPENRIDE_MANIFESTO.md`](docs/OPENRIDE_MANIFESTO.md).
 
-## Product model
-
-The core business flow is:
+## Marketplace model
 
 ```text
 Rider demand
@@ -38,7 +54,7 @@ Driver Tariffs / Quotes
 Marketplace Ranking
     |
     v
-Rider Choice
+Rider Choice / Quick Match
     |
     v
 Agreement
@@ -57,9 +73,9 @@ The important separation is:
 - **Agreement** — the terms both sides accepted.
 - **Ride / Job** — execution of the agreed service.
 
-A ride is therefore an execution object, not the entire marketplace.
+A ride is an execution object, not the entire marketplace.
 
-## Example
+## Simple pricing example
 
 For the same 10 km request:
 
@@ -69,20 +85,20 @@ Driver B: 6,000 VND/km -> 60,000 VND
 Driver C: 5,500 VND/km -> 55,000 VND
 ```
 
-OpenRide should not blindly pick the cheapest driver.
+OpenRide should not blindly pick Driver A because A is cheapest.
 
-The rider can instead see useful trade-offs such as:
+The rider can see useful trade-offs such as:
 
-- best overall match;
-- cheapest offer;
-- fastest pickup;
-- highest-rated driver.
+- **best overall match**;
+- **cheapest offer**;
+- **fastest pickup**;
+- **highest-rated driver**.
 
-Ranking can consider pickup ETA, price fit, reliability, quality, rider preferences and marketplace fairness. The factors and resulting recommendation should be explainable.
+Ranking can consider pickup ETA, price fit, reliability, quality, rider preferences and marketplace fairness. Recommendations should be explainable.
 
 ## Driver pricing
 
-A driver tariff can contain more than `price_per_km`:
+A driver tariff is more than one `price_per_km` field:
 
 ```text
 Base / minimum fare
@@ -91,27 +107,53 @@ Per-minute rate
 Pickup radius
 Pickup fee
 Night / holiday adjustments
-Long-distance rule
+Long-distance rules
 Minimum acceptable quote
 Maximum automatic quote
 Manual / Auto / Hybrid quote mode
 ```
 
-Auto pricing is allowed only within rules and bounds the driver has accepted. The system may recommend a market adjustment, but should not silently overwrite a driver's terms.
+Auto pricing is allowed only inside rules and bounds the driver has accepted. The system may recommend a market adjustment, but should not silently overwrite a driver's terms.
 
-## Supported marketplace modes
+### Manual
+
+The driver reviews a request and sends a price.
+
+### Auto
+
+OpenRide can generate a quote automatically, but only inside the driver's configured bounds.
+
+### Hybrid
+
+OpenRide prepares a suggested quote and the driver can adjust it before sending.
+
+## Rider modes
 
 ### Marketplace mode
 
 Multiple eligible drivers can return offers. The rider compares and chooses.
 
-### Quick match
+### Quick Match
 
-The rider can ask OpenRide to choose automatically using constraints such as maximum fare, ETA and rating. The system still chooses from valid driver-authorized quotes; it does not invent a platform-owned fare.
+The rider can ask OpenRide to choose automatically using constraints such as maximum fare, ETA and rating. Quick Match still chooses from valid driver-authorized quotes; it does not invent a platform-owned fare.
+
+## Public-launch foundation
+
+The repository now contains the first OpenRide V2 marketplace foundation:
+
+- `DriverTariff`, `MobilityRequest`, `Quote`, `Agreement` and `Ride` domain primitives;
+- additive V2 marketplace database migration;
+- marketplace state-transition and quote-bound tests;
+- rewritten architecture, data model, API and product documentation;
+- Rider, Driver, Operator and Landing applications from the existing runtime foundation;
+- PostgreSQL/PostGIS, Redis, realtime, auth, payments, ratings and object-storage foundations;
+- community contribution, security and licensing policies.
+
+This is a **pre-1.0 foundation**, not a claim that the project is ready to carry real passengers in production. Safety, legal, payment, KYC, incident response and marketplace runtime integration must be completed and validated by each operator before real-world deployment.
 
 ## Long-term service model
 
-OpenRide should be built around generic marketplace primitives so additional mobility services can plug in later:
+OpenRide is built around generic marketplace primitives so mobility verticals can plug in later:
 
 - passenger car;
 - motorbike;
@@ -122,9 +164,9 @@ OpenRide should be built around generic marketplace primitives so additional mob
 - vehicle assistance;
 - vehicle inspection assistance.
 
-Legacy FlashX designated-driver and inspection workflows in this repository are treated as future service verticals, not as the OpenRide business kernel.
+Legacy FlashX designated-driver and inspection workflows in this repository are treated as service verticals and compatibility code, not as the OpenRide business kernel.
 
-## Current technology foundation
+## Technology foundation
 
 The existing technical foundation is intentionally retained while the business kernel is migrated:
 
@@ -139,7 +181,7 @@ The existing technical foundation is intentionally retained while the business k
 - Push: FCM/APNs-ready architecture
 - Object storage: S3-compatible
 
-We do **not** plan to rewrite the system into microservices just to look enterprise. Modules should be extracted only when production load, ownership or deployment needs justify it.
+We do **not** plan to rewrite the system into microservices just to look enterprise. Modules should be extracted only when production load, ownership or deployment requirements justify it.
 
 ## Repository layout
 
@@ -148,34 +190,38 @@ OpenRide/
 ├── apps/
 │   ├── rider/
 │   ├── driver/
-│   ├── admin/          # target name: operator
+│   ├── admin/          # operator console; directory rename is staged
 │   └── landing/
 ├── services/
 │   └── api/
+│       └── internal/
+│           └── marketplace/
 ├── infrastructure/
 │   └── migrations/
 ├── docs/
-└── .github/
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── CODE_OF_CONDUCT.md
+└── LICENSE
 ```
 
-The target architecture will gradually introduce marketplace-oriented modules such as `requests`, `tariffs`, `quotes`, `agreements`, `marketplace`, `fairness` and `rides` while preserving compatibility with the current runtime during migration.
+## Read the design
 
-## Architecture documents
-
-Start here:
-
-- [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) — product scope and user value.
+- [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) — product vision and scope.
 - [`docs/OPENRIDE_MANIFESTO.md`](docs/OPENRIDE_MANIFESTO.md) — non-negotiable community principles.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — target technical architecture.
-- [`docs/DOMAIN_MODEL.md`](docs/DOMAIN_MODEL.md) — target business domains.
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — target persistence model.
+- [`docs/DOMAIN_MODEL.md`](docs/DOMAIN_MODEL.md) — business domains and aggregates.
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — persistence model.
 - [`docs/DISPATCH_ENGINE.md`](docs/DISPATCH_ENGINE.md) — migration from dispatch to marketplace matching.
-- [`docs/CUSTOMER_REQUIREMENTS.md`](docs/CUSTOMER_REQUIREMENTS.md) — current product requirements.
-- [`docs/OPENRIDE_MIGRATION_PLAN_V2.md`](docs/OPENRIDE_MIGRATION_PLAN_V2.md) — phased migration from the current codebase.
+- [`docs/API_CONTRACT_V2.md`](docs/API_CONTRACT_V2.md) — V2 API direction.
+- [`docs/CUSTOMER_REQUIREMENTS.md`](docs/CUSTOMER_REQUIREMENTS.md) — product requirements.
+- [`docs/OPENRIDE_MIGRATION_PLAN_V2.md`](docs/OPENRIDE_MIGRATION_PLAN_V2.md) — staged migration plan.
+- [`docs/ADR_OPENRIDE_V2.md`](docs/ADR_OPENRIDE_V2.md) — architecture decisions.
+- [`docs/LEGACY_COMPATIBILITY.md`](docs/LEGACY_COMPATIBILITY.md) — why some `flashx` internal identifiers temporarily remain.
 
 ## Migration policy
 
-The current codebase contains legacy ride-hailing and FlashX designated-driver concepts. We will not delete all of that at once.
+We will not destroy the current runtime and replace everything in one rewrite.
 
 Migration is additive and staged:
 
@@ -201,11 +247,13 @@ Agreement
 Ride
 ```
 
-Existing flows remain operational until their marketplace replacement is tested and ready.
+Existing flows remain available until their marketplace replacements are tested and ready.
+
+Some internal identifiers still use `flashx` for deployment compatibility. They are documented in [`docs/LEGACY_COMPATIBILITY.md`](docs/LEGACY_COMPATIBILITY.md) and should not be interpreted as the target product identity.
 
 ## Development
 
-The existing development commands remain valid during the rebaseline:
+Existing development commands remain valid during the migration:
 
 ```bash
 make stack-up
@@ -225,14 +273,22 @@ API health in the current runtime:
 GET http://localhost:8080/health
 ```
 
-## Project status
+## Contributing
 
-OpenRide is currently in a **business/domain rebaseline**. The repository already contains working foundations for auth, drivers, location, dispatch, trips, payments, ratings, realtime, PostgreSQL/PostGIS, Redis and CI. The next stage is to migrate the business kernel from platform-controlled trip pricing/dispatch toward request -> quote -> agreement -> ride marketplace semantics.
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Product and architecture changes should preserve the manifesto and explain how they affect driver autonomy, rider choice, transparency, safety and self-hosting.
+
+For security vulnerabilities, read [`SECURITY.md`](SECURITY.md) before opening a public issue. Community participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## License
+
+OpenRide is licensed under **GNU AGPL-3.0-or-later**. See [`LICENSE`](LICENSE).
+
+The copyleft choice is intentional: OpenRide is meant to remain a commons that communities can inspect, modify and self-host, including when modified versions are offered over a network.
 
 ## Community
 
-The goal is bigger than launching one ride-hailing company.
+The ambition is bigger than launching one ride-hailing company.
 
-OpenRide should make it possible for a local driver community, cooperative, startup or regional operator to self-host a fair mobility marketplace without rebuilding the entire technical stack from zero.
+OpenRide should make it possible for a driver community, cooperative, startup or regional operator to run a fair mobility marketplace without becoming permanently dependent on a single closed platform.
 
 > **Build infrastructure for mobility communities, not another closed platform that communities depend on.**

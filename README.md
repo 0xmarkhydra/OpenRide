@@ -14,7 +14,7 @@
 ![Core](https://img.shields.io/badge/core-packageable-2f9e44)
 ![SDK](https://img.shields.io/badge/SDK-JS%2FTS-3178c6)
 
-**[Why](#why-openride) · [Architecture](#microservices-architecture) · [Try it](#try-it) · [Packages](#packageable-by-design) · [Contribute](CONTRIBUTING.md)**
+**[Why](#why-openride) · [Status](docs/PROJECT_STATUS.md) · [Architecture](#microservices-architecture) · [Try it](#try-it) · [Packages](#packageable-by-design) · [Contribute](CONTRIBUTING.md)**
 
 </div>
 
@@ -41,6 +41,8 @@ Ride executes the agreement
 ```
 
 A platform may recommend. It must not silently rewrite what the two sides agreed to.
+
+> **Implementation reality, not diagramware:** Core, first-party modules, contracts, the JS/TS SDK and an independently deployable Marketplace Service process exist today. The Marketplace persistence schema is foundational; full durable request → quote → agreement execution, Outbox relay, Location Service and Ride Service are not complete yet. See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the status matrix.
 
 ## Why OpenRide
 
@@ -99,6 +101,8 @@ flowchart TB
     Payment --> PaymentDB[(payment_db)]
 ```
 
+The diagram is the **target service topology**. Only extracted/implemented services are marked as such in [`PROJECT_STATUS`](docs/PROJECT_STATUS.md); OpenRide does not create empty service folders just to make the diagram look complete.
+
 ### Hard service rules
 
 ```text
@@ -122,7 +126,7 @@ See [`docs/MICROSERVICES_ARCHITECTURE.md`](docs/MICROSERVICES_ARCHITECTURE.md).
 
 `services/marketplace` is the first independently deployable V2 domain service.
 
-It owns:
+Its bounded context owns the target model for:
 
 ```text
 MobilityRequest
@@ -134,7 +138,7 @@ Service-module catalog and validation
 Outbox / Inbox records
 ```
 
-It ships with:
+It currently ships with:
 
 ```text
 services/marketplace/
@@ -145,7 +149,7 @@ services/marketplace/
 └── go.mod
 ```
 
-The legacy `services/api` is now a **compatibility gateway/runtime** during extraction. New marketplace ownership belongs in `marketplace-service`, not in the gateway.
+Today the process exposes health/readiness, first-party service catalog and request validation. Initial Marketplace-owned schema exists, but the complete durable request/quote/agreement API is still being implemented. The legacy `services/api` remains a **compatibility gateway/runtime** during extraction; new marketplace ownership belongs in `marketplace-service`, not in the gateway.
 
 ## Packageable by design
 
@@ -194,7 +198,7 @@ vehicle-assistance   planned
 your.community.*     extensible
 ```
 
-`carpool.intercity` already demonstrates a lifecycle and request model different from a normal passenger ride without modifying marketplace Core.
+`carpool.intercity` demonstrates a lifecycle and request model different from a normal passenger ride without modifying marketplace Core.
 
 ### JavaScript / TypeScript SDK
 
@@ -213,7 +217,7 @@ const request = await openride.createRequest({
 }, { idempotencyKey: crypto.randomUUID() });
 ```
 
-The SDK uses the Web Fetch API and has zero runtime dependencies.
+The SDK uses the Web Fetch API and has zero runtime dependencies. Some V2 SDK methods target the documented contract ahead of complete server-side implementation; the status matrix is authoritative for runtime availability.
 
 ## Marketplace guardrails
 
@@ -249,7 +253,7 @@ Breaking wire changes create a new major contract version rather than silently c
 
 ## Event-driven reliability
 
-Domain services communicate asynchronously through NATS JetStream where an immediate response is not required.
+OpenRide's required cross-service reliability pattern is:
 
 ```text
 DB transaction
@@ -265,6 +269,8 @@ consumer inbox dedupe
       ↓
 consumer-owned state change
 ```
+
+Initial Outbox/Inbox schema and NATS development topology exist. The production Outbox relay and complete consumer/Saga coverage are **not complete yet**; they remain 🟡 in [`PROJECT_STATUS`](docs/PROJECT_STATUS.md).
 
 Target event naming:
 
@@ -344,7 +350,7 @@ make micro-logs
 make micro-down
 ```
 
-The microservices stack includes the first Marketplace slice with its own PostgreSQL database and NATS JetStream.
+The current microservices stack boots the Marketplace foundation with a dedicated PostgreSQL database and NATS JetStream. It is a development slice, not yet a complete passenger-booking stack.
 
 ### Compatibility runtime
 
@@ -366,22 +372,24 @@ Legacy API / Trip / Dispatch
           ▼
       Edge boundary
           │
-          ├── Marketplace Service ✅ first extraction
-          ├── Location Service
-          ├── Ride Service
-          ├── Identity Service
-          ├── Payment Service
-          └── Trust / Realtime / Notification / Operator
+          ├── Marketplace Service ✅/🟡 first extraction
+          ├── Location Service ⏳
+          ├── Ride Service ⏳
+          ├── Identity Service ⏳
+          ├── Payment Service ⏳
+          └── Trust / Realtime / Notification / Operator ⏳
 ```
 
 A capability is removed from the legacy runtime only after its owning service is deployed, traffic is migrated and compatibility tests pass.
 
 ## Read the design
 
+- [`PROJECT_STATUS`](docs/PROJECT_STATUS.md) — what is actually implemented vs foundational/planned.
 - [`PRODUCT_VISION`](docs/PRODUCT_VISION.md)
 - [`OPENRIDE_MANIFESTO`](docs/OPENRIDE_MANIFESTO.md)
 - [`MICROSERVICES_ARCHITECTURE`](docs/MICROSERVICES_ARCHITECTURE.md)
 - [`PACKAGE_ARCHITECTURE`](docs/PACKAGE_ARCHITECTURE.md)
+- [`VERSIONING`](docs/VERSIONING.md) — multi-module Go/package/contract release policy.
 - [`ARCHITECTURE`](docs/ARCHITECTURE.md)
 - [`DOMAIN_MODEL`](docs/DOMAIN_MODEL.md)
 - [`DATA_MODEL`](docs/DATA_MODEL.md)
@@ -393,7 +401,7 @@ A capability is removed from the legacy runtime only after its owning service is
 
 OpenRide is **pre-1.0**. The architecture and packages are intentionally usable for development, but the project does not claim production readiness for carrying real passengers yet.
 
-A real-world operator must validate local transport regulation, insurance, KYC, payment, incident response, fraud prevention, privacy and safety requirements before launch.
+For an exact capability-by-capability matrix, read [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md). A real-world operator must also validate local transport regulation, insurance, KYC, payment, incident response, fraud prevention, privacy and safety requirements before launch.
 
 ## Contributing
 

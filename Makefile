@@ -1,4 +1,4 @@
-.PHONY: stack-up stack-down stack-logs stack-ps stack-reset infra-up infra-down api-run api-test api-fmt core-test core-fmt core-example workspace-test docker-test docker-integration-test docker-test-all
+.PHONY: stack-up stack-down stack-logs stack-ps stack-reset infra-up infra-down api-run api-test api-fmt core-test core-fmt core-example modules-test modules-fmt contracts-test sdk-test packages-test workspace-test docker-test docker-integration-test docker-test-all
 
 stack-up:
 	docker compose up -d --build --wait
@@ -41,7 +41,21 @@ core-fmt:
 core-example:
 	cd packages/core-go && go run ./examples/minimal
 
-workspace-test: core-test api-test
+modules-test:
+	cd packages/modules-go && go test ./...
+
+modules-fmt:
+	cd packages/modules-go && gofmt -w .
+
+contracts-test:
+	cd packages/contracts && npm run validate && npm pack --dry-run >/dev/null
+
+sdk-test:
+	cd packages/sdk && npm test && npm pack --dry-run >/dev/null
+
+packages-test: core-test modules-test contracts-test sdk-test
+
+workspace-test: packages-test api-test
 
 # Ephemeral containers: --rm guarantees no test container is left behind.
 docker-test:

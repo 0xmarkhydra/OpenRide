@@ -3,7 +3,6 @@ package carpool
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
@@ -63,7 +62,6 @@ func integerAttribute(attributes map[string]any, key string) (int64, bool) {
 		}
 		return int64(n), true
 	default:
-		_ = fmt.Sprintf("%v", value)
 		return 0, false
 	}
 }

@@ -1,0 +1,31 @@
+{
+  "name": "@openride/contracts",
+  "version": "0.1.0-alpha.0",
+  "description": "Language-neutral versioned contracts for the OpenRide mobility marketplace framework",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "README.md",
+    "schemas"
+  ],
+  "exports": {
+    "./service-manifest.v1.schema.json": "./schemas/service-manifest.v1.schema.json",
+    "./marketplace-event.v1.schema.json": "./schemas/marketplace-event.v1.schema.json"
+  },
+  "scripts": {
+    "validate": "node -e \"const fs=require('fs'); for(const f of fs.readdirSync('schemas').filter(x=>x.endsWith('.json'))){JSON.parse(fs.readFileSync('schemas/'+f,'utf8')); console.log('valid',f)}\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xmarkhydra/OpenRide.git",
+    "directory": "packages/contracts"
+  },
+  "keywords": [
+    "openride",
+    "mobility",
+    "ride-hailing",
+    "marketplace",
+    "json-schema"
+  ]
+}

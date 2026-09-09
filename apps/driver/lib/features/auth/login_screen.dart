@@ -44,7 +44,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('FlashX',
+                          Text('OpenRide',
                               style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 24,
@@ -64,7 +64,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                   Text(
                     waiting
                         ? 'Xác thực tài xế'
-                        : 'Sẵn sàng nhận việc cùng FlashX.',
+                        : 'Giá của bạn. Quyết định của bạn.',
                     style: theme.textTheme.displaySmall
                         ?.copyWith(color: Colors.white),
                   ),
@@ -72,7 +72,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                   Text(
                     waiting
                         ? 'Nhập mã OTP để tiếp tục.'
-                        : 'Nhận việc phù hợp gần bạn, xem rõ xe của khách và thực hiện từng bước an toàn.',
+                        : 'OpenRide hướng tới việc để tài xế tự thiết lập điều kiện nhận chuyến và mức giá, thay vì bị một bảng giá duy nhất áp cho tất cả.',
                     style: theme.textTheme.bodyLarge
                         ?.copyWith(color: const Color(0xFFB9C1D5)),
                   ),
@@ -167,7 +167,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                                       strokeWidth: 2.2, color: Colors.white))
                               : Text(waiting
                                   ? 'Xác nhận OTP'
-                                  : 'Vào FlashX Driver'),
+                                  : 'Vào OpenRide Driver'),
                         ),
                       ],
                     ),
@@ -196,7 +196,7 @@ class _DriverMark extends StatelessWidget {
         height: 50,
         decoration: BoxDecoration(
             color: FlashXTheme.yellow, borderRadius: BorderRadius.circular(16)),
-        child:
-            const Icon(Icons.bolt_rounded, color: FlashXTheme.navy, size: 31),
+        child: const Icon(Icons.swap_horiz_rounded,
+            color: FlashXTheme.navy, size: 31),
       );
 }

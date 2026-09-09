@@ -25,6 +25,7 @@ x-api-environment: &api-environment
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
   S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
   S3_PRESIGN_TTL_SECONDS: ${S3_PRESIGN_TTL_SECONDS:-600}
+  MARKETPLACE_SERVICE_URL: ${MARKETPLACE_SERVICE_URL:-}
 
 services:
   postgres:
@@ -80,8 +81,7 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: services/api/Dockerfile
+      context: ./services/api
     environment: *api-environment
     ports:
       - "${API_PORT:-8080}:8080"
@@ -116,16 +116,14 @@ services:
   api-test:
     profiles: ["test"]
     build:
-      context: .
-      dockerfile: services/api/Dockerfile
+      context: ./services/api
       target: test
     command: ["go", "test", "./..."]
 
   api-integration:
     profiles: ["test"]
     build:
-      context: .
-      dockerfile: services/api/Dockerfile
+      context: ./services/api
       target: test
     environment:
       <<: *api-environment

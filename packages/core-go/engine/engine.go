@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
@@ -13,6 +14,7 @@ import (
 var (
 	ErrNotConfigured = errors.New("engine: marketplace is not fully configured")
 	ErrNoOffers      = errors.New("engine: no valid offers")
+	ErrInvalidRanking = errors.New("engine: ranker returned an invalid or non-transparent result")
 )
 
 type QuoteFailure struct {
@@ -21,9 +23,9 @@ type QuoteFailure struct {
 }
 
 type OfferReport struct {
-	CandidateCount int           `json:"candidate_count"`
-	OfferCount     int           `json:"offer_count"`
-	Offers         []RankedQuote `json:"offers"`
+	CandidateCount int            `json:"candidate_count"`
+	OfferCount     int            `json:"offer_count"`
+	Offers         []RankedQuote  `json:"offers"`
 	Failures       []QuoteFailure `json:"failures,omitempty"`
 }
 
@@ -129,11 +131,12 @@ func (m Marketplace) FindOffers(ctx context.Context, request marketplace.Request
 	if err != nil {
 		return report, fmt.Errorf("engine: rank quotes: %w", err)
 	}
+	ranked, err = canonicalizeRanking(validQuotes, ranked)
+	if err != nil {
+		return report, err
+	}
 	report.Offers = ranked
 	report.OfferCount = len(ranked)
-	if report.OfferCount == 0 {
-		return report, ErrNoOffers
-	}
 
 	if m.Events != nil {
 		clock := m.Clock
@@ -144,13 +147,53 @@ func (m Marketplace) FindOffers(ctx context.Context, request marketplace.Request
 			Name:       "marketplace.offers_ready.v1",
 			OccurredAt: clock.Now(),
 			Payload: map[string]any{
-				"request_id": request.ID,
-				"service_type": request.ServiceType,
+				"request_id":     request.ID,
+				"service_type":   request.ServiceType,
 				"candidate_count": report.CandidateCount,
-				"offer_count": report.OfferCount,
+				"offer_count":     report.OfferCount,
 			},
 		})
 	}
 
 	return report, nil
+}
+
+// canonicalizeRanking makes ranking an ordering/scoring concern only. A ranker
+// cannot fabricate, drop, duplicate or mutate commercial quotes. It must also
+// explain every score so operator/rider UIs can surface why an offer was ranked.
+func canonicalizeRanking(quotes []marketplace.Quote, ranked []RankedQuote) ([]RankedQuote, error) {
+	if len(ranked) != len(quotes) || len(ranked) == 0 {
+		return nil, ErrInvalidRanking
+	}
+	canonical := make(map[string]marketplace.Quote, len(quotes))
+	for _, quote := range quotes {
+		canonical[quote.ID] = quote
+	}
+
+	seen := make(map[string]struct{}, len(ranked))
+	recommended := 0
+	for i := range ranked {
+		quoteID := ranked[i].Quote.ID
+		original, ok := canonical[quoteID]
+		if !ok {
+			return nil, ErrInvalidRanking
+		}
+		if _, duplicate := seen[quoteID]; duplicate {
+			return nil, ErrInvalidRanking
+		}
+		if math.IsNaN(ranked[i].Score) || math.IsInf(ranked[i].Score, 0) || len(ranked[i].Reasons) == 0 {
+			return nil, ErrInvalidRanking
+		}
+		if ranked[i].Recommended {
+			recommended++
+			if recommended > 1 {
+				return nil, ErrInvalidRanking
+			}
+		}
+		seen[quoteID] = struct{}{}
+		// Always restore the canonical quote so a ranking plugin cannot mutate
+		// fare, expiry, driver identity or any accepted commercial field.
+		ranked[i].Quote = original
+	}
+	return ranked, nil
 }

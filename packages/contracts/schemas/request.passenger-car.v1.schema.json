@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openride.dev/contracts/request.passenger-car.v1.schema.json",
+  "title": "OpenRide Passenger Car Request v1",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "passengers": { "type": "integer", "minimum": 1, "maximum": 8 },
+    "luggage": { "type": "integer", "minimum": 0, "maximum": 20 },
+    "scheduled_at": { "type": "string", "format": "date-time" },
+    "accessibility": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  }
+}

@@ -194,6 +194,14 @@ func (q Quote) IsSelectable(now time.Time) bool {
 	return q.Validate() == nil && q.Status == QuotePending && q.ExpiresAt.After(now)
 }
 
+// AgreementTerms is a typed commercial snapshot. Runtime quote/tariff objects
+// may evolve after acceptance, but an Agreement must retain the exact accepted terms.
+type AgreementTerms struct {
+	TariffID      string         `json:"tariff_id,omitempty"`
+	TariffVersion int64          `json:"tariff_version,omitempty"`
+	QuoteMetadata map[string]any `json:"quote_metadata,omitempty"`
+}
+
 type Agreement struct {
 	ID              string         `json:"id"`
 	InstanceID      string         `json:"instance_id"`
@@ -204,7 +212,7 @@ type Agreement struct {
 	DriverVehicleID string         `json:"driver_vehicle_id,omitempty"`
 	ServiceType     ServiceType    `json:"service_type"`
 	Fare            money.Amount   `json:"fare"`
-	TermsSnapshot   map[string]any `json:"terms_snapshot,omitempty"`
+	TermsSnapshot   AgreementTerms `json:"terms_snapshot"`
 	CreatedAt       time.Time      `json:"created_at"`
 }
 

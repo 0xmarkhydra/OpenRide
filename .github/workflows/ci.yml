@@ -26,14 +26,17 @@ jobs:
 
   contracts:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
     steps:
       - uses: actions/checkout@v4
-      - name: Validate JSON contract syntax
-        run: |
-          for file in packages/contracts/schemas/*.json; do
-            echo "Validating $file"
-            python3 -m json.tool "$file" >/dev/null
-          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run validate
+      - name: Verify package contents
+        run: npm pack --dry-run
 
   backend:
     runs-on: ubuntu-latest

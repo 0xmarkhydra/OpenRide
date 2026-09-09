@@ -8,6 +8,7 @@ Drivers can define their own pricing rules. Riders can compare transparent offer
 
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
 ![Stage](https://img.shields.io/badge/stage-marketplace%20V2%20foundation-orange)
+![Core](https://img.shields.io/badge/core-packageable-brightgreen)
 
 ## Why OpenRide exists
 
@@ -137,13 +138,86 @@ Multiple eligible drivers can return offers. The rider compares and chooses.
 
 The rider can ask OpenRide to choose automatically using constraints such as maximum fare, ETA and rating. Quick Match still chooses from valid driver-authorized quotes; it does not invent a platform-owned fare.
 
+## OpenRide Core is packageable
+
+The business kernel now lives as an independent Go module:
+
+```text
+github.com/0xmarkhydra/OpenRide/packages/core-go
+```
+
+It has **no PostgreSQL, Redis, HTTP, WebSocket, map-provider or payment-provider dependency**. Infrastructure is connected through ports/adapters.
+
+```text
+Apps
+  │
+  ▼
+Operator Runtime
+  │ adapters
+  ▼
+OpenRide Core
+  │ extension contracts
+  ├── passenger.car
+  ├── carpool.intercity
+  ├── parcel.instant
+  └── your.community.service
+```
+
+Core packages:
+
+```text
+packages/core-go/
+├── money/        # safe minor-unit money
+├── geo/          # provider-neutral coordinates
+├── marketplace/  # Request, Tariff, Quote, Agreement, Ride
+├── extension/    # service manifests + registry
+└── engine/       # candidate -> quote -> rank pipeline
+```
+
+A marketplace runtime supplies implementations for:
+
+```go
+type CandidateSource interface { ... }
+type QuoteProvider interface { ... }
+type Ranker interface { ... }
+type EventPublisher interface { ... }
+```
+
+That means a community can replace Redis GEO, pricing logic, ranking, events, maps or payments without forking the marketplace kernel.
+
+### Try Core in 30 seconds
+
+```bash
+make core-test
+make core-example
+```
+
+The runnable example registers a service module, discovers three drivers, asks for driver-authorized quotes and ranks them using an explainable fare + ETA policy.
+
+See [`packages/core-go/README.md`](packages/core-go/README.md) and [`docs/PACKAGE_ARCHITECTURE.md`](docs/PACKAGE_ARCHITECTURE.md).
+
+## Language-neutral contracts
+
+`packages/contracts` contains versioned JSON Schemas so Dart, TypeScript, Rust and other runtimes can integrate without importing Go implementation details.
+
+Current contracts include:
+
+```text
+service-manifest.v1
+marketplace-event.v1
+```
+
+Breaking wire changes create a new contract version rather than silently changing the old meaning.
+
 ## Public-launch foundation
 
 The repository now contains the first OpenRide V2 marketplace foundation:
 
+- packageable OpenRide Core with extension ports and a runnable example;
+- language-neutral, versioned service/event contracts;
 - `DriverTariff`, `MobilityRequest`, `Quote`, `Agreement` and `Ride` domain primitives;
 - additive V2 marketplace database migration;
-- marketplace state-transition and quote-bound tests;
+- marketplace state-transition, quote-bound, registry and engine tests;
 - rewritten architecture, data model, API and product documentation;
 - Rider, Driver, Operator and Landing applications from the existing runtime foundation;
 - PostgreSQL/PostGIS, Redis, realtime, auth, payments, ratings and object-storage foundations;
@@ -174,6 +248,8 @@ The existing technical foundation is intentionally retained while the business k
 - Driver app: Flutter
 - Operator/Admin: Next.js + TypeScript
 - Backend: Go modular monolith
+- Core: standalone Go module + extension ports
+- Cross-language contracts: JSON Schema
 - Primary database: PostgreSQL + PostGIS
 - Realtime/cache/geo: Redis
 - Realtime transport: WebSocket
@@ -190,15 +266,17 @@ OpenRide/
 ├── apps/
 │   ├── rider/
 │   ├── driver/
-│   ├── admin/          # operator console; directory rename is staged
+│   ├── admin/              # operator console; directory rename is staged
 │   └── landing/
+├── packages/
+│   ├── core-go/            # portable business kernel
+│   └── contracts/          # language-neutral versioned contracts
 ├── services/
-│   └── api/
-│       └── internal/
-│           └── marketplace/
+│   └── api/                # current operator runtime + adapters
 ├── infrastructure/
 │   └── migrations/
 ├── docs/
+├── go.work
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── CODE_OF_CONDUCT.md
@@ -209,6 +287,7 @@ OpenRide/
 
 - [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) — product vision and scope.
 - [`docs/OPENRIDE_MANIFESTO.md`](docs/OPENRIDE_MANIFESTO.md) — non-negotiable community principles.
+- [`docs/PACKAGE_ARCHITECTURE.md`](docs/PACKAGE_ARCHITECTURE.md) — package, module, adapter and contract boundaries.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — target technical architecture.
 - [`docs/DOMAIN_MODEL.md`](docs/DOMAIN_MODEL.md) — business domains and aggregates.
 - [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — persistence model.
@@ -229,22 +308,17 @@ Migration is additive and staged:
 Current Trip/Pricing/Dispatch
         |
         v
-MobilityRequest
+OpenRide Core
+        |
+        +--> MobilityRequest
+        +--> DriverTariff
+        +--> Quote
+        +--> Marketplace Engine
+        +--> Agreement
+        +--> Ride
         |
         v
-DriverTariff
-        |
-        v
-Quote
-        |
-        v
-Marketplace Matching
-        |
-        v
-Agreement
-        |
-        v
-Ride
+Runtime adapters replace legacy paths incrementally
 ```
 
 Existing flows remain available until their marketplace replacements are tested and ready.
@@ -253,18 +327,23 @@ Some internal identifiers still use `flashx` for deployment compatibility. They 
 
 ## Development
 
-Existing development commands remain valid during the migration:
-
 ```bash
+# Portable Core
+make core-test
+make core-example
+
+# Current operator runtime
+make api-run
+make api-test
+
+# Both Go modules
+make workspace-test
+
+# Full local stack
 make stack-up
 make stack-ps
 make stack-logs
 make stack-down
-make infra-up
-make api-run
-make api-test
-make docker-test
-make docker-integration-test
 ```
 
 API health in the current runtime:

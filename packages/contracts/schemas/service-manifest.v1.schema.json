@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openride.dev/contracts/service-manifest.v1.schema.json",
+  "title": "OpenRide Service Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "display_name", "category"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
+      "examples": ["passenger.car", "carpool.intercity", "parcel.instant"]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["passenger", "parcel", "carpool", "scheduled", "customer_asset", "multi_stop"]
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "examples": [
+        {
+          "request_schema": "openride://contracts/passenger-car-request.v1",
+          "ride_event_schema": "openride://contracts/passenger-car-ride-event.v1"
+        }
+      ]
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

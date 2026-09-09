@@ -8,6 +8,36 @@ permissions:
   contents: read
 
 jobs:
+  core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/core-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Compile runnable example
+        run: go build ./examples/minimal
+
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run validate
+      - name: Verify package contents
+        run: npm pack --dry-run
+
   backend:
     runs-on: ubuntu-latest
     defaults:

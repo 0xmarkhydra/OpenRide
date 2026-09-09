@@ -2,8 +2,8 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata = {
-  title: 'FlashX Admin',
-  description: 'Operations dashboard for FlashX ride-hailing platform',
+  title: 'OpenRide Operator',
+  description: 'Operations dashboard for the OpenRide open mobility marketplace',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

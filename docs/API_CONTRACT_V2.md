@@ -1,49 +1,77 @@
-# OpenRide API Contract V2 — Marketplace Target
+# OpenRide API Contract V2
 
-> Target contract for the marketplace migration. Existing V1 endpoints remain compatibility APIs until migration phases are implemented and tested.
+> Public V2 contract exposed through the Edge Gateway/BFF. Internal service topology is not a client concern.
 
 ## 1. API principles
 
-- REST for durable command/query flows.
-- WebSocket for realtime request/quote/ride events.
-- Idempotency keys on critical create/accept/payment commands.
-- Agreement creation must be atomic.
-- Accepted commercial terms are returned from durable Agreement data, not recomputed client-side.
-- Clients must be able to resync a durable snapshot after realtime disconnect.
+- REST for durable public commands/queries.
+- WebSocket/SSE for realtime delivery where appropriate.
+- Critical create/accept/payment commands require idempotency keys.
+- Clients resync durable snapshots after reconnect.
+- Accepted commercial terms come from Agreement snapshots, never client-side recomputation.
+- Canonical service type IDs use dotted names such as `passenger.car`.
+- Public errors use stable codes; internal service errors are not leaked directly.
 
-## 2. Authentication
+## 2. Service catalog
 
-Existing auth/session infrastructure remains in place.
+```text
+GET /v2/services
+```
 
-Representative endpoints:
+Returns service manifests from Marketplace Service through the Edge.
+
+Example:
+
+```json
+{
+  "data": [
+    {
+      "id": "passenger.car",
+      "version": "1.0.0",
+      "display_name": "Passenger Car",
+      "category": "passenger",
+      "capabilities": ["passenger", "scheduled"]
+    },
+    {
+      "id": "carpool.intercity",
+      "version": "1.0.0",
+      "display_name": "Intercity Carpool",
+      "category": "carpool",
+      "capabilities": ["passenger", "carpool", "scheduled"]
+    }
+  ]
+}
+```
+
+## 3. Authentication
+
+Representative public endpoints:
 
 ```text
 POST /v2/auth/otp/request
 POST /v2/auth/otp/verify
 POST /v2/auth/refresh
+POST /v2/auth/logout
 GET  /v2/me
 ```
 
-## 3. Driver tariff APIs
+Identity Service owns authentication/session truth; Edge exposes the public contract.
 
-### Get active tariffs
-
-```text
-GET /v2/drivers/me/tariffs
-```
-
-### Create tariff
+## 4. Driver tariffs
 
 ```text
-POST /v2/drivers/me/tariffs
-Idempotency-Key: <key>
+GET   /v2/drivers/me/tariffs
+POST  /v2/drivers/me/tariffs
+PATCH /v2/drivers/me/tariffs/{tariff_id}
+GET   /v2/drivers/me/tariffs/{tariff_id}/rules
+POST  /v2/drivers/me/tariffs/{tariff_id}/rules
 ```
 
-Example request:
+Create example:
 
 ```json
 {
-  "service_type": "passenger_car",
+  "service_type": "passenger.car",
   "quote_mode": "auto",
   "currency": "VND",
   "base_fare_minor": 0,
@@ -56,47 +84,51 @@ Example request:
 }
 ```
 
-### Update tariff
+Create/update commands require:
 
 ```text
-PATCH /v2/drivers/me/tariffs/{tariff_id}
-If-Match: <version>
+Idempotency-Key: <key>
 ```
 
-### Tariff rules
+Updates should use optimistic versioning (`If-Match` or explicit version field).
 
-```text
-GET  /v2/drivers/me/tariffs/{tariff_id}/rules
-POST /v2/drivers/me/tariffs/{tariff_id}/rules
-```
+Marketplace Service owns tariff data.
 
-Rules must be validated and deterministic.
-
-## 4. Mobility request APIs
-
-### Route preview
+## 5. Route preview
 
 ```text
 POST /v2/routes/preview
 ```
 
-Returns route distance/duration/provider metadata without creating commercial terms.
+Route preview returns route facts without creating commercial terms.
 
-### Create request
+Example request:
+
+```json
+{
+  "service_type": "passenger.car",
+  "pickup": {"lat": 19.8067, "lng": 105.7852},
+  "destination": {"lat": 19.7724, "lng": 105.7762}
+}
+```
+
+Route-provider failure must be explicit. Never fabricate distance for commercial agreement creation.
+
+## 6. Mobility requests
+
+### Create
 
 ```text
 POST /v2/requests
 Idempotency-Key: <key>
 ```
 
-Example:
-
 ```json
 {
-  "service_type": "passenger_car",
+  "service_type": "passenger.car",
   "pickup": {"lat": 19.8067, "lng": 105.7852},
   "destination": {"lat": 19.7724, "lng": 105.7762},
-  "preferences": {},
+  "attributes": {},
   "constraints": {
     "max_fare_minor": 70000,
     "max_pickup_eta_s": 900
@@ -104,66 +136,54 @@ Example:
 }
 ```
 
-Example response:
+Response:
 
 ```json
 {
-  "id": "req_...",
-  "status": "open",
-  "service_type": "passenger_car",
-  "route": {
-    "distance_m": 10000,
-    "duration_s": 1500
-  },
-  "expires_at": "...",
-  "version": 1
+  "data": {
+    "id": "req_...",
+    "status": "open",
+    "service_type": "passenger.car",
+    "expires_at": "2026-09-09T12:00:00Z",
+    "version": 1
+  }
 }
 ```
 
-### Get request snapshot
+### Snapshot
 
 ```text
 GET /v2/requests/{request_id}
 ```
 
-Snapshot includes request status, current selectable offers and accepted agreement reference when applicable.
+Includes durable request state, selectable offer references and accepted Agreement reference when applicable.
 
-### Cancel request
+### Cancel
 
 ```text
 POST /v2/requests/{request_id}/cancel
 Idempotency-Key: <key>
 ```
 
-Cancellation after agreement must route to ride/agreement cancellation policy instead of mutating the original request freely.
+After Agreement creation, cancellation routes through execution/cancellation policy instead of freely rewriting the original request.
 
-## 5. Driver request discovery
-
-### Current eligible requests
+## 7. Driver request discovery
 
 ```text
 GET /v2/drivers/me/requests
-```
-
-For manual/hybrid quote workflows.
-
-Returned request cards should include only data necessary for a driver to decide whether to quote, respecting privacy policy.
-
-### Get request detail for driver
-
-```text
 GET /v2/drivers/me/requests/{request_id}
 ```
 
-May include:
+For manual/hybrid quoting, driver request cards may expose only information necessary to decide whether to quote:
 - service type;
-- pickup/destination summary;
-- route distance/duration;
-- driver-to-pickup distance/ETA;
+- route summary;
+- pickup distance/ETA;
 - allowed quote bounds;
-- market suggestion when enabled and clearly identified as suggestion.
+- transparent market suggestion if enabled.
 
-## 6. Quote APIs
+Location-derived candidate facts come from Location Service through Marketplace orchestration.
+
+## 8. Quotes
 
 ### Submit manual/hybrid quote
 
@@ -172,8 +192,6 @@ POST /v2/requests/{request_id}/quotes
 Idempotency-Key: <key>
 ```
 
-Example:
-
 ```json
 {
   "fare_total_minor": 52000,
@@ -181,27 +199,26 @@ Example:
 }
 ```
 
-Backend validates:
+Marketplace validates:
 - driver/request eligibility;
-- request open state;
-- driver tariff/quote mode policy;
-- operator/legal guardrails;
-- quote TTL.
+- request state;
+- tariff/quote mode;
+- visible operator/legal guardrails;
+- quote expiry;
+- currency and amount invariants.
 
-### Driver current quotes
+### Driver quote list
 
 ```text
 GET /v2/drivers/me/quotes?status=pending
 ```
 
-### Withdraw quote
+### Withdraw
 
 ```text
 POST /v2/quotes/{quote_id}/withdraw
 Idempotency-Key: <key>
 ```
-
-Only the quote owner can withdraw a valid pending quote.
 
 ### Rider offers
 
@@ -209,32 +226,38 @@ Only the quote owner can withdraw a valid pending quote.
 GET /v2/requests/{request_id}/offers
 ```
 
-Example item:
+Example:
 
 ```json
 {
-  "quote_id": "quote_...",
-  "driver": {
-    "id": "drv_...",
-    "display_name": "...",
-    "rating": 4.9
-  },
-  "vehicle": {
-    "type": "car",
-    "brand": "Toyota",
-    "model": "Vios"
-  },
-  "fare_total_minor": 52000,
-  "currency": "VND",
-  "pickup_eta_s": 360,
-  "pickup_distance_m": 2100,
-  "expires_at": "...",
-  "rank": 1,
-  "reasons": ["BEST_OVERALL", "FAST_PICKUP"]
+  "data": [
+    {
+      "quote_id": "quote_...",
+      "driver": {
+        "id": "drv_...",
+        "display_name": "...",
+        "rating": 4.9
+      },
+      "vehicle": {
+        "type": "car",
+        "brand": "Toyota",
+        "model": "Vios"
+      },
+      "fare_total_minor": 52000,
+      "currency": "VND",
+      "pickup_eta_s": 360,
+      "pickup_distance_m": 2100,
+      "expires_at": "2026-09-09T12:00:00Z",
+      "rank": 1,
+      "reasons": ["BEST_OVERALL", "FAST_PICKUP"]
+    }
+  ]
 }
 ```
 
-## 7. Agreement APIs
+Cheapest is not automatically `BEST_OVERALL`.
+
+## 9. Agreement
 
 ### Accept quote
 
@@ -243,168 +266,141 @@ POST /v2/quotes/{quote_id}/accept
 Idempotency-Key: <key>
 ```
 
-This is a critical atomic command.
-
-Success returns the created/reused Agreement:
+Agreement creation is a strong atomic command inside Marketplace Service.
 
 ```json
 {
-  "agreement": {
-    "id": "agr_...",
-    "request_id": "req_...",
-    "quote_id": "quote_...",
-    "driver_id": "drv_...",
-    "rider_id": "usr_...",
-    "fare_total_minor": 52000,
-    "currency": "VND",
-    "pricing_snapshot": {},
-    "created_at": "..."
-  },
-  "ride_id": "ride_..."
+  "data": {
+    "agreement": {
+      "id": "agr_...",
+      "request_id": "req_...",
+      "quote_id": "quote_...",
+      "driver_id": "drv_...",
+      "rider_id": "usr_...",
+      "service_type": "passenger.car",
+      "fare_total_minor": 52000,
+      "currency": "VND",
+      "terms_snapshot": {},
+      "created_at": "2026-09-09T12:00:00Z"
+    }
+  }
 }
 ```
 
-Expected business errors include:
-- REQUEST_NOT_OPEN;
-- QUOTE_EXPIRED;
-- QUOTE_UNAVAILABLE;
-- DRIVER_UNAVAILABLE;
-- AGREEMENT_ALREADY_EXISTS;
-- VERSION_CONFLICT.
+The command must be idempotent and protect against expired/double accepted quotes.
 
-Idempotent retries must return the same successful agreement when the same command was already committed.
+Marketplace publishes `openride.marketplace.agreement.created.v1` through Outbox after commit.
 
-### Get agreement
+## 10. Ride execution
+
+Representative public APIs:
 
 ```text
-GET /v2/agreements/{agreement_id}
+GET  /v2/rides/{ride_id}
+POST /v2/rides/{ride_id}/commands/{command}
 ```
 
-Agreement price/terms are immutable commercial snapshot data.
+The exact command set depends on the registered service lifecycle.
 
-## 8. Quick Match API
+Passenger examples may include:
 
 ```text
-POST /v2/requests/{request_id}/quick-match
-Idempotency-Key: <key>
+driver-en-route
+arrived
+passenger-onboard
+start
+complete
+cancel
 ```
 
-Example constraints:
+Carpool or designated-driver modules may expose different commands/states.
 
-```json
-{
-  "max_fare_minor": 60000,
-  "max_pickup_eta_s": 480,
-  "minimum_rating": 4.7
-}
-```
+Ride Service owns execution state; Edge maps public commands to the correct service contract.
 
-Quick Match selects from current valid quotes satisfying rider constraints and performs the same Agreement transaction as explicit quote acceptance.
+## 11. Realtime
 
-It must not generate a platform-owned replacement fare.
-
-## 9. Ride APIs
-
-### Get ride
+Public realtime transport may expose:
 
 ```text
-GET /v2/rides/{ride_id}
+GET /v2/realtime
 ```
 
-### Driver transitions
-
-Representative commands:
-
-```text
-POST /v2/rides/{ride_id}/en-route
-POST /v2/rides/{ride_id}/arrived
-POST /v2/rides/{ride_id}/passenger-onboard
-POST /v2/rides/{ride_id}/start
-POST /v2/rides/{ride_id}/complete
-```
-
-Each command:
-- checks authenticated actor;
-- checks state transition;
-- is idempotent where practical;
-- records durable status history.
-
-### Cancellation
-
-```text
-POST /v2/rides/{ride_id}/cancel
-```
-
-Cancellation policy may reference Agreement terms and operator policy version.
-
-## 10. Location and realtime
-
-### Driver location ingestion
-
-```text
-POST /v2/drivers/me/location
-```
-
-or authenticated WebSocket messages.
-
-Payload includes:
-- lat/lng;
-- accuracy;
-- heading/speed when available;
-- captured_at.
-
-Backend applies freshness/accuracy validation and updates Redis GEO/latest state.
-
-## 11. WebSocket event model
-
-Representative events:
+Client-visible event examples:
 
 ```text
 request.updated
 quote.created
-quote.updated
-offers.snapshot
+quote.withdrawn
 agreement.created
-ride.updated
-driver.location
+ride.status_changed
 payment.updated
 ```
 
-Every event should carry:
-- event type;
-- entity id;
-- timestamp;
-- entity version/sequence when relevant.
+These are client transport events, not necessarily identical to internal NATS subjects.
 
-Clients must tolerate duplicate/reordered realtime events by resyncing durable snapshots.
+After reconnect:
+1. re-authenticate;
+2. fetch durable snapshot via REST;
+3. resume realtime stream.
 
-## 12. Operator APIs
+## 12. Payments
 
-Target groups:
+Representative APIs:
 
 ```text
-/v2/operator/marketplace/*
-/v2/operator/drivers/*
-/v2/operator/kyc/*
-/v2/operator/rides/*
-/v2/operator/disputes/*
-/v2/operator/policies/*
-/v2/operator/ranking/*
-/v2/operator/payments/*
+GET  /v2/rides/{ride_id}/payment
+POST /v2/payments/{payment_id}/commands/{command}
 ```
 
-Sensitive actions require RBAC and audit.
+Payment Service owns payment truth. Ride completion does not imply successful payment.
 
-Operator price policy APIs should manage transparent guardrails/recommendations/fees, not a mandatory hidden global driver fare.
+## 13. Error envelope
 
-## 13. Compatibility
+```json
+{
+  "error": {
+    "code": "QUOTE_EXPIRED",
+    "message": "The selected quote is no longer available",
+    "details": {}
+  }
+}
+```
 
-Current V1 trip/pricing/dispatch endpoints remain available during migration.
+Stable public error examples:
 
-Feature flags or instance configuration determine whether a client uses:
-- legacy trip dispatch;
-- V2 marketplace quotes;
-- V2 rider offer selection;
-- V2 quick match.
+```text
+INVALID_REQUEST
+UNAUTHORIZED
+FORBIDDEN
+SERVICE_TYPE_UNSUPPORTED
+REQUEST_NOT_FOUND
+REQUEST_INVALID_STATE
+QUOTE_NOT_FOUND
+QUOTE_EXPIRED
+QUOTE_INVALID_STATE
+IDEMPOTENCY_KEY_REQUIRED
+IDEMPOTENCY_CONFLICT
+DEPENDENCY_UNAVAILABLE
+RATE_LIMITED
+INTERNAL_ERROR
+```
 
-No legacy endpoint should be removed until the corresponding V2 client and tests are ready.
+Do not leak internal SQL/NATS/gRPC provider details to clients.
+
+## 14. Correlation and tracing
+
+Edge accepts or generates:
+
+```text
+X-Request-ID
+```
+
+Internal calls/events propagate correlation ID and causation ID where applicable.
+
+## 15. Compatibility
+
+Legacy V1 endpoints remain during extraction.
+
+The Edge may proxy a V2 route to Marketplace/Location/Ride/etc. Clients must not depend on which internal service currently handles a route.
+
+A route moves from compatibility runtime to its owning service without changing its public meaning unless the API contract itself is explicitly versioned.

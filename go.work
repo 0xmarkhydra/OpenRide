@@ -2,5 +2,7 @@ go 1.25.0
 
 use (
 	./services/api
+	./services/marketplace
 	./packages/core-go
+	./packages/modules-go
 )

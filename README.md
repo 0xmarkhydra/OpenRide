@@ -1,373 +1,428 @@
+<div align="center">
+
+<img src="assets/openride-hero.svg" alt="OpenRide — open-source mobility marketplace" width="100%" />
+
 # OpenRide
 
-> **Open-source mobility marketplace where drivers set their terms, riders choose, and algorithms connect.**
+### Open-source mobility marketplace infrastructure
 
-**OpenRide is not another Grab/Uber clone.** It is an open-source foundation for communities, cooperatives, local operators and startups to run fair mobility marketplaces without rebuilding the entire technical stack from zero.
+**Drivers set their terms. Riders choose. Algorithms connect. Communities can self-host.**
 
-Drivers can define their own pricing rules. Riders can compare transparent offers. OpenRide provides routing, discovery, matching, realtime location, trust, payments and operational tooling without silently taking ownership of the commercial terms between the two sides.
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-0b7285)](LICENSE)
+![Stage](https://img.shields.io/badge/stage-pre--1.0-f59f00)
+![Architecture](https://img.shields.io/badge/architecture-microservices-5f3dc4)
+![Core](https://img.shields.io/badge/core-packageable-2f9e44)
+![SDK](https://img.shields.io/badge/SDK-JS%2FTS-3178c6)
 
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
-![Stage](https://img.shields.io/badge/stage-marketplace%20V2%20foundation-orange)
-![Core](https://img.shields.io/badge/core-packageable-brightgreen)
+**[Why](#why-openride) · [Architecture](#microservices-architecture) · [Try it](#try-it) · [Packages](#packageable-by-design) · [Contribute](CONTRIBUTING.md)**
 
-## Why OpenRide exists
+</div>
 
-Traditional ride-hailing platforms solve difficult technical problems, but the platform can also become the party that controls pricing, matching visibility and access to customers.
+---
 
-OpenRide explores a different model:
+## What if ride-hailing were infrastructure instead of a gatekeeper?
 
-```text
-Drivers set their terms.
-Riders choose.
-Algorithms connect.
-Communities can self-host.
-```
+OpenRide is **not another Grab/Uber clone**. It is an open-source foundation for driver communities, cooperatives, local operators and startups to run mobility marketplaces without rebuilding the entire technical stack from zero.
 
-The goal is not to remove algorithms. The goal is to make them **serve a transparent marketplace instead of silently becoming the marketplace owner**.
-
-## Core principles
-
-1. **Drivers control their commercial terms.**
-2. **Riders keep the final choice.**
-3. **The marketplace must not rank only by lowest price.**
-4. **Declining an unsuitable request is normal driver behavior, not an automatic punishment signal.**
-5. **An accepted price is snapshotted into an agreement and cannot be silently changed.**
-6. **Pricing and ranking decisions must be explainable.**
-7. **OpenRide Core must remain self-hostable and operator-independent.**
-
-See [`docs/OPENRIDE_MANIFESTO.md`](docs/OPENRIDE_MANIFESTO.md).
-
-## Marketplace model
+The marketplace relationship is explicit:
 
 ```text
-Rider demand
-    |
-    v
-Mobility Request
-    |
-    v
-Candidate Discovery
-    |
-    v
-Driver Tariffs / Quotes
-    |
-    v
-Marketplace Ranking
-    |
-    v
-Rider Choice / Quick Match
-    |
-    v
-Agreement
-    |
-    v
-Ride / Job
-    |
-    +--> Payment
-    +--> Rating / Trust
+Rider creates demand
+        ↓
+Drivers offer their terms
+        ↓
+OpenRide ranks transparently
+        ↓
+Rider chooses — or Quick Match chooses within rider constraints
+        ↓
+Agreement snapshots accepted terms
+        ↓
+Ride executes the agreement
 ```
 
-The important separation is:
+A platform may recommend. It must not silently rewrite what the two sides agreed to.
 
-- **Request** — what the rider needs.
-- **Quote** — what a driver is willing to do it for.
-- **Agreement** — the terms both sides accepted.
-- **Ride / Job** — execution of the agreed service.
-
-A ride is an execution object, not the entire marketplace.
-
-## Simple pricing example
+## Why OpenRide
 
 For the same 10 km request:
 
 ```text
-Driver A: 5,000 VND/km -> 50,000 VND
-Driver B: 6,000 VND/km -> 60,000 VND
-Driver C: 5,500 VND/km -> 55,000 VND
+Driver A  →  50,000 VND  →  pickup in 10 min
+Driver B  →  60,000 VND  →  pickup in  3 min
+Driver C  →  55,000 VND  →  pickup in  6 min
 ```
 
-OpenRide should not blindly pick Driver A because A is cheapest.
+OpenRide does **not** reduce the marketplace to `sort(price ASC)`.
 
-The rider can see useful trade-offs such as:
+A rider can understand the trade-off between fare, pickup ETA, quality, reliability and preferences. A driver can use manual, automatic or hybrid quoting inside limits they control. Ranking must explain its reasons, and Core prevents ranking plugins from mutating canonical quote terms.
 
-- **best overall match**;
-- **cheapest offer**;
-- **fastest pickup**;
-- **highest-rated driver**.
+### Non-negotiable principles
 
-Ranking can consider pickup ETA, price fit, reliability, quality, rider preferences and marketplace fairness. Recommendations should be explainable.
+1. **Drivers control their commercial terms.**
+2. **Riders keep the final choice.**
+3. **Cheapest must not automatically mean best.**
+4. **Declining an unsuitable request is not automatically bad behavior.**
+5. **Accepted terms are snapshotted and cannot be silently changed.**
+6. **Pricing and ranking must be explainable.**
+7. **OpenRide remains self-hostable and operator-independent.**
 
-## Driver pricing
+Read the [`OpenRide Manifesto`](docs/OPENRIDE_MANIFESTO.md).
 
-A driver tariff is more than one `price_per_km` field:
+## Microservices architecture
+
+OpenRide uses **microservices at deployment boundaries** and clean/hexagonal boundaries inside each service.
+
+```mermaid
+flowchart TB
+    Rider["Rider App"] --> Edge["Edge Gateway / BFF"]
+    Driver["Driver App"] --> Edge
+    Operator["Operator Console"] --> Edge
+
+    Edge --> Identity["Identity Service"]
+    Edge --> Market["Marketplace Service"]
+    Edge --> Ride["Ride Service"]
+    Edge --> Trust["Trust Service"]
+
+    Market -->|gRPC: nearby supply| Location["Location Service"]
+
+    Market --> Bus[(NATS JetStream)]
+    Ride --> Bus
+    Payment["Payment Service"] --> Bus
+    Trust --> Bus
+    Realtime["Realtime Service"] --> Bus
+    Notify["Notification Service"] --> Bus
+    Ops["Operator Service"] --> Bus
+
+    Market --> MarketDB[(marketplace_db)]
+    Location --> LocationDB[(location_db / Redis GEO)]
+    Ride --> RideDB[(ride_db)]
+    Payment --> PaymentDB[(payment_db)]
+```
+
+### Hard service rules
 
 ```text
-Base / minimum fare
-Per-km rate
-Per-minute rate
-Pickup radius
-Pickup fee
-Night / holiday adjustments
-Long-distance rules
-Minimum acceptable quote
-Maximum automatic quote
-Manual / Auto / Hybrid quote mode
+one service → one bounded context
+each service owns its data + migrations
+no cross-service database queries
+no cross-service database foreign keys
+sync internal calls → gRPC only when an immediate answer is required
+async integration → NATS JetStream
+state change + event → transactional outbox
+consumer side effects → inbox/idempotency
+multi-service workflows → Saga / process manager
+public traffic → Edge Gateway / BFF
 ```
 
-Auto pricing is allowed only inside rules and bounds the driver has accepted. The system may recommend a market adjustment, but should not silently overwrite a driver's terms.
+A shared PostgreSQL **cluster** is acceptable for small deployments. A shared logical database with services reading each other's tables is not.
 
-### Manual
+See [`docs/MICROSERVICES_ARCHITECTURE.md`](docs/MICROSERVICES_ARCHITECTURE.md).
 
-The driver reviews a request and sends a price.
+## First extracted service: Marketplace
 
-### Auto
+`services/marketplace` is the first independently deployable V2 domain service.
 
-OpenRide can generate a quote automatically, but only inside the driver's configured bounds.
-
-### Hybrid
-
-OpenRide prepares a suggested quote and the driver can adjust it before sending.
-
-## Rider modes
-
-### Marketplace mode
-
-Multiple eligible drivers can return offers. The rider compares and chooses.
-
-### Quick Match
-
-The rider can ask OpenRide to choose automatically using constraints such as maximum fare, ETA and rating. Quick Match still chooses from valid driver-authorized quotes; it does not invent a platform-owned fare.
-
-## OpenRide Core is packageable
-
-The business kernel now lives as an independent Go module:
+It owns:
 
 ```text
-github.com/0xmarkhydra/OpenRide/packages/core-go
+MobilityRequest
+DriverTariff
+Quote
+Marketplace ranking orchestration
+Agreement
+Service-module catalog and validation
+Outbox / Inbox records
 ```
 
-It has **no PostgreSQL, Redis, HTTP, WebSocket, map-provider or payment-provider dependency**. Infrastructure is connected through ports/adapters.
+It ships with:
 
 ```text
-Apps
-  │
-  ▼
-Operator Runtime
-  │ adapters
-  ▼
-OpenRide Core
-  │ extension contracts
-  ├── passenger.car
-  ├── carpool.intercity
-  ├── parcel.instant
-  └── your.community.service
+services/marketplace/
+├── cmd/marketplace/
+├── internal/httpapi/
+├── migrations/
+├── Dockerfile
+└── go.mod
 ```
 
-Core packages:
+The legacy `services/api` is now a **compatibility gateway/runtime** during extraction. New marketplace ownership belongs in `marketplace-service`, not in the gateway.
+
+## Packageable by design
+
+Microservices do not mean duplicating every invariant in every repository folder. Stable cross-cutting domain primitives remain packageable:
 
 ```text
-packages/core-go/
-├── money/        # safe minor-unit money
-├── geo/          # provider-neutral coordinates
-├── marketplace/  # Request, Tariff, Quote, Agreement, Ride
-├── extension/    # service manifests + registry
-└── engine/       # candidate -> quote -> rank pipeline
+packages/
+├── core-go/       portable marketplace kernel + invariants
+├── modules-go/    first-party mobility service modules
+├── contracts/     versioned language-neutral schemas
+└── sdk/           zero-dependency JavaScript/TypeScript client
 ```
 
-A marketplace runtime supplies implementations for:
+### `core-go`
+
+The Core module has no PostgreSQL, Redis, NATS, HTTP, WebSocket, map-provider or payment-provider dependency.
 
 ```go
-type CandidateSource interface { ... }
-type QuoteProvider interface { ... }
-type Ranker interface { ... }
-type EventPublisher interface { ... }
+import (
+    "github.com/0xmarkhydra/OpenRide/packages/core-go/engine"
+    "github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
+    "github.com/0xmarkhydra/OpenRide/packages/core-go/ranking"
+)
 ```
 
-That means a community can replace Redis GEO, pricing logic, ranking, events, maps or payments without forking the marketplace kernel.
+Core owns invariants such as:
 
-### Try Core in 30 seconds
-
-```bash
-make core-test
-make core-example
+```text
+Request → Quote → Agreement → Ride
+money uses integer minor units
+accepted commercial terms are immutable snapshots
+ranking may score/reorder but cannot rewrite quotes
 ```
 
-The runnable example registers a service module, discovers three drivers, asks for driver-authorized quotes and ranks them using an explainable fare + ETA policy.
+### Service modules
 
-See [`packages/core-go/README.md`](packages/core-go/README.md) and [`docs/PACKAGE_ARCHITECTURE.md`](docs/PACKAGE_ARCHITECTURE.md).
+Mobility verticals plug into the kernel instead of expanding one giant service-type switch:
 
-## Language-neutral contracts
+```text
+passenger.car        ✅
+carpool.intercity    ✅
+passenger.motorbike  planned
+parcel.instant       planned
+designated-driver    planned
+vehicle-assistance   planned
+your.community.*     extensible
+```
 
-`packages/contracts` contains versioned JSON Schemas so Dart, TypeScript, Rust and other runtimes can integrate without importing Go implementation details.
+`carpool.intercity` already demonstrates a lifecycle and request model different from a normal passenger ride without modifying marketplace Core.
+
+### JavaScript / TypeScript SDK
+
+```js
+import { OpenRideClient } from '@openride/sdk';
+
+const openride = new OpenRideClient({
+  baseURL: 'https://api.example.com',
+  token: session.accessToken,
+});
+
+const request = await openride.createRequest({
+  service_type: 'passenger.car',
+  pickup: { lat: 19.8067, lng: 105.7852 },
+  destination: { lat: 19.7724, lng: 105.7762 },
+}, { idempotencyKey: crypto.randomUUID() });
+```
+
+The SDK uses the Web Fetch API and has zero runtime dependencies.
+
+## Marketplace guardrails
+
+Ranking is a policy extension — **not a place to mutate commercial truth**.
+
+OpenRide Core rejects rankers that attempt to:
+
+```text
+hide valid offers
+fabricate or duplicate offers
+change fare / driver / expiry
+return NaN or infinite scores
+omit explanation reasons
+mark multiple offers as the single recommendation
+```
+
+Default pricing uses integer arithmetic and respects each driver's automatic-quote bounds.
+
+## Cross-language contracts
+
+`packages/contracts` contains versioned JSON Schemas so Go, Dart, JavaScript/TypeScript, Rust or other implementations can interoperate without importing one service's source code.
 
 Current contracts include:
 
 ```text
 service-manifest.v1
 marketplace-event.v1
+request.passenger-car.v1
+request.carpool-intercity.v1
 ```
 
-Breaking wire changes create a new contract version rather than silently changing the old meaning.
+Breaking wire changes create a new major contract version rather than silently changing existing meaning.
 
-## Public-launch foundation
+## Event-driven reliability
 
-The repository now contains the first OpenRide V2 marketplace foundation:
+Domain services communicate asynchronously through NATS JetStream where an immediate response is not required.
 
-- packageable OpenRide Core with extension ports and a runnable example;
-- language-neutral, versioned service/event contracts;
-- `DriverTariff`, `MobilityRequest`, `Quote`, `Agreement` and `Ride` domain primitives;
-- additive V2 marketplace database migration;
-- marketplace state-transition, quote-bound, registry and engine tests;
-- rewritten architecture, data model, API and product documentation;
-- Rider, Driver, Operator and Landing applications from the existing runtime foundation;
-- PostgreSQL/PostGIS, Redis, realtime, auth, payments, ratings and object-storage foundations;
-- community contribution, security and licensing policies.
+```text
+DB transaction
+  ├── change owned domain state
+  └── append outbox event
+COMMIT
+      ↓
+outbox relay
+      ↓
+NATS JetStream
+      ↓
+consumer inbox dedupe
+      ↓
+consumer-owned state change
+```
 
-This is a **pre-1.0 foundation**, not a claim that the project is ready to carry real passengers in production. Safety, legal, payment, KYC, incident response and marketplace runtime integration must be completed and validated by each operator before real-world deployment.
+Target event naming:
 
-## Long-term service model
+```text
+openride.marketplace.request.opened.v1
+openride.marketplace.quote.created.v1
+openride.marketplace.agreement.created.v1
+openride.ride.ride.completed.v1
+openride.payment.payment.captured.v1
+```
 
-OpenRide is built around generic marketplace primitives so mobility verticals can plug in later:
-
-- passenger car;
-- motorbike;
-- carpool;
-- intercity;
-- delivery;
-- designated driver;
-- vehicle assistance;
-- vehicle inspection assistance.
-
-Legacy FlashX designated-driver and inspection workflows in this repository are treated as service verticals and compatibility code, not as the OpenRide business kernel.
-
-## Technology foundation
-
-The existing technical foundation is intentionally retained while the business kernel is migrated:
-
-- Rider app: Flutter
-- Driver app: Flutter
-- Operator/Admin: Next.js + TypeScript
-- Backend: Go modular monolith
-- Core: standalone Go module + extension ports
-- Cross-language contracts: JSON Schema
-- Primary database: PostgreSQL + PostGIS
-- Realtime/cache/geo: Redis
-- Realtime transport: WebSocket
-- Routing/maps: provider abstraction
-- Push: FCM/APNs-ready architecture
-- Object storage: S3-compatible
-
-We do **not** plan to rewrite the system into microservices just to look enterprise. Modules should be extracted only when production load, ownership or deployment requirements justify it.
-
-## Repository layout
+## Repository map
 
 ```text
 OpenRide/
+├── assets/
+│   └── openride-hero.svg
 ├── apps/
 │   ├── rider/
 │   ├── driver/
-│   ├── admin/              # operator console; directory rename is staged
+│   ├── admin/
 │   └── landing/
 ├── packages/
-│   ├── core-go/            # portable business kernel
-│   └── contracts/          # language-neutral versioned contracts
+│   ├── core-go/
+│   ├── modules-go/
+│   ├── contracts/
+│   └── sdk/
 ├── services/
-│   └── api/                # current operator runtime + adapters
+│   ├── api/             # compatibility edge/runtime during migration
+│   └── marketplace/     # first extracted V2 microservice
 ├── infrastructure/
-│   └── migrations/
 ├── docs/
-├── go.work
-├── CONTRIBUTING.md
-├── SECURITY.md
-├── CODE_OF_CONDUCT.md
-└── LICENSE
+├── docker-compose.yml
+├── docker-compose.microservices.yml
+└── go.work
 ```
+
+Target service topology expands toward:
+
+```text
+edge-gateway
+identity-service
+marketplace-service
+location-service
+ride-service
+payment-service
+trust-service
+realtime-service
+notification-service
+operator-service
+```
+
+We split by **bounded context and ownership**, not by arbitrary table count.
+
+## Try it
+
+### Portable packages
+
+```bash
+make packages-test
+make core-example
+```
+
+### Marketplace microservice
+
+```bash
+make marketplace-test
+make marketplace-run
+```
+
+### Microservices development stack
+
+```bash
+make micro-config
+make micro-up
+make micro-logs
+make micro-down
+```
+
+The microservices stack includes the first Marketplace slice with its own PostgreSQL database and NATS JetStream.
+
+### Compatibility runtime
+
+```bash
+make api-test
+make api-run
+```
+
+Legacy V1 flows remain available while traffic is progressively migrated to owning V2 services.
+
+## Migration strategy
+
+No big-bang rewrite, but ownership is unambiguous:
+
+```text
+Legacy API / Trip / Dispatch
+          │
+          │ compatibility proxy + staged traffic migration
+          ▼
+      Edge boundary
+          │
+          ├── Marketplace Service ✅ first extraction
+          ├── Location Service
+          ├── Ride Service
+          ├── Identity Service
+          ├── Payment Service
+          └── Trust / Realtime / Notification / Operator
+```
+
+A capability is removed from the legacy runtime only after its owning service is deployed, traffic is migrated and compatibility tests pass.
 
 ## Read the design
 
-- [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) — product vision and scope.
-- [`docs/OPENRIDE_MANIFESTO.md`](docs/OPENRIDE_MANIFESTO.md) — non-negotiable community principles.
-- [`docs/PACKAGE_ARCHITECTURE.md`](docs/PACKAGE_ARCHITECTURE.md) — package, module, adapter and contract boundaries.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — target technical architecture.
-- [`docs/DOMAIN_MODEL.md`](docs/DOMAIN_MODEL.md) — business domains and aggregates.
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — persistence model.
-- [`docs/DISPATCH_ENGINE.md`](docs/DISPATCH_ENGINE.md) — migration from dispatch to marketplace matching.
-- [`docs/API_CONTRACT_V2.md`](docs/API_CONTRACT_V2.md) — V2 API direction.
-- [`docs/CUSTOMER_REQUIREMENTS.md`](docs/CUSTOMER_REQUIREMENTS.md) — product requirements.
-- [`docs/OPENRIDE_MIGRATION_PLAN_V2.md`](docs/OPENRIDE_MIGRATION_PLAN_V2.md) — staged migration plan.
-- [`docs/ADR_OPENRIDE_V2.md`](docs/ADR_OPENRIDE_V2.md) — architecture decisions.
-- [`docs/LEGACY_COMPATIBILITY.md`](docs/LEGACY_COMPATIBILITY.md) — why some `flashx` internal identifiers temporarily remain.
+- [`PRODUCT_VISION`](docs/PRODUCT_VISION.md)
+- [`OPENRIDE_MANIFESTO`](docs/OPENRIDE_MANIFESTO.md)
+- [`MICROSERVICES_ARCHITECTURE`](docs/MICROSERVICES_ARCHITECTURE.md)
+- [`PACKAGE_ARCHITECTURE`](docs/PACKAGE_ARCHITECTURE.md)
+- [`ARCHITECTURE`](docs/ARCHITECTURE.md)
+- [`DOMAIN_MODEL`](docs/DOMAIN_MODEL.md)
+- [`DATA_MODEL`](docs/DATA_MODEL.md)
+- [`API_CONTRACT_V2`](docs/API_CONTRACT_V2.md)
+- [`OPENRIDE_MIGRATION_PLAN_V2`](docs/OPENRIDE_MIGRATION_PLAN_V2.md)
+- [`ADR_OPENRIDE_V2`](docs/ADR_OPENRIDE_V2.md)
 
-## Migration policy
+## Project status
 
-We will not destroy the current runtime and replace everything in one rewrite.
+OpenRide is **pre-1.0**. The architecture and packages are intentionally usable for development, but the project does not claim production readiness for carrying real passengers yet.
 
-Migration is additive and staged:
-
-```text
-Current Trip/Pricing/Dispatch
-        |
-        v
-OpenRide Core
-        |
-        +--> MobilityRequest
-        +--> DriverTariff
-        +--> Quote
-        +--> Marketplace Engine
-        +--> Agreement
-        +--> Ride
-        |
-        v
-Runtime adapters replace legacy paths incrementally
-```
-
-Existing flows remain available until their marketplace replacements are tested and ready.
-
-Some internal identifiers still use `flashx` for deployment compatibility. They are documented in [`docs/LEGACY_COMPATIBILITY.md`](docs/LEGACY_COMPATIBILITY.md) and should not be interpreted as the target product identity.
-
-## Development
-
-```bash
-# Portable Core
-make core-test
-make core-example
-
-# Current operator runtime
-make api-run
-make api-test
-
-# Both Go modules
-make workspace-test
-
-# Full local stack
-make stack-up
-make stack-ps
-make stack-logs
-make stack-down
-```
-
-API health in the current runtime:
-
-```text
-GET http://localhost:8080/health
-```
+A real-world operator must validate local transport regulation, insurance, KYC, payment, incident response, fraud prevention, privacy and safety requirements before launch.
 
 ## Contributing
 
-Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Product and architecture changes should preserve the manifesto and explain how they affect driver autonomy, rider choice, transparency, safety and self-hosting.
+OpenRide is being built as a commons, not source code only one company understands.
 
-For security vulnerabilities, read [`SECURITY.md`](SECURITY.md) before opening a public issue. Community participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Architecture contributions should preserve:
+
+```text
+driver autonomy
+rider choice
+algorithm transparency
+bounded-context ownership
+data isolation
+self-hostability
+backward compatibility during migration
+```
+
+Security issues follow [`SECURITY.md`](SECURITY.md). Community participation follows [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License
 
 OpenRide is licensed under **GNU AGPL-3.0-or-later**. See [`LICENSE`](LICENSE).
 
-The copyleft choice is intentional: OpenRide is meant to remain a commons that communities can inspect, modify and self-host, including when modified versions are offered over a network.
+---
 
-## Community
+<div align="center">
 
-The ambition is bigger than launching one ride-hailing company.
+### Build infrastructure for mobility communities — not another closed platform they depend on.
 
-OpenRide should make it possible for a driver community, cooperative, startup or regional operator to run a fair mobility marketplace without becoming permanently dependent on a single closed platform.
+⭐ Star the repository · 🧩 Build a module · 🛠️ Run your own operator · 🤝 Contribute a better marketplace
 
-> **Build infrastructure for mobility communities, not another closed platform that communities depend on.**
+</div>

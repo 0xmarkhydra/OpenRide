@@ -24,6 +24,20 @@ jobs:
       - name: Compile runnable example
         run: go build ./examples/minimal
 
+  modules:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/modules-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: go test ./...
+      - run: go vet ./...
+
   contracts:
     runs-on: ubuntu-latest
     defaults:
@@ -38,7 +52,44 @@ jobs:
       - name: Verify package contents
         run: npm pack --dry-run
 
-  backend:
+  sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+  marketplace-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/marketplace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: go test ./...
+      - run: go vet ./...
+
+  microservices-topology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate microservices compose
+        run: docker compose -f docker-compose.microservices.yml config --quiet
+      - name: Validate compatibility compose
+        run: docker compose config --quiet
+
+  compatibility-api:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,14 +111,11 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: services/api/go.sum
-      - name: Validate Docker Compose
-        run: docker compose config --quiet
-      - name: Start PostGIS and Redis
+      - name: Start compatibility PostGIS and Redis
         run: docker compose up -d --wait postgres redis
-      - name: Run persistent ride lifecycle
+      - name: Run persistent compatibility lifecycle
         working-directory: services/api
         env:
-          # Legacy compatibility flag retained until the marketplace V2 runtime migration.
           FLASHX_INTEGRATION: '1'
           PERSISTENCE: postgres
           DATABASE_URL: postgres://flashx:flashx@127.0.0.1:55432/flashx?sslmode=disable

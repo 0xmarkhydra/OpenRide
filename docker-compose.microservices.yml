@@ -1,0 +1,81 @@
+name: openride-microservices
+
+services:
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-m", "8222", "--store_dir", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  marketplace-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: marketplace
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace-dev
+    ports:
+      - "55433:5432"
+    volumes:
+      - marketplace_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  marketplace-migrate:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: marketplace-dev
+    volumes:
+      - ./services/marketplace/migrations:/migrations:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for file in /migrations/*.sql; do
+          echo "Applying $$file"
+          psql -h marketplace-db -U marketplace -d marketplace -v ON_ERROR_STOP=1 -f "$$file"
+        done
+    depends_on:
+      marketplace-db:
+        condition: service_healthy
+    restart: "no"
+
+  marketplace:
+    build:
+      context: .
+      dockerfile: services/marketplace/Dockerfile
+    environment:
+      HTTP_ADDR: :8090
+      DATABASE_URL: postgres://marketplace:marketplace-dev@marketplace-db:5432/marketplace?sslmode=disable
+      NATS_URL: nats://nats:4222
+      SERVICE_NAME: marketplace-service
+    ports:
+      - "8090:8090"
+    depends_on:
+      marketplace-migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8090/healthz >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  nats_data:
+  marketplace_postgres_data:

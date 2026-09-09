@@ -1,193 +1,63 @@
 # OpenRide Data Model V2
 
-## 1. Storage principles
+## 1. Principle: data belongs to a service
 
-PostgreSQL + PostGIS is the durable source of truth for marketplace/business state.
+OpenRide does not have one global application database model.
 
-Redis stores hot/ephemeral state such as:
-- online driver geo indexes;
-- latest locations;
-- websocket presence;
-- quote/offer TTL helpers;
-- matching locks;
-- short-lived idempotency/rate-limit state.
-
-Accepted commercial terms must never exist only in Redis.
-
-Money is stored as integer minor units / integer currency units according to one documented project convention. Never use float for fares.
-
-## 2. Current compatibility schema
-
-The repository currently contains legacy tables such as:
-- users;
-- drivers;
-- vehicles/customer_vehicles;
-- trips;
-- trip_status_history;
-- pricing_rules;
-- payments;
-- ratings;
-- driver documents.
-
-These remain operational while V2 marketplace tables are added through append-only migrations.
-
-## 3. Target entity relationship
+Each bounded-context service owns its data and migrations:
 
 ```text
-users
-  |
-  +-- rider_profiles
-  |
-  +-- driver_profiles
-          |
-          +-- driver_vehicles
-          +-- driver_capabilities
-          +-- driver_tariffs
-                  |
-                  +-- driver_tariff_rules
+identity_db       -> Identity Service
+marketplace_db    -> Marketplace Service
+location_db       -> Location Service
+ride_db           -> Ride Service
+payment_db        -> Payment Service
+trust_db          -> Trust Service
+operator_db       -> Operator Service projections
+```
 
+A small deployment may run these logical databases on one PostgreSQL cluster. Services still use separate ownership boundaries and must not query each other's tables.
+
+Cross-service identifiers are opaque references, **not SQL foreign keys across databases**.
+
+## 2. Universal storage rules
+
+- money uses integer minor units; never floating point;
+- timestamps are UTC in storage;
+- business aggregates use optimistic versioning where useful;
+- critical command deduplication/idempotency is durable where required;
+- service events use Outbox in the same transaction as state changes;
+- consumers use Inbox/deduplication before side effects;
+- Redis is owned hot state, not a shortcut to another service's durable truth;
+- schema migrations live with the service that owns the schema.
+
+## 3. Marketplace Service data
+
+Marketplace currently owns the commercial marketplace chain:
+
+```text
+driver_tariffs
+      |
 mobility_requests
       |
-      +-- quotes -------- driver_profiles
-      |      |
-      |      +-- quote_components / pricing snapshot
+marketplace_quotes
       |
-      +-- agreements
-              |
-              +-- rides
-                    |
-                    +-- ride_status_history
+marketplace_agreements
 
-agreements / rides
-      |
-      +-- payments
-      +-- driver_earnings
-      +-- platform_fees
-      +-- ratings
-      +-- safety_events / disputes
-
-instances
-  +-- policies / service config
+outbox_events
+inbox_messages
 ```
 
-## 4. instances
+### driver_tariffs
 
-Prepare for self-host/operator boundaries before federation is needed.
-
-Suggested fields:
-
-```text
-id UUID/TEXT PK
-slug UNIQUE
-name
-status
-currency
-country_code
-timezone
-created_at
-updated_at
-```
-
-Policy/config should not become an unstructured dumping ground. Keep sensitive business concepts in explicit tables where practical.
-
-## 5. users
-
-Suggested core:
+Suggested model:
 
 ```text
 id
-phone/email identity
-full_name
-status
-phone_verified_at
-avatar_object_key
-last_login_at
-created_at
-updated_at
-version
-```
-
-Roles should not require separate duplicated identities for rider and driver.
-
-## 6. driver_profiles
-
-Suggested fields:
-
-```text
-id
-user_id UNIQUE
 instance_id
-approval_status
-availability_status
-rating_avg
-rating_count
-completion_rate
-approved_at
-suspended_at
-last_idle_at
-created_at
-updated_at
-version
-```
-
-Indexes should support instance/status lookups.
-
-## 7. driver_vehicles
-
-For passenger ride verticals:
-
-```text
-id
-driver_id
-instance_id
-type
-plate_number
-brand
-model
-year
-color
-seats
-status
-document_status
-created_at
-updated_at
-```
-
-Unique constraints depend on local/operator rules, typically plate within instance.
-
-Customer-owned vehicles remain a separate concept for designated-driver/inspection verticals.
-
-## 8. driver_capabilities
-
-Prefer normalized rows once capabilities become richer than a tiny array.
-
-```text
-id
 driver_id
 service_type
-status
-metadata JSONB
-created_at
-updated_at
-```
-
-Examples:
-- passenger_car;
-- passenger_motorbike;
-- designated_driver_car;
-- delivery;
-- vehicle_inspection_assist.
-
-## 9. driver_tariffs
-
-First-class driver-owned commercial profile.
-
-```text
-id
-driver_id
-instance_id
-service_type
-quote_mode            # manual | auto | hybrid
+quote_mode              manual | auto | hybrid
 currency
 base_fare_minor
 minimum_fare_minor
@@ -196,6 +66,7 @@ per_minute_minor
 pickup_fee_minor
 auto_quote_min_minor
 auto_quote_max_minor
+rules_json
 status
 version
 effective_from
@@ -204,39 +75,9 @@ created_at
 updated_at
 ```
 
-Important indexes:
-- `(driver_id, service_type, status)`;
-- `(instance_id, service_type, status)`.
+Marketplace owns these commercial terms. Other services receive only the summaries/events they need.
 
-A driver should not have ambiguous overlapping active tariffs for the same service unless product rules explicitly support them.
-
-## 10. driver_tariff_rules
-
-Optional richer rules:
-
-```text
-id
-tariff_id
-rule_type
-priority
-conditions JSONB
-adjustment_type
-adjustment_value
-status
-created_at
-updated_at
-```
-
-Examples:
-- night surcharge;
-- holiday adjustment;
-- long-distance discount;
-- zone fee;
-- pickup-distance rule.
-
-Rule evaluation must be deterministic by tariff/rule version.
-
-## 11. mobility_requests
+### mobility_requests
 
 ```text
 id
@@ -244,287 +85,316 @@ instance_id
 rider_id
 service_type
 status
-pickup GEOGRAPHY(POINT,4326)
-destination GEOGRAPHY(POINT,4326)
-stops JSONB or normalized table
-estimated_distance_m
-estimated_duration_s
-preferences JSONB
-constraints JSONB
+pickup_lat
+pickup_lng
+destination_lat
+destination_lng
+attributes_json
+constraints_json
 requested_at
 expires_at
 agreed_at
 cancelled_at
+version
 created_at
 updated_at
-version
 ```
 
-Suggested indexes:
-- GIST pickup/destination;
-- `(instance_id, status, created_at DESC)`;
-- expiry index for open requests.
+Marketplace does not store live driver GEO indexes. Candidate discovery belongs to Location Service.
 
-State values initially:
-- draft;
-- open;
-- receiving_quotes;
-- agreed;
-- closed;
-- cancelled;
-- expired.
-
-## 12. quotes
+### marketplace_quotes
 
 ```text
 id
 request_id
 driver_id
-driver_vehicle_id nullable
-tariff_id nullable
-tariff_version nullable
+driver_vehicle_id
+tariff_id
+tariff_version
 status
 fare_total_minor
 currency
-pricing_snapshot JSONB
-pickup_distance_m
+pricing_snapshot_json
 pickup_eta_s
+pickup_distance_m
+explanation_json
 expires_at
 created_at
-updated_at
 accepted_at
 withdrawn_at
-```
-
-Important constraints:
-- quote request/driver foreign keys;
-- accepted quote must be durable;
-- no float fare;
-- request + driver may have one current active quote unless negotiation design says otherwise.
-
-Indexes:
-- `(request_id, status, created_at)`;
-- `(driver_id, status, created_at DESC)`;
-- `(expires_at)` for pending quote cleanup.
-
-## 13. quote_components
-
-May be JSONB in the first version or normalized later.
-
-Expected explainable components:
-- base;
-- distance;
-- duration;
-- pickup;
-- time rule;
-- zone rule;
-- service adjustment;
-- discount;
-- total.
-
-The snapshot should carry the tariff/rule version and calculation reason codes.
-
-## 14. agreements
-
-This is the immutable commercial source of truth after selection.
-
-```text
-id
-instance_id
-request_id UNIQUE
-quote_id UNIQUE
-rider_id
-driver_id
-driver_vehicle_id nullable
-service_type
-pickup_snapshot JSONB
-destination_snapshot JSONB
-route_snapshot JSONB
-fare_total_minor
-currency
-pricing_snapshot JSONB
-terms_snapshot JSONB
-policy_version
-created_at
-```
-
-For normal single-provider rides, `request_id UNIQUE` guarantees only one accepted commercial agreement.
-
-If future service types require multiple providers, model that explicitly instead of weakening this invariant globally.
-
-Agreement rows should be immutable except for carefully scoped administrative metadata if ever necessary.
-
-## 15. rides
-
-```text
-id
-agreement_id UNIQUE
-instance_id
-rider_id
-driver_id
-service_type
-status
-started_at
-completed_at
-cancelled_at
-created_at
-updated_at
 version
 ```
 
-Do not duplicate commercial fare as mutable ride pricing. Read accepted terms from Agreement or store a read-only projection.
+Quotes snapshot enough tariff/pricing information to audit why the offer existed.
 
-## 16. ride_status_history
-
-Append-only:
+### marketplace_agreements
 
 ```text
 id
-ride_id
-sequence
-status
-actor_type
-actor_id nullable
-reason_code
-metadata JSONB
+instance_id
+request_id
+quote_id
+rider_id
+driver_id
+driver_vehicle_id
+service_type
+fare_total_minor
+currency
+terms_snapshot_json
 created_at
 ```
 
-Unique `(ride_id, sequence)`.
+Agreement is immutable accepted commercial truth.
 
-## 17. latest driver location
+It should have constraints preventing accidental double acceptance for service types where a request has only one provider.
 
-Redis hot state:
-
-```text
-driver:{instance}:{driver_id}:location
-```
-
-Fields:
-- lat;
-- lng;
-- accuracy;
-- heading;
-- speed;
-- captured_at;
-- received_at.
-
-GEO index:
-
-```text
-geo:drivers:{instance}:{city}:{service_type}
-```
-
-Stale-location policy is mandatory.
-
-## 18. ride path persistence
-
-Do not store every GPS ping in transactional ride rows.
-
-Options when needed:
-- time/distance sampling;
-- partitioned location table;
-- encoded polyline after ride;
-- analytics/time-series store at larger scale.
-
-Retention must be tied to support, safety and legal/privacy requirements.
-
-## 19. payments
-
-Suggested:
+### Marketplace Outbox
 
 ```text
 id
-agreement_id / ride_id
-provider
-external_reference
-amount_minor
-currency
+event_name
+aggregate_type
+aggregate_id
+instance_id
+correlation_id
+causation_id
+payload_json
+occurred_at
+published_at
+attempt_count
+last_error
+```
+
+The Outbox row is inserted in the same DB transaction as the Marketplace state mutation.
+
+### Marketplace Inbox
+
+```text
+message_id
+consumer
+received_at
+processed_at
+result_status
+```
+
+Used to safely process redelivered NATS messages.
+
+## 4. Location Service data
+
+Location owns realtime supply location.
+
+Durable model may include:
+
+```text
+driver_presence
+location_history_sample
+service_area
+```
+
+Hot state may use Redis:
+
+```text
+online driver GEO index
+latest driver position
+presence TTL
+location freshness
+```
+
+Only Location Service owns these Redis keys.
+
+Marketplace obtains candidate summaries through Location gRPC, not Redis access.
+
+## 5. Ride Service data
+
+Ride owns execution after Agreement.
+
+```text
+rides
+ride_status_history
+ride_incidents
+outbox_events
+inbox_messages
+```
+
+Suggested `rides`:
+
+```text
+id
+instance_id
+agreement_id
+marketplace_request_id
+rider_id
+driver_id
+service_type
 status
-idempotency_key
+service_state_json
+started_at
+completed_at
+cancelled_at
+version
 created_at
 updated_at
 ```
 
-Payment state remains separate from Ride.
+`agreement_id` is a reference copied from the integration event, not a foreign key to Marketplace DB.
 
-## 20. driver_earnings and platform_fees
+Service-specific lifecycle details can live in typed module contracts/state JSON until promoted into universal fields.
 
-Make deductions transparent.
+## 6. Identity Service data
 
-`driver_earnings`:
-- agreement_id;
-- gross_fare;
-- deductions;
-- net_driver_earning;
-- settlement status.
+Identity owns:
 
-`platform_fees`:
-- agreement_id;
-- fee type;
-- amount;
-- policy version.
+```text
+accounts
+identities
+sessions
+refresh_tokens
+roles
+kyc_identity_status
+outbox_events
+inbox_messages
+```
 
-Avoid opaque calculations that cannot be explained to drivers.
+Driver operational/commercial data should not be hidden inside authentication tables.
 
-## 21. ratings / trust / safety
+## 7. Payment Service data
 
-Suggested tables/concepts:
+Payment owns:
+
+```text
+payment_intents
+payment_transactions
+refunds
+driver_earnings
+operator_fees
+settlement_ledger
+outbox_events
+inbox_messages
+```
+
+Payment references `ride_id`/`agreement_id` as external IDs, never through a DB FK into Ride/Marketplace databases.
+
+A completed Ride can coexist with pending/failed Payment state.
+
+## 8. Trust Service data
+
+Trust owns:
+
+```text
+ratings
+reputation_snapshots
+reports
+safety_events
+fraud_signals
+moderation_actions
+outbox_events
+inbox_messages
+```
+
+Marketplace consumes only required trust summaries through an API or projection/event contract.
+
+## 9. Operator Service data
+
+Operator Service primarily owns projections/read models and operator workflow state:
+
+```text
+operator_marketplace_projection
+operator_ride_projection
+operator_payment_projection
+support_cases
+operator_audit_log
+inbox_messages
+```
+
+These projections are built from events/APIs.
+
+The Operator Service must not join service databases directly to build a dashboard.
+
+## 10. Instance/operator boundary
+
+Every business service should propagate `instance_id` on owned aggregates/events where operator isolation is relevant.
+
+An Instance can define:
+- country/currency/timezone;
+- service area references;
+- enabled service types;
+- legal/operator guardrails;
+- payment/provider configuration references;
+- ranking policy configuration.
+
+Federation is not required for the initial architecture, but instance isolation must not require a future schema rewrite.
+
+## 11. Service type identifiers
+
+Canonical service IDs use dotted names:
+
+```text
+passenger.car
+carpool.intercity
+passenger.motorbike
+parcel.instant
+designated-driver.car
+```
+
+Stored/requested service identifiers should not alternate between `passenger_car`, `passenger-car` and `passenger.car`.
+
+## 12. Legacy compatibility data
+
+The existing compatibility runtime still owns old tables such as:
+- users;
+- drivers;
+- customer vehicles;
+- trips;
+- trip status history;
+- pricing rules;
+- payments;
 - ratings;
-- reports;
-- safety_events;
-- disputes;
-- moderation_actions;
-- audit_logs.
+- driver documents.
 
-Sensitive operator changes need actor/reason/time metadata.
+These are not the target shared schema.
 
-## 22. Redis marketplace keys
-
-Possible shapes:
+When a capability is extracted:
 
 ```text
-request:{request_id}:presence
-quote:{quote_id}:ttl
-lock:request:{request_id}:agreement
-lock:driver:{driver_id}:assignment
-idem:{scope}:{key}
+legacy export/snapshot
+ -> transform
+ -> import into owning service DB
+ -> bounded bridge/dual-write if required
+ -> compare
+ -> cut traffic
+ -> stop legacy writes
 ```
 
-Redis TTL expiration is not enough to update durable quote status; background reconciliation/query normalization may mark persisted pending quotes expired.
+A new service must not simply retain permanent read access to the legacy database.
 
-## 23. Migration rules
+## 13. Indexing examples
 
-- migrations are append-only;
-- do not rewrite migrations already applied in production;
-- add nullable/backward-compatible columns/tables first;
-- backfill separately;
-- add strong constraints after data is ready;
-- use concurrent indexes when production table size/locking requires it;
-- keep compatibility reads/writes until old consumers migrate.
+Marketplace:
+- `driver_tariffs(instance_id, driver_id, service_type, status)`;
+- `mobility_requests(instance_id, status, service_type, requested_at)`;
+- `marketplace_quotes(request_id, status, expires_at)`;
+- unique/conditional constraints for Agreement acceptance.
 
-## 24. Proposed migration sequence
+Location:
+- geo indexes owned by Location;
+- freshness/online lookups optimized independently.
+
+Ride:
+- `(instance_id, driver_id, status)`;
+- `(instance_id, rider_id, created_at)`;
+- `(agreement_id)` unique where one execution per agreement applies.
+
+## 14. Auditability rule
+
+Given an Agreement, OpenRide must be able to answer:
 
 ```text
-007_instances.sql
-008_mobility_requests.sql
-009_driver_tariffs.sql
-010_quotes.sql
-011_agreements.sql
-012_rides.sql
-013_marketplace_indexes.sql
-014_earnings_fees.sql
+what the rider requested
+which driver quote was accepted
+what price/currency was accepted
+which tariff/version was involved
+when the agreement happened
+which service type governed execution
 ```
 
-Exact numbering should be based on repository state when implementation begins; never renumber migrations already shipped.
-
-## 25. Backup, retention and privacy
-
-Production requires:
-- automated PostgreSQL backups;
-- tested restore procedure;
-- documented KYC retention;
-- location-history retention policy;
-- audit retention;
-- object-storage access policy;
-- deletion/anonymization policy compatible with applicable law.
+without recomputing commercial history from current pricing configuration.

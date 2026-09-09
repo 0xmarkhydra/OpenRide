@@ -1,0 +1,26 @@
+{
+  "name": "@openride/sdk",
+  "version": "0.1.0-alpha.0",
+  "description": "Zero-dependency JavaScript/TypeScript SDK for OpenRide Marketplace V2",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xmarkhydra/OpenRide.git",
+    "directory": "packages/sdk"
+  },
+  "keywords": ["openride", "mobility", "ride-hailing", "marketplace", "sdk"]
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -176,8 +177,9 @@ func main() {
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
+	marketplaceServiceURL := os.Getenv("MARKETPLACE_SERVICE_URL")
 
-	server := httpserver.New(cfg.HTTPAddr, httpserver.Dependencies{
+	server := httpserver.NewV2(cfg.HTTPAddr, httpserver.Dependencies{
 		AppEnv:           cfg.AppEnv,
 		Persistence:      cfg.Persistence,
 		Trips:            tripService,
@@ -196,11 +198,11 @@ func main() {
 		Realtime:         realtimeHub,
 		AllowDevIdentity: cfg.AllowDevIdentity,
 		ReadyCheck:       readyCheck,
-	})
+	}, marketplaceServiceURL)
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("flashx api listening on %s (%s, persistence=%s)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence)
+		log.Printf("openride compatibility api listening on %s (%s, persistence=%s, marketplace=%q)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence, marketplaceServiceURL)
 		errCh <- server.ListenAndServe()
 	}()
 

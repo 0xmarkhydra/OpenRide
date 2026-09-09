@@ -2,317 +2,314 @@
 
 ## Goal
 
-Migrate the current FlashX/ride-hailing-oriented business kernel into an OpenRide mobility marketplace without destroying the existing working runtime.
+Migrate the compatibility FlashX/ride-hailing runtime into an OpenRide microservices platform without a big-bang rewrite.
 
-The current repository already has useful foundations for auth, KYC, drivers, realtime, PostgreSQL/PostGIS, Redis, payments, ratings and CI. Those foundations should be retained.
-
-The migration changes the business semantics around demand, pricing, matching and assignment.
-
-## Target kernel
+Target business chain:
 
 ```text
-OLD
-Trip -> Platform Pricing -> Dispatch -> Assignment
-
-NEW
 MobilityRequest -> DriverTariff -> Quote -> Marketplace -> Agreement -> Ride
+```
+
+Target deployment chain:
+
+```text
+Clients -> Edge Gateway -> independently deployable bounded-context services
+                           <-> NATS JetStream
 ```
 
 ## Migration rules
 
-1. Prefer additive schema migrations.
-2. Do not edit production-applied migrations in place.
-3. Keep old endpoints available until replacement flows are tested.
-4. New marketplace state must have a durable source of truth in PostgreSQL.
-5. Redis remains hot/ephemeral state for geo, realtime, quote TTL and locks.
-6. Do not introduce Kafka/Kubernetes/microservices unless measured production needs justify them.
-7. Every phase should leave CI green before moving to the next phase.
+1. Prefer additive migrations and additive traffic migration.
+2. Do not edit already-applied production migrations in place.
+3. Each extracted service owns its database and migrations.
+4. No service reads another service database.
+5. Public compatibility endpoints remain until V2 replacements are proven.
+6. Critical state changes are idempotent.
+7. State + event uses Outbox; consumers use Inbox/deduplication.
+8. Cross-service workflows use Saga/process managers, not distributed transactions.
+9. Synchronous internal calls use gRPC only when an immediate answer is required.
+10. Async integration uses NATS JetStream.
+11. Every extraction needs compatibility, failure and rollback tests.
+12. Docker Compose remains a supported self-host topology; Kubernetes is optional.
 
-## Phase 0 — Rebaseline documentation and naming
+## Phase 0 — Product and package rebaseline ✅
+
+Delivered:
+- OpenRide product identity and manifesto;
+- Request/Quote/Agreement/Ride model;
+- packageable `core-go`;
+- versioned contracts;
+- JS/TS SDK foundation;
+- first-party service modules;
+- public documentation and open-source governance.
+
+## Phase 1 — Marketplace Service ✅ foundation
+
+Extract Marketplace into `services/marketplace`.
+
+Marketplace owns:
+- MobilityRequest;
+- DriverTariff;
+- Quote;
+- ranking orchestration;
+- Agreement;
+- module catalog/validation;
+- Marketplace Outbox/Inbox.
 
 Deliverables:
-- rewrite root README;
-- publish product vision and manifesto;
-- redefine architecture/domain/data/matching docs;
-- mark FlashX-specific requirements as legacy vertical requirements;
-- rename human-facing CI/project labels where low-risk;
-- define licensing/governance decision.
+- independent Go module/entrypoint;
+- service-owned migration directory;
+- health/readiness endpoints;
+- Docker image;
+- separate `marketplace_db` in microservices Compose;
+- NATS JetStream development dependency.
 
-Runtime behavior should remain unchanged.
+Compatibility API proxies V2 marketplace traffic instead of importing Marketplace ownership into the gateway.
 
-## Phase 1 — MobilityRequest
+## Phase 2 — Complete Marketplace persistence/events
 
-Add a first-class demand aggregate.
+Implement durable repositories only inside Marketplace Service.
 
-Suggested fields:
+Required commands:
+- create/cancel MobilityRequest;
+- create/update DriverTariff;
+- create/withdraw Quote;
+- accept Quote -> Agreement atomically.
 
-```text
-id
-instance_id
-rider_id
-service_type
-status
-pickup
-stops[]
-destination
-requested_at
-expires_at
-preferences
-constraints
-created_at
-updated_at
-version
-```
+Agreement acceptance transaction must:
+1. verify request state;
+2. verify quote state/expiry/ownership;
+3. snapshot accepted commercial terms;
+4. mark competing state appropriately;
+5. write Outbox event in the same transaction.
 
-Initial states:
+Initial events:
 
 ```text
-DRAFT -> OPEN -> RECEIVING_QUOTES -> AGREED -> CLOSED
-OPEN -> EXPIRED
-OPEN -> CANCELLED
+openride.marketplace.request.opened.v1
+openride.marketplace.request.cancelled.v1
+openride.marketplace.quote.created.v1
+openride.marketplace.quote.withdrawn.v1
+openride.marketplace.agreement.created.v1
 ```
 
-Compatibility:
-- current trip create flow can create both a legacy trip and a request behind a feature flag;
-- no rider UI change required yet.
+## Phase 3 — Location Service
 
-## Phase 2 — DriverTariff
+Extract location ownership from compatibility `drivers`/Redis code.
 
-Introduce driver-owned pricing configuration.
+Location Service owns:
+- driver online/offline state;
+- latest coordinates;
+- location freshness;
+- GEO index;
+- nearby candidate discovery.
 
-Suggested entities:
-- `driver_tariffs`;
-- `driver_tariff_rules`;
-- `driver_quote_preferences`.
-
-A driver can select:
-- manual;
-- auto;
-- hybrid.
-
-The current global pricing service remains a fallback only during migration.
-
-## Phase 3 — Quote
-
-Add durable marketplace quote semantics.
-
-Suggested fields:
+Expose internal gRPC such as:
 
 ```text
-id
-request_id
-driver_id
-tariff_id
-status
-fare_total
-currency
-pricing_breakdown
-pickup_eta_seconds
-expires_at
-created_at
-accepted_at
-withdrawn_at
+DiscoverCandidates(request/service/area) -> candidate summaries
 ```
 
-States:
+Marketplace must call Location Service, never read its Redis keys directly.
+
+## Phase 4 — Marketplace matching pipeline
+
+Wire Marketplace Core engine to:
+- Location gRPC CandidateSource;
+- Marketplace-owned tariff/quote repositories;
+- explainable ranking policy;
+- event publisher/outbox.
+
+Target:
 
 ```text
-PENDING -> ACCEPTED
-PENDING -> REJECTED
-PENDING -> EXPIRED
-PENDING -> WITHDRAWN
+Request
+ -> Location candidates
+ -> eligibility
+ -> driver-authorized quotes
+ -> rank many
+ -> expose offers
 ```
 
-Quote calculation must snapshot the tariff/rules used for auditability.
+Do not use ML initially. Deterministic policies and explanation codes are preferred.
 
-## Phase 4 — Marketplace candidate and ranking engine
+## Phase 5 — Ride Service
 
-Refactor current dispatch responsibilities:
+Create execution service consuming:
 
 ```text
-Current
-nearby -> score -> pick one -> offer
-
-Target
-nearby -> eligibility -> quote generation -> rank many -> expose offers
+openride.marketplace.agreement.created.v1
 ```
 
-Create modules/concepts:
-- candidate discovery;
-- eligibility;
-- quote engine;
-- ranking;
-- fairness/exposure;
-- explainability.
+Ride Service owns:
+- Ride/Job execution aggregate;
+- service lifecycle state;
+- execution cancellation/incidents;
+- ride state history;
+- Ride Outbox/Inbox.
 
-Do not use ML at first. Deterministic weights and transparent reason codes are preferable.
+Passenger lifecycle is one module, not the universal lifecycle.
 
-## Phase 5 — Agreement
+## Phase 6 — Realtime Service
 
-When a rider selects an offer, create a durable agreement in one atomic flow.
+Extract WebSocket/SSE client sessions and event fanout.
 
-Agreement snapshots:
-- rider;
-- driver;
-- request;
-- accepted quote;
-- pickup/destination;
-- price and breakdown;
-- currency;
-- service terms;
-- accepted timestamp.
+Realtime consumes domain events and streams client-safe views. It does not become durable business truth.
 
-The agreement becomes the commercial source of truth.
+Clients reconnect then resync durable snapshots from owning services through the edge.
 
-Protect against:
-- quote double-accept;
-- driver double-assignment;
-- expired quote acceptance;
-- rider accepting two drivers;
-- fare mutation after acceptance.
+## Phase 7 — Identity Service
 
-## Phase 6 — Ride execution
+Extract:
+- account authentication;
+- OTP/session/token lifecycle;
+- identity roles;
+- KYC identity status/reference ownership.
 
-Introduce a cleaner execution aggregate separate from marketplace negotiation.
+The Edge validates/authenticates using Identity-issued credentials without reading Identity DB.
 
-Passenger ride state proposal:
+## Phase 8 — Payment Service
+
+Consume Ride events and own:
+- payment intents;
+- cash/provider payment status;
+- captures/refunds;
+- earnings;
+- operator fees;
+- settlement ledger.
+
+Ride and Payment remain independent state machines.
+
+## Phase 9 — Trust Service
+
+Extract:
+- ratings;
+- reputation;
+- reports;
+- moderation/safety/fraud signals.
+
+Marketplace may consume trust summaries through API/events but does not own ratings tables.
+
+## Phase 10 — Notification Service
+
+Consume events and own push/SMS/email delivery, retries, templates and provider receipts.
+
+Domain services publish business events; they do not directly embed every notification provider workflow.
+
+## Phase 11 — Operator Service
+
+Build operator read models from integration events and call owning services for commands.
+
+Operator Service must not join Marketplace/Ride/Payment DBs.
+
+## Phase 12 — Rider marketplace UI
+
+Rider flow becomes:
 
 ```text
-ASSIGNED
--> DRIVER_EN_ROUTE
--> DRIVER_ARRIVED
--> PASSENGER_ONBOARD
--> IN_PROGRESS
--> COMPLETED
+create request
+ -> offers arrive
+ -> compare price / ETA / trust
+ -> select / Quick Match
+ -> Agreement
+ -> Ride tracking
 ```
 
-Service-specific workflows can extend execution behavior without changing request/quote/agreement semantics.
+Offer cards show explicit recommendation reasons and never call cheapest "best" by default.
 
-The legacy `trips` aggregate can remain as a compatibility projection until consumers move to `rides`.
+## Phase 13 — Driver pricing UI
 
-## Phase 7 — Rider marketplace UI
+Add `My Price / My Tariff` as a primary Driver feature.
 
-Replace the single platform estimate + searching UX with:
-
-```text
-Request created
--> finding relevant drivers
--> offers arriving realtime
--> compare offers
--> choose / quick match
--> agreement
--> track ride
-```
-
-Offer cards should show:
-- total price;
-- pickup ETA;
-- driver rating;
-- vehicle summary;
-- recommendation reason;
-- meaningful labels such as cheapest / fastest / best overall.
-
-Do not label the cheapest offer as best by default.
-
-## Phase 8 — Driver pricing UI
-
-Add a primary Driver App area: `My Price` / `My Tariff`.
-
-Driver controls:
-- per-km/per-minute values;
-- minimum fare;
-- pickup radius/fee;
-- long-distance adjustments;
-- time rules;
+Controls include:
+- minimum/base fare;
+- per-km/per-minute;
+- pickup rules;
 - manual/auto/hybrid mode;
-- automatic quote lower/upper bounds.
+- automatic quote lower/upper bounds;
+- service-specific rules.
 
-The offer screen should show how the proposed quote was calculated.
+## Phase 14 — Retire compatibility ownership
 
-## Phase 9 — Remove platform-owned fare as primary pricing
+Capability by capability:
+- stop writes to legacy tables;
+- preserve read projection/history if required;
+- remove legacy dispatch/platform fare ownership;
+- retire compatibility handlers after client migration;
+- finally simplify or replace `services/api` with a dedicated Edge Gateway.
 
-Once marketplace pricing is stable:
-- deprecate global pricing as the commercial source of truth;
-- retain operator guardrails and market recommendation tools;
-- migrate old consumers to quote/agreement fare data;
-- preserve historical fare records.
+## Data migration rule
 
-## Phase 10 — Instance / operator boundary
+Do not move data merely by allowing a new service to read the old database forever.
 
-Add `instance_id` to marketplace-owned entities before federation becomes necessary.
-
-An instance represents one deployment/operator/community context.
-
-Possible instance configuration:
-- service area;
-- currency;
-- payment providers;
-- legal pricing bounds;
-- KYC policy;
-- fee policy;
-- supported services;
-- ranking configuration within project guardrails.
-
-Do not implement federation yet unless there is a real cross-instance requirement.
-
-## Phase 11 — Service plugin/vertical model
-
-Move designated-driver and vehicle-inspection flows into service-specific execution policies.
-
-Long-term examples:
-- passenger ride;
-- motorbike ride;
-- carpool;
-- intercity;
-- delivery;
-- designated driver;
-- inspection assistance.
-
-The marketplace primitives stay reusable:
+Use an explicit migration:
 
 ```text
-Request -> Quote -> Agreement -> Job/Ride
+legacy snapshot/export
+ -> transform
+ -> import into owning service DB
+ -> dual-write/event bridge only for bounded migration window
+ -> compare
+ -> cut traffic
+ -> remove compatibility write
 ```
 
-## Test strategy
+## Rollout controls
 
-Every marketplace phase needs tests for:
-- invalid state transitions;
-- quote expiration;
-- idempotent create/accept;
-- assignment race;
-- pricing snapshot integrity;
-- ranking determinism;
-- driver tariff boundaries;
-- request cancellation;
-- Redis outage/degraded behavior;
-- backward compatibility where active.
-
-## Rollout strategy
-
-Use feature flags or instance-level configuration:
+Instance-level flags may temporarily control migration:
 
 ```text
-legacy_dispatch_enabled
-marketplace_quotes_enabled
+marketplace_service_enabled
+location_service_enabled
+v2_quotes_enabled
 rider_offer_selection_enabled
 driver_tariffs_enabled
 quick_match_enabled
 ```
 
-This permits production/staging comparison without a big-bang release.
+Feature flags are migration tools, not permanent duplicate ownership.
+
+## Test strategy
+
+Every extracted service requires:
+- domain unit tests;
+- repository/integration tests against its own DB;
+- contract tests;
+- idempotency tests;
+- Outbox/Inbox tests;
+- duplicate event tests;
+- timeout/retry tests;
+- backward-compatibility tests where traffic is still proxied;
+- Docker image/health tests.
+
+Cross-service scenarios require tests for:
+- event delay/duplication;
+- dependency unavailable;
+- Saga compensation/recovery;
+- stale location;
+- quote expiration races;
+- double acceptance attempts;
+- payment failure after ride completion.
 
 ## Definition of done
 
-The migration is complete when the normal passenger ride path no longer depends on a platform-controlled fare plus one-driver dispatch flow, and instead uses:
+Migration is complete when normal passenger traffic no longer depends on the old platform-owned Trip/Pricing/Dispatch kernel and instead flows through independently owned services:
 
 ```text
-MobilityRequest
-+ DriverTariff
-+ Quote
-+ Marketplace Ranking
-+ Agreement
-+ Ride
+Identity
+   |
+Edge -> Marketplace -> Location
+             |
+          Agreement
+             |
+            NATS
+       +-----+-----+
+       |           |
+      Ride      Notification
+       |
+      NATS
+       |
+    Payment / Trust / Operator projections
 ```
 
-with durable auditability and transparent user-facing pricing semantics.
+with durable auditability, transparent pricing, independent data ownership and self-hostable deployment.

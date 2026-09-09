@@ -1,245 +1,530 @@
-# Data Model
+# OpenRide Data Model V2
 
-> **Compatibility note 12/08/2026:** schema hiện tại phản ánh foundation ride-hailing cũ (`vehicles.driver_id`, `trips`, `car/bike`). Không được coi bảng `vehicles` hiện tại là “Xe của tôi”. Target Full Marketplace cần migration mới cho **phương tiện của khách**, 3 service mới, lịch hẹn, handover và workflow Đăng kiểm hộ; xem `IMPLEMENTATION_GAP_REVIEW_2026-08-12.md`.
+## 1. Storage principles
 
-## 1. Mục tiêu
+PostgreSQL + PostGIS is the durable source of truth for marketplace/business state.
 
-PostgreSQL + PostGIS là source of truth cho dữ liệu nghiệp vụ. Redis giữ hot state và spatial index realtime. Thiết kế phải tránh ghi GPS tần suất cao trực tiếp vào bảng transactional chính.
+Redis stores hot/ephemeral state such as:
+- online driver geo indexes;
+- latest locations;
+- websocket presence;
+- quote/offer TTL helpers;
+- matching locks;
+- short-lived idempotency/rate-limit state.
 
-## 2. Schema hiện có
+Accepted commercial terms must never exist only in Redis.
 
-Migration `001_init.sql` hiện tạo:
-- `users`
-- `drivers`
-- `vehicles`
-- `trips`
-- `trip_status_history`
-- PostGIS extension
+Money is stored as integer minor units / integer currency units according to one documented project convention. Never use float for fares.
 
-## 3. users
+## 2. Current compatibility schema
+
+The repository currently contains legacy tables such as:
+- users;
+- drivers;
+- vehicles/customer_vehicles;
+- trips;
+- trip_status_history;
+- pricing_rules;
+- payments;
+- ratings;
+- driver documents.
+
+These remain operational while V2 marketplace tables are added through append-only migrations.
+
+## 3. Target entity relationship
 
 ```text
-id UUID PK
-phone VARCHAR UNIQUE
-full_name VARCHAR
-status VARCHAR
-created_at TIMESTAMPTZ
-updated_at TIMESTAMPTZ
+users
+  |
+  +-- rider_profiles
+  |
+  +-- driver_profiles
+          |
+          +-- driver_vehicles
+          +-- driver_capabilities
+          +-- driver_tariffs
+                  |
+                  +-- driver_tariff_rules
+
+mobility_requests
+      |
+      +-- quotes -------- driver_profiles
+      |      |
+      |      +-- quote_components / pricing snapshot
+      |
+      +-- agreements
+              |
+              +-- rides
+                    |
+                    +-- ride_status_history
+
+agreements / rides
+      |
+      +-- payments
+      +-- driver_earnings
+      +-- platform_fees
+      +-- ratings
+      +-- safety_events / disputes
+
+instances
+  +-- policies / service config
 ```
 
-Khuyến nghị bổ sung khi triển khai auth thật:
-- phone_verified_at
-- avatar_object_key
-- last_login_at
-- version hoặc optimistic locking field nếu cần.
+## 4. instances
 
-## 4. drivers
+Prepare for self-host/operator boundaries before federation is needed.
+
+Suggested fields:
 
 ```text
-id UUID PK
-phone VARCHAR UNIQUE
-full_name VARCHAR
-approval_status VARCHAR
-availability_status VARCHAR
+id UUID/TEXT PK
+slug UNIQUE
+name
+status
+currency
+country_code
+timezone
 created_at
 updated_at
 ```
 
-Khuyến nghị bổ sung:
-- current_vehicle_id hoặc mapping active vehicle;
-- approved_at;
-- suspended_at;
-- rating aggregates;
-- service region/city.
+Policy/config should not become an unstructured dumping ground. Keep sensitive business concepts in explicit tables where practical.
 
-## 5. vehicles
+## 5. users
+
+Suggested core:
 
 ```text
-id UUID PK
-driver_id UUID FK
-service_type VARCHAR
-plate_number VARCHAR
-brand VARCHAR
-model VARCHAR
+id
+phone/email identity
+full_name
+status
+phone_verified_at
+avatar_object_key
+last_login_at
+created_at
+updated_at
+version
+```
+
+Roles should not require separate duplicated identities for rider and driver.
+
+## 6. driver_profiles
+
+Suggested fields:
+
+```text
+id
+user_id UNIQUE
+instance_id
+approval_status
+availability_status
+rating_avg
+rating_count
+completion_rate
+approved_at
+suspended_at
+last_idle_at
+created_at
+updated_at
+version
+```
+
+Indexes should support instance/status lookups.
+
+## 7. driver_vehicles
+
+For passenger ride verticals:
+
+```text
+id
+driver_id
+instance_id
+type
+plate_number
+brand
+model
+year
+color
+seats
+status
+document_status
+created_at
+updated_at
+```
+
+Unique constraints depend on local/operator rules, typically plate within instance.
+
+Customer-owned vehicles remain a separate concept for designated-driver/inspection verticals.
+
+## 8. driver_capabilities
+
+Prefer normalized rows once capabilities become richer than a tiny array.
+
+```text
+id
+driver_id
+service_type
+status
+metadata JSONB
+created_at
+updated_at
+```
+
+Examples:
+- passenger_car;
+- passenger_motorbike;
+- designated_driver_car;
+- delivery;
+- vehicle_inspection_assist.
+
+## 9. driver_tariffs
+
+First-class driver-owned commercial profile.
+
+```text
+id
+driver_id
+instance_id
+service_type
+quote_mode            # manual | auto | hybrid
+currency
+base_fare_minor
+minimum_fare_minor
+per_km_minor
+per_minute_minor
+pickup_fee_minor
+auto_quote_min_minor
+auto_quote_max_minor
+status
+version
+effective_from
+effective_to
+created_at
+updated_at
+```
+
+Important indexes:
+- `(driver_id, service_type, status)`;
+- `(instance_id, service_type, status)`.
+
+A driver should not have ambiguous overlapping active tariffs for the same service unless product rules explicitly support them.
+
+## 10. driver_tariff_rules
+
+Optional richer rules:
+
+```text
+id
+tariff_id
+rule_type
+priority
+conditions JSONB
+adjustment_type
+adjustment_value
+status
+created_at
+updated_at
+```
+
+Examples:
+- night surcharge;
+- holiday adjustment;
+- long-distance discount;
+- zone fee;
+- pickup-distance rule.
+
+Rule evaluation must be deterministic by tariff/rule version.
+
+## 11. mobility_requests
+
+```text
+id
+instance_id
+rider_id
+service_type
+status
+pickup GEOGRAPHY(POINT,4326)
+destination GEOGRAPHY(POINT,4326)
+stops JSONB or normalized table
+estimated_distance_m
+estimated_duration_s
+preferences JSONB
+constraints JSONB
+requested_at
+expires_at
+agreed_at
+cancelled_at
+created_at
+updated_at
+version
+```
+
+Suggested indexes:
+- GIST pickup/destination;
+- `(instance_id, status, created_at DESC)`;
+- expiry index for open requests.
+
+State values initially:
+- draft;
+- open;
+- receiving_quotes;
+- agreed;
+- closed;
+- cancelled;
+- expired.
+
+## 12. quotes
+
+```text
+id
+request_id
+driver_id
+driver_vehicle_id nullable
+tariff_id nullable
+tariff_version nullable
+status
+fare_total_minor
+currency
+pricing_snapshot JSONB
+pickup_distance_m
+pickup_eta_s
+expires_at
+created_at
+updated_at
+accepted_at
+withdrawn_at
+```
+
+Important constraints:
+- quote request/driver foreign keys;
+- accepted quote must be durable;
+- no float fare;
+- request + driver may have one current active quote unless negotiation design says otherwise.
+
+Indexes:
+- `(request_id, status, created_at)`;
+- `(driver_id, status, created_at DESC)`;
+- `(expires_at)` for pending quote cleanup.
+
+## 13. quote_components
+
+May be JSONB in the first version or normalized later.
+
+Expected explainable components:
+- base;
+- distance;
+- duration;
+- pickup;
+- time rule;
+- zone rule;
+- service adjustment;
+- discount;
+- total.
+
+The snapshot should carry the tariff/rule version and calculation reason codes.
+
+## 14. agreements
+
+This is the immutable commercial source of truth after selection.
+
+```text
+id
+instance_id
+request_id UNIQUE
+quote_id UNIQUE
+rider_id
+driver_id
+driver_vehicle_id nullable
+service_type
+pickup_snapshot JSONB
+destination_snapshot JSONB
+route_snapshot JSONB
+fare_total_minor
+currency
+pricing_snapshot JSONB
+terms_snapshot JSONB
+policy_version
 created_at
 ```
 
-Cần unique/index phù hợp cho plate number và driver lookup khi implement đầy đủ.
+For normal single-provider rides, `request_id UNIQUE` guarantees only one accepted commercial agreement.
 
-## 6. trips
+If future service types require multiple providers, model that explicitly instead of weakening this invariant globally.
 
-Hiện dùng PostGIS `GEOGRAPHY(POINT,4326)` cho pickup/destination.
+Agreement rows should be immutable except for carefully scoped administrative metadata if ever necessary.
+
+## 15. rides
 
 ```text
-id UUID PK
-rider_id UUID FK
-driver_id UUID nullable FK
+id
+agreement_id UNIQUE
+instance_id
+rider_id
+driver_id
 service_type
 status
-pickup GEOGRAPHY POINT
-destination GEOGRAPHY POINT
-estimated_distance_m
-estimated_duration_s
-estimated_fare_minor
-final_fare_minor
-currency
-created_at
-accepted_at
 started_at
 completed_at
 cancelled_at
+created_at
+updated_at
+version
 ```
 
-### Money
-Tất cả tiền lưu bằng integer minor unit, không dùng float.
+Do not duplicate commercial fare as mutable ride pricing. Read accepted terms from Agreement or store a read-only projection.
 
-Ví dụ VND có thể lưu trực tiếp số đồng trong trường `*_minor` theo convention thống nhất của dự án.
+## 16. ride_status_history
 
-### Index hiện có
-- GIST pickup
-- GIST destination
-- `(status, created_at DESC)`
+Append-only:
 
-## 7. trip_status_history
-
-Mọi transition quan trọng ghi append-only:
-- trip_id
-- status
-- actor_type
-- created_at
-
-Nên bổ sung trong migration sau:
-- actor_id nullable
-- reason_code
-- metadata JSONB
-- sequence/version.
-
-## 8. Driver documents / object storage metadata
-
-### driver_documents
-- id
-- driver_id
-- document_type
-- object_key — private S3-compatible object key, không phải public URL
-- filename
-- content_type
-- size_bytes
-- review_status
-- review_note
-- created_at/updated_at
-- reviewed_at
-
-File bytes không nằm trong PostgreSQL và không đi qua backend. Client upload trực tiếp tới object storage bằng presigned PUT; bảng này chỉ là business metadata/KYC review state.
-
-## 9. Tables dự kiến tiếp theo
-
-### pricing_rules
-- id
-- service_type
-- city/zone
-- base_fare
-- per_km
-- per_minute
-- minimum_fare
-- effective_from/effective_to
-- version
-
-### payments
-- id
-- trip_id
-- provider
-- external_reference
-- amount
-- currency
-- status
-- idempotency_key
-- created_at/updated_at
-
-### promotions
-- id
-- code
-- type
-- value
-- max_discount
-- starts_at/ends_at
-- usage limits
-- status
-
-### ratings
-- id
-- trip_id
-- rider_id
-- driver_id
-- score
-- comment
-- created_at
-
-### admin_users / admin_roles
-RBAC cho cổng vận hành.
-
-### audit_logs
-Append-only log cho thao tác nhạy cảm.
-
-## 9. Redis key model đề xuất
-
-### Online driver geo index
 ```text
-geo:drivers:{city}:{service_type}
+id
+ride_id
+sequence
+status
+actor_type
+actor_id nullable
+reason_code
+metadata JSONB
+created_at
 ```
-Member: `driver_id`
 
-### Latest location
+Unique `(ride_id, sequence)`.
+
+## 17. latest driver location
+
+Redis hot state:
+
 ```text
-driver:{driver_id}:location
+driver:{instance}:{driver_id}:location
 ```
-Payload/hash:
-- lat
-- lng
-- accuracy
-- heading
-- speed
-- captured_at
-- received_at
 
-TTL/freshness policy phải được áp dụng để driver stale không xuất hiện trong dispatch.
+Fields:
+- lat;
+- lng;
+- accuracy;
+- heading;
+- speed;
+- captured_at;
+- received_at.
 
-### Availability
+GEO index:
+
 ```text
-driver:{driver_id}:state
+geo:drivers:{instance}:{city}:{service_type}
 ```
 
-### Dispatch lock
+Stale-location policy is mandatory.
+
+## 18. ride path persistence
+
+Do not store every GPS ping in transactional ride rows.
+
+Options when needed:
+- time/distance sampling;
+- partitioned location table;
+- encoded polyline after ride;
+- analytics/time-series store at larger scale.
+
+Retention must be tied to support, safety and legal/privacy requirements.
+
+## 19. payments
+
+Suggested:
+
 ```text
-lock:driver:{driver_id}
-lock:trip:{trip_id}:assignment
+id
+agreement_id / ride_id
+provider
+external_reference
+amount_minor
+currency
+status
+idempotency_key
+created_at
+updated_at
 ```
-Dùng atomic Redis operation/script hoặc database guard để chống race.
 
-### Offer
+Payment state remains separate from Ride.
+
+## 20. driver_earnings and platform_fees
+
+Make deductions transparent.
+
+`driver_earnings`:
+- agreement_id;
+- gross_fare;
+- deductions;
+- net_driver_earning;
+- settlement status.
+
+`platform_fees`:
+- agreement_id;
+- fee type;
+- amount;
+- policy version.
+
+Avoid opaque calculations that cannot be explained to drivers.
+
+## 21. ratings / trust / safety
+
+Suggested tables/concepts:
+- ratings;
+- reports;
+- safety_events;
+- disputes;
+- moderation_actions;
+- audit_logs.
+
+Sensitive operator changes need actor/reason/time metadata.
+
+## 22. Redis marketplace keys
+
+Possible shapes:
+
 ```text
-dispatch:trip:{trip_id}:offer:{driver_id}
+request:{request_id}:presence
+quote:{quote_id}:ttl
+lock:request:{request_id}:agreement
+lock:driver:{driver_id}:assignment
+idem:{scope}:{key}
 ```
-Có TTL.
 
-## 10. Location persistence
+Redis TTL expiration is not enough to update durable quote status; background reconciliation/query normalization may mark persisted pending quotes expired.
 
-Không lưu từng GPS ping vào `trips`.
+## 23. Migration rules
 
-Các lựa chọn khi cần trip path:
-- sample point theo thời gian/khoảng cách;
-- append vào time-series table partitioned;
-- encode polyline sau trip;
-- chuyển sang analytics store khi scale.
+- migrations are append-only;
+- do not rewrite migrations already applied in production;
+- add nullable/backward-compatible columns/tables first;
+- backfill separately;
+- add strong constraints after data is ready;
+- use concurrent indexes when production table size/locking requires it;
+- keep compatibility reads/writes until old consumers migrate.
 
-MVP chỉ nên lưu lượng cần thiết cho audit/support.
+## 24. Proposed migration sequence
 
-## 11. Migration rules
+```text
+007_instances.sql
+008_mobility_requests.sql
+009_driver_tariffs.sql
+010_quotes.sql
+011_agreements.sql
+012_rides.sql
+013_marketplace_indexes.sql
+014_earnings_fees.sql
+```
 
-- Migration là append-only; không sửa migration đã chạy production.
-- Mọi schema change phải backward-compatible trong rolling deployment nếu có nhiều instance.
-- Add nullable/default trước, backfill sau, enforce constraint cuối nếu table lớn.
-- Index creation trên production lớn phải cân nhắc lock/concurrently.
+Exact numbering should be based on repository state when implementation begins; never renumber migrations already shipped.
 
-## 12. Backup/retention
+## 25. Backup, retention and privacy
 
-Production phải có automated backup và test restore định kỳ. Retention của KYC, location history và audit log phải được chốt theo yêu cầu pháp lý/chính sách doanh nghiệp trước launch.
+Production requires:
+- automated PostgreSQL backups;
+- tested restore procedure;
+- documented KYC retention;
+- location-history retention policy;
+- audit retention;
+- object-storage access policy;
+- deletion/anonymization policy compatible with applicable law.

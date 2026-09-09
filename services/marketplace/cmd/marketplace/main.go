@@ -3,116 +3,51 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
 	modulecatalog "github.com/0xmarkhydra/OpenRide/packages/modules-go/catalog"
+	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/httpapi"
+	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/outbox"
+	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/store"
 )
 
 func main() {
-	addr := strings.TrimSpace(os.Getenv("HTTP_ADDR"))
-	if addr == "" {
-		addr = ":8090"
-	}
+	addr := strings.TrimSpace(os.Getenv("HTTP_ADDR")); if addr=="" { addr=":8090" }
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	natsURL := strings.TrimSpace(os.Getenv("NATS_URL"))
+	if databaseURL=="" || natsURL=="" { log.Fatal("DATABASE_URL and NATS_URL are required for durable marketplace mode") }
 
-	readyCheck, err := dependencyReadiness(os.Getenv("DATABASE_URL"), os.Getenv("NATS_URL"))
-	if err != nil {
-		log.Fatalf("configure marketplace dependencies: %v", err)
-	}
+	bootstrapCtx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()
+	pg,err:=store.New(bootstrapCtx,databaseURL);if err!=nil{log.Fatalf("connect marketplace database: %v",err)};defer pg.Close()
+	nc,err:=nats.Connect(natsURL,nats.Name("openride-marketplace"),nats.Timeout(5*time.Second),nats.MaxReconnects(-1));if err!=nil{log.Fatalf("connect nats: %v",err)};defer nc.Close()
+	js,err:=nc.JetStream();if err!=nil{log.Fatalf("open jetstream: %v",err)}
+	if err:=ensureMarketplaceStream(js);err!=nil{log.Fatalf("ensure marketplace stream: %v",err)}
 
-	server, err := httpapi.New(httpapi.Config{
-		Addr:     addr,
-		Services: modulecatalog.DefaultRegistry(),
-		Ready:    readyCheck,
-	})
-	if err != nil {
-		log.Fatalf("configure marketplace service: %v", err)
-	}
+	ready:=func(ctx context.Context) error { if err:=pg.Ping(ctx);err!=nil{return err}; if nc.Status()!=nats.CONNECTED{return errors.New("nats not connected")}; return nil }
+	acceptance:=app.AcceptanceService{Store:pg}
+	server,err:=httpapi.New(httpapi.Config{Addr:addr,Services:modulecatalog.DefaultRegistry(),Ready:ready,V2Store:pg,Acceptance:acceptance});if err!=nil{log.Fatalf("configure marketplace service: %v",err)}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
+	go outbox.Relay{Store:pg,JS:js,Interval:500*time.Millisecond,Batch:50}.Run(ctx)
 
-	errCh := make(chan error, 1)
-	go func() {
-		log.Printf("marketplace-service listening on %s", addr)
-		errCh <- server.ListenAndServe()
-	}()
-
+	errCh:=make(chan error,1);go func(){log.Printf("marketplace-service listening on %s",addr);errCh<-server.ListenAndServe()}()
 	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("graceful shutdown failed: %v", err)
-		}
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("marketplace service: %v", err)
-		}
+	case <-ctx.Done(): shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel();if err:=server.Shutdown(shutdownCtx);err!=nil{log.Printf("graceful shutdown failed: %v",err)}
+	case err:=<-errCh: if err!=nil&&!errors.Is(err,http.ErrServerClosed){log.Fatalf("marketplace service: %v",err)}
 	}
 }
 
-// dependencyReadiness intentionally performs only connectivity checks here.
-// Service-specific adapters will replace these probes with real DB/NATS health
-// checks once persistence and event relays are wired into Marketplace Service.
-func dependencyReadiness(databaseURL, natsURL string) (func(context.Context) error, error) {
-	targets := make([]string, 0, 2)
-	for _, raw := range []string{databaseURL, natsURL} {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		target, err := networkTarget(raw)
-		if err != nil {
-			return nil, err
-		}
-		targets = append(targets, target)
-	}
-
-	if len(targets) == 0 {
-		return nil, nil
-	}
-
-	return func(ctx context.Context) error {
-		dialer := net.Dialer{Timeout: time.Second}
-		for _, target := range targets {
-			conn, err := dialer.DialContext(ctx, "tcp", target)
-			if err != nil {
-				return fmt.Errorf("dependency %s unavailable: %w", target, err)
-			}
-			_ = conn.Close()
-		}
-		return nil
-	}, nil
-}
-
-func networkTarget(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("parse dependency URL: %w", err)
-	}
-	if u.Hostname() == "" {
-		return "", fmt.Errorf("dependency URL has no host: %q", raw)
-	}
-	port := u.Port()
-	if port == "" {
-		switch u.Scheme {
-		case "postgres", "postgresql":
-			port = "5432"
-		case "nats":
-			port = "4222"
-		default:
-			return "", fmt.Errorf("dependency URL has no port and unsupported scheme %q", u.Scheme)
-		}
-	}
-	return net.JoinHostPort(u.Hostname(), port), nil
+func ensureMarketplaceStream(js nats.JetStreamContext) error {
+	if _,err:=js.StreamInfo("MARKETPLACE");err==nil{return nil}
+	_,err:=js.AddStream(&nats.StreamConfig{Name:"MARKETPLACE",Subjects:[]string{"marketplace.>"},Storage:nats.FileStorage,Retention:nats.LimitsPolicy,Duplicates:10*time.Minute})
+	return err
 }

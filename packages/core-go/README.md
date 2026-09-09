@@ -11,8 +11,10 @@ core-go/
 ├── money/        # minor-unit money value object
 ├── geo/          # provider-neutral coordinates
 ├── marketplace/  # Request, Tariff, Quote, Agreement, Ride + invariants
-├── extension/    # service-module manifests and registry
-└── engine/       # candidate -> quote -> rank orchestration ports
+├── extension/    # service manifests, registry and optional lifecycle contracts
+├── engine/       # candidate -> quote -> rank orchestration ports
+├── pricing/      # safe replaceable default tariff calculator
+└── ranking/      # explainable replaceable default ranker
 ```
 
 ## Design rule
@@ -28,7 +30,7 @@ Core owns invariants. Extensions own vertical-specific behavior. Adapters own in
                          ┌──────────────▼──────────────┐
                          │       OpenRide Core          │
                          │ request • quote • agreement  │
-                         │ engine • state machines      │
+                         │ pricing • ranking • engine   │
                          └──────────────┬──────────────┘
                                         │ extension contract
                          ┌──────────────▼──────────────┐
@@ -38,11 +40,27 @@ Core owns invariants. Extensions own vertical-specific behavior. Adapters own in
                          └─────────────────────────────┘
 ```
 
+## Replaceable by design
+
+The operator supplies infrastructure and policy implementations through small interfaces:
+
+```go
+type CandidateSource interface { ... }
+type QuoteProvider interface { ... }
+type Ranker interface { ... }
+type EventPublisher interface { ... }
+```
+
+OpenRide ships a small safe pricing calculator and an explainable weighted ranker so a new operator can start quickly. Neither is mandatory. Replacing ranking or pricing does not require forking the marketplace engine.
+
+Service execution is also extensible. `marketplace.PassengerLifecycle` is only a reference lifecycle; a service module can implement `extension.RideLifecycleProvider` for carpool, delivery, designated-driver or other workflows.
+
 ## Run the example
 
 From the repository root:
 
 ```bash
+make core-test
 make core-example
 ```
 
@@ -50,6 +68,7 @@ Or directly:
 
 ```bash
 cd packages/core-go
+go test ./...
 go run ./examples/minimal
 ```
 
@@ -64,6 +83,8 @@ import (
     "github.com/0xmarkhydra/OpenRide/packages/core-go/engine"
     "github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
     "github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
+    "github.com/0xmarkhydra/OpenRide/packages/core-go/pricing"
+    "github.com/0xmarkhydra/OpenRide/packages/core-go/ranking"
 )
 ```
 
@@ -75,6 +96,7 @@ import (
 - infrastructure dependencies must not leak into Core;
 - accepted commercial terms must be snapshot-safe;
 - service-specific fields should be modeled through extension contracts instead of hardcoding every vertical into the kernel;
+- service lifecycle differences belong in module lifecycle providers, not one ever-growing global enum;
 - new breaking APIs require a migration note;
 - event names are versioned (`*.v1`, `*.v2`, ...).
 

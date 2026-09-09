@@ -1,54 +1,59 @@
-# FlashX — Project Documentation
+# OpenRide Documentation
 
-Thư mục này là nguồn tài liệu chuẩn (source of truth) cho dự án FlashX.
+**English** · [简体中文](i18n/zh-CN/README.md) · [हिन्दी](i18n/hi/README.md) · [Español](i18n/es/README.md)
 
-## Đọc theo thứ tự này trước khi triển khai
+This directory is the documentation source of truth for OpenRide.
 
-1. [CUSTOMER_REQUIREMENTS.md](./CUSTOMER_REQUIREMENTS.md) — **source of truth phạm vi sản phẩm**: FlashX là nền tảng lái hộ/hỗ trợ phương tiện; MVP gồm Lái hộ ô tô, Lái hộ xe máy, Đăng kiểm hộ.
-2. [BA_MVP_OPERATING_RULES_2026-08-12.md](./BA_MVP_OPERATING_RULES_2026-08-12.md) — **source of truth cách vận hành 3 dịch vụ MVP**: giao nhận xe, hủy, sự cố, chi phí phát sinh, đăng kiểm không đạt, evidence, Operations và các case bắt buộc test.
-3. [THREAD_SUMMARY_2026-08-12.md](./THREAD_SUMMARY_2026-08-12.md) — toàn bộ context/pivot/quyết định của thread hiện tại để tiếp tục ở cuộc hội thoại khác.
-4. [PRD_MVP.md](./PRD_MVP.md) — yêu cầu sản phẩm MVP chi tiết.
-5. [PRODUCT_BACKLOG.md](./PRODUCT_BACKLOG.md) — backlog P0/P1/P2 đã rebaseline theo business lái hộ/đăng kiểm hộ.
-6. [UX_UI_SYSTEM.md](./UX_UI_SYSTEM.md) — design system và flow UX mới cho Customer/Driver/Admin.
-7. [FULL_MARKETPLACE_COST_PLAN.md](./FULL_MARKETPLACE_COST_PLAN.md) — phương án tài chính/triển khai Founder đã chốt: UI đơn giản, engine Full Marketplace.
-8. [IMPLEMENTATION_GAP_REVIEW_2026-08-12.md](./IMPLEMENTATION_GAP_REVIEW_2026-08-12.md) — đối chiếu code hiện tại với yêu cầu Full Marketplace và danh sách blocker P0 cần xử lý.
+> The previous index still described the legacy FlashX product and its three-service MVP. That index is no longer authoritative for OpenRide. Historical documents must be explicitly classified before they are used to implement new OpenRide behavior.
 
-Nếu tài liệu legacy còn mô tả `car/bike` theo nghĩa taxi/ride-hailing, **8 tài liệu trên được ưu tiên** và tài liệu legacy phải được migrate trước khi dùng để code feature mới.
+## Four-language policy
 
-## Mục lục
+All maintained public OpenRide documentation is published in:
 
-- [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md) — mục tiêu, phạm vi và định nghĩa sản phẩm.
-- [PRD_MVP.md](./PRD_MVP.md) — yêu cầu sản phẩm MVP chi tiết.
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — kiến trúc hệ thống và nguyên tắc scale.
-- [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) — domain, aggregate và state machine.
-- [DATA_MODEL.md](./DATA_MODEL.md) — schema dữ liệu, PostGIS và Redis key model.
-- [API_CONTRACT.md](./API_CONTRACT.md) — quy ước REST API, auth, lỗi và endpoint MVP.
-- [REALTIME_LOCATION.md](./REALTIME_LOCATION.md) — WebSocket, GPS ingestion và fan-out.
-- [DISPATCH_ENGINE.md](./DISPATCH_ENGINE.md) — matching, scoring, locking và retry.
-- [MAPS_AND_GEO.md](./MAPS_AND_GEO.md) — Maps provider, route, geocoding và chi phí bên thứ ba.
-- [RIDER_APP.md](./RIDER_APP.md) — kiến trúc và luồng app khách hàng.
-- [DRIVER_APP.md](./DRIVER_APP.md) — kiến trúc, background location và luồng tài xế.
-- [ADMIN_PORTAL.md](./ADMIN_PORTAL.md) — nghiệp vụ Admin/Operations.
-- [SECURITY_PRIVACY.md](./SECURITY_PRIVACY.md) — auth, KYC, secrets, privacy và audit.
-- [INFRA_DEVOPS.md](./INFRA_DEVOPS.md) — môi trường, Docker, CI/CD và production topology.
-- [OBSERVABILITY.md](./OBSERVABILITY.md) — logs, metrics, traces, alerts và SLO.
-- [TESTING_QA.md](./TESTING_QA.md) — chiến lược test và tiêu chí UAT.
-- [DEPLOYMENT_RUNBOOK.md](./DEPLOYMENT_RUNBOOK.md) — quy trình release, rollback và incident cơ bản.
-- [ROADMAP_SCALING.md](./ROADMAP_SCALING.md) — roadmap MVP → scale, tiêu chí tách service/Rust.
-- [THIRD_PARTY_COSTS.md](./THIRD_PARTY_COSTS.md) — dịch vụ bên thứ ba và ownership chi phí.
-- [INITIAL_COMPANY_FINANCIAL_PLAN.md](./INITIAL_COMPANY_FINANCIAL_PLAN.md) — bức tranh tài chính ban đầu: chi phí MVP, thành lập doanh nghiệp, setup Go-Live, burn rate và runway 3/6/9/12 tháng.
-- [PROJECT_PLAN.md](./PROJECT_PLAN.md) — milestone, timeline, risk và Definition of Done.
-- [ADR.md](./ADR.md) — Architecture Decision Records.
-- [LEGAL_COMPLIANCE_VIETNAM.md](./LEGAL_COMPLIANCE_VIETNAM.md) — định hướng pháp lý, giấy phép và checklist Go-Live tại Việt Nam; cần review lại theo business lái hộ/đăng kiểm hộ trước production.
-- [OBJECT_STORAGE.md](./OBJECT_STORAGE.md) — S3-compatible direct upload, presigned URL và KYC media flow.
+1. English (`en`) — canonical technical source.
+2. Simplified Chinese (`zh-CN`).
+3. Hindi (`hi`).
+4. Spanish (`es`).
 
-## Quy tắc cập nhật
+English source documents remain at `docs/*.md`. Translations mirror the same filename under:
 
-- Mọi thay đổi lớn về nghiệp vụ hoặc kiến trúc phải cập nhật docs tương ứng trong cùng PR/commit.
-- `ARCHITECTURE.md`, `DATA_MODEL.md`, `API_CONTRACT.md` và `ADR.md` phải khớp với implementation hiện tại.
-- Không ghi API key, password, token hoặc secret thật vào docs.
-- Khi một quyết định kiến trúc thay đổi, thêm ADR mới thay vì xóa lịch sử lý do.
+```text
+docs/i18n/zh-CN/
+docs/i18n/hi/
+docs/i18n/es/
+```
 
-## Trạng thái hiện tại
+A translation must preserve API paths, identifiers, event names, JSON fields, code blocks, currencies and invariant semantics. If a translation temporarily lags a code change, it must be marked stale; it must not silently present old behavior as current.
 
-Dự án đang ở giai đoạn **business-domain realignment + MVP hardening**. Foundation kỹ thuật đã có đáng kể: Go modular monolith; PostgreSQL + PostGIS; Redis realtime/geo/locks; WebSocket; Flutter Customer/Driver; Next.js Admin; Docker/CI; S3-compatible presigned direct upload. Từ 12/08/2026, mọi feature mới phải bám phạm vi **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ** trong `CUSTOMER_REQUIREMENTS.md`, không tiếp tục mở rộng theo giả định Grab/Uber clone cũ.
+## OpenRide source-of-truth order
+
+1. `PROJECT_STATUS.md` — implemented vs foundational vs planned.
+2. `PRODUCT_VISION.md` — product direction and marketplace philosophy.
+3. `OPENRIDE_MANIFESTO.md` — non-negotiable ecosystem principles.
+4. `MICROSERVICES_ARCHITECTURE.md` — target service ownership/boundaries.
+5. `PACKAGE_ARCHITECTURE.md` — portable Core/modules/contracts/SDK boundaries.
+6. `DOMAIN_MODEL.md` — domain objects and state transitions.
+7. `DATA_MODEL.md` — persistence model.
+8. `API_CONTRACT_V2.md` — V2 public contract target.
+9. `OPENRIDE_MIGRATION_PLAN_V2.md` — staged migration from compatibility runtime.
+10. `ADR_OPENRIDE_V2.md` — V2 architecture decisions.
+
+## Marketplace invariant
+
+Each driver owns their own tariff. `per_km` is configured **per driver + service tariff**, not once for every driver in a country.
+
+```text
+Driver A → own per_km / minimum / pickup fee / quote mode
+Driver B → own per_km / minimum / pickup fee / quote mode
+Driver C → own per_km / minimum / pickup fee / quote mode
+```
+
+Country/instance configuration may define currency, regulation, safety constraints and operator limits. It does not replace driver-owned commercial pricing.
+
+## Translation coverage rule
+
+Every maintained public `docs/*.md` document must have a matching translation using the same filename in all three translation directories. New product/architecture/API changes should update affected translations in the same PR. Historical FlashX-specific documents must be marked historical/deprecated or migrated before being treated as OpenRide requirements.
+
+## Contribution rule
+
+Do not claim a diagram, translated document or roadmap item is implemented unless `PROJECT_STATUS.md` and executable code/tests support that claim. Documentation must distinguish current implementation from target architecture.

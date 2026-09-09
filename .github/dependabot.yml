@@ -1,0 +1,63 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /packages/core-go
+    schedule:
+      interval: weekly
+    groups:
+      core-go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /packages/modules-go
+    schedule:
+      interval: weekly
+    groups:
+      modules-go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /services/marketplace
+    schedule:
+      interval: weekly
+    groups:
+      marketplace-go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /services/api
+    schedule:
+      interval: weekly
+    groups:
+      compatibility-api-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /packages/contracts
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /packages/sdk
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /apps/admin
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /services/marketplace
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /services/api
+    schedule:
+      interval: weekly

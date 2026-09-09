@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a reproducible OpenRide defect
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping make OpenRide reliable. Please avoid posting secrets, private rider/driver data, or security vulnerabilities here; use SECURITY.md for security reports.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Marketplace Service
+        - Compatibility API
+        - Rider App
+        - Driver App
+        - Operator/Admin
+        - Core / Modules
+        - SDK / Contracts
+        - Infrastructure / CI
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal steps, command, request, or fixture that reproduces the problem.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: OpenRide revision/version
+      placeholder: commit SHA, tag, package version
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, runtime/toolchain versions, deployment mode, relevant service topology.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / traces
+      description: Redact tokens, phone numbers, coordinates and other sensitive data.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: I removed secrets and personal data from this report.
+          required: true

@@ -77,8 +77,10 @@ jobs:
         with:
           go-version: '1.25.x'
           cache: false
-      - run: go test ./...
-      - run: go vet ./...
+      - name: Verify module resolves without root go.work
+        run: GOWORK=off go mod download
+      - run: GOWORK=off go test ./...
+      - run: GOWORK=off go vet ./...
 
   microservices-topology:
     runs-on: ubuntu-latest
@@ -88,6 +90,21 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml config --quiet
       - name: Validate compatibility compose
         run: docker compose config --quiet
+      - name: Build Marketplace image from repository root
+        run: docker build -f services/marketplace/Dockerfile -t openride/marketplace:ci .
+      - name: Build compatibility API image from isolated service context
+        run: docker build -t openride/compatibility-api:ci services/api
+      - name: Boot first microservices vertical slice
+        run: docker compose -f docker-compose.microservices.yml up -d --build --wait
+      - name: Verify Marketplace health and readiness
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8090/healthz
+          curl --fail --silent --show-error http://127.0.0.1:8090/readyz
+      - name: Dump microservices logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.microservices.yml logs --no-color
+      - if: always()
+        run: docker compose -f docker-compose.microservices.yml down -v --remove-orphans
 
   compatibility-api:
     runs-on: ubuntu-latest
@@ -116,6 +133,7 @@ jobs:
       - name: Run persistent compatibility lifecycle
         working-directory: services/api
         env:
+          # Legacy test flag retained until the V1 persistence suite is retired.
           FLASHX_INTEGRATION: '1'
           PERSISTENCE: postgres
           DATABASE_URL: postgres://flashx:flashx@127.0.0.1:55432/flashx?sslmode=disable
@@ -125,7 +143,7 @@ jobs:
         if: failure()
         run: docker compose logs --no-color
       - if: always()
-        run: docker compose down -v
+        run: docker compose down -v --remove-orphans
 
   admin:
     runs-on: ubuntu-latest

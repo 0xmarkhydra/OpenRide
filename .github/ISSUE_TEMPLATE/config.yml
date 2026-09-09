@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/0xmarkhydra/OpenRide/security/policy
+    about: Please report security issues privately according to SECURITY.md.
+  - name: Architecture and project status
+    url: https://github.com/0xmarkhydra/OpenRide/blob/main/docs/PROJECT_STATUS.md
+    about: Check what is implemented, foundational, compatible, or planned before opening an issue.

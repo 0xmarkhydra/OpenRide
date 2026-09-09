@@ -1,3 +1,6 @@
+# Compatibility V1 stack. The Compose project name intentionally remains `flashx`
+# until the legacy data-volume migration is retired. New services use
+# docker-compose.microservices.yml and OpenRide naming.
 name: flashx
 
 x-api-environment: &api-environment
@@ -10,8 +13,8 @@ x-api-environment: &api-environment
   JWT_SECRET: ${JWT_SECRET:-dev-change-me-please}
   ALLOW_DEV_IDENTITY: ${ALLOW_DEV_IDENTITY:-true}
   ADMIN_PHONE: ${ADMIN_PHONE:-+84900000000}
-  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@flashx.local}
-  ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-FlashX Admin}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@openride.local}
+  ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-OpenRide Operator}
   MAPS_PROVIDER: ${MAPS_PROVIDER:-mock}
   GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
   SMS_PROVIDER: ${SMS_PROVIDER:-development}
@@ -104,6 +107,8 @@ services:
     build:
       context: ./apps/admin
     environment:
+      OPENRIDE_API_BASE_URL: http://api:8080
+      # Temporary compatibility alias; the Operator proxy prefers OPENRIDE_API_BASE_URL.
       FLASHX_API_BASE_URL: http://api:8080
       NEXT_PUBLIC_ADMIN_PHONE: ${NEXT_PUBLIC_ADMIN_PHONE:-+84900000000}
     ports:
@@ -127,6 +132,7 @@ services:
       target: test
     environment:
       <<: *api-environment
+      # Legacy test flag retained until the V1 persistence suite is retired.
       FLASHX_INTEGRATION: "1"
     command: ["go", "test", "./internal/platform/persistence", "-v"]
     depends_on:

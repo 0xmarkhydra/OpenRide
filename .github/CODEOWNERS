@@ -1,0 +1,9 @@
+# Default ownership for the pre-1.0 project.
+* @0xmarkhydra
+
+# Architecture and public contracts require explicit review.
+/docs/ @0xmarkhydra
+/packages/contracts/ @0xmarkhydra
+/packages/core-go/ @0xmarkhydra
+/services/ @0xmarkhydra
+/.github/ @0xmarkhydra

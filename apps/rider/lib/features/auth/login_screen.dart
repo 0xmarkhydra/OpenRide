@@ -54,7 +54,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                       Text(
                         awaitingCode
                             ? 'Xác nhận số điện thoại'
-                            : 'Tài xế của bạn, khi bạn cần.',
+                            : 'Bạn chọn chuyến. Tài xế chọn giá.',
                         style: theme.textTheme.displaySmall?.copyWith(
                           color: Colors.white,
                         ),
@@ -63,7 +63,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                       Text(
                         awaitingCode
                             ? 'Nhập mã OTP 6 số vừa được gửi đến ${_phone.text.trim()}.'
-                            : 'Đặt lái hộ ô tô, lái hộ xe máy hoặc đăng kiểm hộ; theo dõi người thực hiện và xe của bạn rõ ràng.',
+                            : 'OpenRide kết nối bạn với các tài xế phù hợp để so sánh giá, thời gian đón và độ tin cậy một cách minh bạch.',
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: const Color(0xFFB9C1D5),
                         ),
@@ -86,7 +86,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Text(
-                              awaitingCode ? 'Nhập mã OTP' : 'Đăng nhập FlashX',
+                              awaitingCode ? 'Nhập mã OTP' : 'Đăng nhập OpenRide',
                               style: theme.textTheme.titleLarge,
                             ),
                             const SizedBox(height: 6),
@@ -191,7 +191,7 @@ class _RiderLoginScreenState extends State<RiderLoginScreen> {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        'Bằng việc tiếp tục, bạn đồng ý với điều khoản sử dụng và chính sách quyền riêng tư của FlashX.',
+                        'Bằng việc tiếp tục, bạn đồng ý với điều khoản sử dụng và chính sách quyền riêng tư của OpenRide.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: const Color(0xFF8590A9),
@@ -223,7 +223,7 @@ class _BrandLockup extends StatelessWidget {
               color: FlashXTheme.yellow,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.bolt_rounded,
+            child: const Icon(Icons.swap_horiz_rounded,
                 color: FlashXTheme.navy, size: 30),
           ),
           const SizedBox(width: 12),
@@ -231,7 +231,7 @@ class _BrandLockup extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'FlashX',
+                'OpenRide',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -240,7 +240,7 @@ class _BrandLockup extends StatelessWidget {
                 ),
               ),
               Text(
-                'Rider',
+                'RIDER',
                 style: TextStyle(
                   color: Color(0xFF98A3BC),
                   fontSize: 12,

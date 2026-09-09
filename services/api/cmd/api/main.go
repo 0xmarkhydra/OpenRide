@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"flashx/services/api/internal/driverdocs"
 	"flashx/services/api/internal/drivers"
 	"flashx/services/api/internal/objectstorage"
-	"flashx/services/api/internal/openridecore"
 	"flashx/services/api/internal/payments"
 	"flashx/services/api/internal/platform/config"
 	"flashx/services/api/internal/platform/httpserver"
@@ -177,7 +177,7 @@ func main() {
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
-	serviceManifests := openridecore.DefaultServiceManifests()
+	marketplaceServiceURL := os.Getenv("MARKETPLACE_SERVICE_URL")
 
 	server := httpserver.NewV2(cfg.HTTPAddr, httpserver.Dependencies{
 		AppEnv:           cfg.AppEnv,
@@ -198,11 +198,11 @@ func main() {
 		Realtime:         realtimeHub,
 		AllowDevIdentity: cfg.AllowDevIdentity,
 		ReadyCheck:       readyCheck,
-	}, serviceManifests)
+	}, marketplaceServiceURL)
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("openride api listening on %s (%s, persistence=%s, modules=%d)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence, len(serviceManifests))
+		log.Printf("openride compatibility api listening on %s (%s, persistence=%s, marketplace=%q)", cfg.HTTPAddr, cfg.AppEnv, cfg.Persistence, marketplaceServiceURL)
 		errCh <- server.ListenAndServe()
 	}()
 

@@ -37,6 +37,22 @@
         "enum": ["passenger", "parcel", "carpool", "scheduled", "customer_asset", "multi_stop"]
       }
     },
+    "contracts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "examples": [
+        {
+          "request_schema": "openride://contracts/passenger-car-request.v1",
+          "ride_event_schema": "openride://contracts/passenger-car-ride-event.v1"
+        }
+      ]
+    },
     "extensions": {
       "type": "object",
       "additionalProperties": true

@@ -24,6 +24,20 @@ jobs:
       - name: Compile runnable example
         run: go build ./examples/minimal
 
+  modules:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/modules-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: go test ./...
+      - run: go vet ./...
+
   contracts:
     runs-on: ubuntu-latest
     defaults:
@@ -35,6 +49,20 @@ jobs:
         with:
           node-version: '22'
       - run: npm run validate
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+  sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
       - name: Verify package contents
         run: npm pack --dry-run
 

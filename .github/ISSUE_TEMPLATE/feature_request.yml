@@ -1,0 +1,61 @@
+name: Feature / RFC
+description: Propose a product, protocol, service or architecture improvement
+title: "rfc: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user/community/operator problem should OpenRide solve? Avoid starting with the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed direction
+      description: Describe the smallest coherent solution and the owning bounded context.
+    validations:
+      required: true
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Likely owning context
+      options:
+        - Marketplace
+        - Location
+        - Ride
+        - Identity
+        - Payment
+        - Trust
+        - Realtime
+        - Notification
+        - Operator
+        - Core / Contracts / SDK
+        - Cross-cutting / Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Data / API / event impact
+      description: Which service owns the data? Which public or integration contracts change?
+  - type: textarea
+    id: principles
+    attributes:
+      label: Marketplace principles
+      description: Explain impact on driver autonomy, rider choice, algorithm transparency, safety and self-hosting.
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Migration / compatibility
+      description: How can this ship without a big-bang migration? What is the rollback path?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked PROJECT_STATUS.md and existing issues/docs first.
+          required: true
+        - label: This proposal does not rely on direct cross-service database access.
+          required: true

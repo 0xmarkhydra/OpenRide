@@ -1,4 +1,4 @@
-name: FlashX CI
+name: OpenRide CI
 
 on:
   push:
@@ -37,6 +37,7 @@ jobs:
       - name: Run persistent ride lifecycle
         working-directory: services/api
         env:
+          # Legacy compatibility flag retained until the marketplace V2 runtime migration.
           FLASHX_INTEGRATION: '1'
           PERSISTENCE: postgres
           DATABASE_URL: postgres://flashx:flashx@127.0.0.1:55432/flashx?sslmode=disable

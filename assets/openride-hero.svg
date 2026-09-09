@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">OpenRide — Open-source mobility marketplace</title>
+  <desc id="desc">A neon cyan location pin, open road and community nodes forming the OpenRide brand mark.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020916"/>
+      <stop offset="0.5" stop-color="#07182c"/>
+      <stop offset="1" stop-color="#020713"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#73f7ff"/>
+      <stop offset="0.45" stop-color="#17d8ff"/>
+      <stop offset="1" stop-color="#1672ff"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="0.48" stop-color="#f8fbff"/>
+      <stop offset="0.49" stop-color="#43efff"/>
+      <stop offset="1" stop-color="#1682ff"/>
+    </linearGradient>
+    <radialGradient id="halo">
+      <stop offset="0" stop-color="#11cfff" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#11cfff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="720" rx="34" fill="url(#bg)"/>
+  <ellipse cx="800" cy="330" rx="560" ry="330" fill="url(#halo)"/>
+
+  <!-- horizon and open-road depth -->
+  <path d="M0 515 C270 468 465 480 650 428" fill="none" stroke="#0c3155" stroke-width="3"/>
+  <path d="M1600 515 C1330 468 1135 480 950 428" fill="none" stroke="#0c3155" stroke-width="3"/>
+  <path d="M0 606 C300 520 500 500 690 430" fill="none" stroke="#138fff" stroke-opacity=".58" stroke-width="4"/>
+  <path d="M1600 606 C1300 520 1100 500 910 430" fill="none" stroke="#138fff" stroke-opacity=".58" stroke-width="4"/>
+
+  <!-- community orbit -->
+  <circle cx="800" cy="265" r="168" fill="none" stroke="#159dff" stroke-opacity=".58" stroke-width="3"/>
+  <g fill="url(#cyan)" filter="url(#glow)">
+    <circle cx="800" cy="97" r="14"/>
+    <circle cx="654" cy="182" r="11"/>
+    <circle cx="946" cy="182" r="11"/>
+  </g>
+
+  <!-- reusable OpenRide mark: pin + road -->
+  <g filter="url(#glow)">
+    <path d="M800 132c-78 0-141 61-141 136 0 109 141 235 141 235s141-126 141-235c0-75-63-136-141-136Zm0 68a68 68 0 1 1 0 136 68 68 0 0 1 0-136Z" fill="url(#cyan)"/>
+  </g>
+  <path d="M800 336 C759 370 732 405 704 455 C742 438 777 430 815 431 C848 433 879 445 918 469 C889 418 857 376 800 336Z" fill="#031425"/>
+  <path d="M796 342 C780 372 776 402 781 432 C790 472 816 505 847 536" fill="none" stroke="url(#cyan)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M797 345 C789 372 789 400 795 425 C803 454 818 479 839 505" fill="none" stroke="#04111f" stroke-width="13" stroke-linecap="round"/>
+  <path d="M796 355 C792 373 793 387 797 402 M803 424 C807 440 813 454 821 466 M831 484 C836 493 841 501 848 510" fill="none" stroke="#5cf4ff" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- wordmark -->
+  <text x="800" y="602" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="92" font-weight="750" letter-spacing="-4" fill="url(#word)">OpenRide</text>
+  <text x="800" y="650" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="500" letter-spacing="6" fill="#9abbd8">OPEN-SOURCE MOBILITY MARKETPLACE</text>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" letter-spacing="2" fill="#55dfff" opacity=".78">
+    <text x="70" y="82">DRIVERS SET THEIR TERMS</text>
+    <text x="1530" y="82" text-anchor="end">COMMUNITIES CAN SELF-HOST</text>
+  </g>
+</svg>

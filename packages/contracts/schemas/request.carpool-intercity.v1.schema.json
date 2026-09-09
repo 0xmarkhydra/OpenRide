@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openride.dev/contracts/request.carpool-intercity.v1.schema.json",
+  "title": "OpenRide Intercity Carpool Request v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["seats"],
+  "properties": {
+    "seats": { "type": "integer", "minimum": 1, "maximum": 8 },
+    "scheduled_at": { "type": "string", "format": "date-time" },
+    "pickup_flex_minutes": { "type": "integer", "minimum": 0, "maximum": 180 },
+    "dropoff_flex_minutes": { "type": "integer", "minimum": 0, "maximum": 180 },
+    "allow_intermediate_pickups": { "type": "boolean", "default": true }
+  }
+}

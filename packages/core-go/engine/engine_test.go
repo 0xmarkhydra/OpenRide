@@ -81,3 +81,40 @@ func TestFindOffersKeepsHealthyDriversWhenOneQuoteFails(t *testing.T) {
 		t.Fatalf("unexpected recommendation: %+v", report.Offers)
 	}
 }
+
+func TestCanonicalizeRankingProtectsCommercialQuotes(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	original := []marketplace.Quote{
+		{ID: "q1", RequestID: "r1", DriverID: "d1", Status: marketplace.QuotePending, Fare: money.Must("VND", 50_000), CreatedAt: now, ExpiresAt: now.Add(time.Minute)},
+		{ID: "q2", RequestID: "r1", DriverID: "d2", Status: marketplace.QuotePending, Fare: money.Must("VND", 60_000), CreatedAt: now, ExpiresAt: now.Add(time.Minute)},
+	}
+	mutated := original[0]
+	mutated.Fare = money.Must("VND", 1)
+	ranked := []RankedQuote{
+		{Quote: mutated, Score: 0.9, Reasons: []string{"custom score"}, Recommended: true},
+		{Quote: original[1], Score: 0.8, Reasons: []string{"custom score"}},
+	}
+
+	canonical, err := canonicalizeRanking(original, ranked)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if canonical[0].Quote.Fare.Minor != 50_000 {
+		t.Fatalf("ranker mutated canonical fare: %+v", canonical[0].Quote.Fare)
+	}
+}
+
+func TestCanonicalizeRankingRejectsHiddenOrUnexplainedOffers(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	original := []marketplace.Quote{
+		{ID: "q1", RequestID: "r1", DriverID: "d1", Status: marketplace.QuotePending, Fare: money.Must("VND", 50_000), CreatedAt: now, ExpiresAt: now.Add(time.Minute)},
+		{ID: "q2", RequestID: "r1", DriverID: "d2", Status: marketplace.QuotePending, Fare: money.Must("VND", 60_000), CreatedAt: now, ExpiresAt: now.Add(time.Minute)},
+	}
+	if _, err := canonicalizeRanking(original, []RankedQuote{{Quote: original[0], Score: 1, Reasons: []string{"only one returned"}}}); !errors.Is(err, ErrInvalidRanking) {
+		t.Fatalf("expected hidden offer to be rejected, got %v", err)
+	}
+	unexplained := []RankedQuote{{Quote: original[0], Score: 1}, {Quote: original[1], Score: 0.5, Reasons: []string{"ok"}}}
+	if _, err := canonicalizeRanking(original, unexplained); !errors.Is(err, ErrInvalidRanking) {
+		t.Fatalf("expected unexplained ranking to be rejected, got %v", err)
+	}
+}

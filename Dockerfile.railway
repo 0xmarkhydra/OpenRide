@@ -5,10 +5,10 @@ COPY services/api/go.mod services/api/go.sum ./
 RUN GOWORK=off go mod download
 
 WORKDIR /src
-COPY go.work ./
 COPY services/api ./services/api
 COPY packages/core-go ./packages/core-go
 COPY packages/modules-go ./packages/modules-go
+RUN go work init ./services/api ./packages/core-go ./packages/modules-go
 
 WORKDIR /src/services/api
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/openride-api ./cmd/api

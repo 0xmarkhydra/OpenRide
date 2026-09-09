@@ -9,12 +9,12 @@ import (
 type Capability string
 
 const (
-	CapabilityPassenger      Capability = "passenger"
-	CapabilityParcel         Capability = "parcel"
-	CapabilityCarpool        Capability = "carpool"
-	CapabilityScheduled      Capability = "scheduled"
-	CapabilityCustomerAsset  Capability = "customer_asset"
-	CapabilityMultiStop      Capability = "multi_stop"
+	CapabilityPassenger     Capability = "passenger"
+	CapabilityParcel        Capability = "parcel"
+	CapabilityCarpool       Capability = "carpool"
+	CapabilityScheduled     Capability = "scheduled"
+	CapabilityCustomerAsset Capability = "customer_asset"
+	CapabilityMultiStop     Capability = "multi_stop"
 )
 
 // Manifest is intentionally data-first so an operator UI can inspect a service
@@ -26,6 +26,9 @@ type Manifest struct {
 	Description  string                  `json:"description,omitempty"`
 	Category     string                  `json:"category"`
 	Capabilities []Capability            `json:"capabilities,omitempty"`
+	// Contracts maps logical contract names (for example request_schema) to
+	// versioned URIs/IDs. This keeps dynamic UI/SDK integration language-neutral.
+	Contracts map[string]string `json:"contracts,omitempty"`
 }
 
 func (m Manifest) Valid() bool {

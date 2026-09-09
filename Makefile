@@ -1,4 +1,4 @@
-.PHONY: stack-up stack-down stack-logs stack-ps stack-reset infra-up infra-down api-run api-test api-fmt docker-test docker-integration-test docker-test-all
+.PHONY: stack-up stack-down stack-logs stack-ps stack-reset infra-up infra-down api-run api-test api-fmt core-test core-fmt core-example workspace-test docker-test docker-integration-test docker-test-all
 
 stack-up:
 	docker compose up -d --build --wait
@@ -12,11 +12,11 @@ stack-logs:
 stack-ps:
 	docker compose ps
 
-# Destructive, but scoped only to the FlashX Compose project.
+# Destructive, but scoped only to the OpenRide Compose project.
 stack-reset:
 	docker compose down -v --remove-orphans
 
-# Backward-compatible aliases.
+# Backward-compatible infrastructure aliases.
 infra-up:
 	docker compose up -d --wait postgres redis
 
@@ -31,6 +31,17 @@ api-test:
 
 api-fmt:
 	cd services/api && gofmt -w .
+
+core-test:
+	cd packages/core-go && go test ./...
+
+core-fmt:
+	cd packages/core-go && gofmt -w .
+
+core-example:
+	cd packages/core-go && go run ./examples/minimal
+
+workspace-test: core-test api-test
 
 # Ephemeral containers: --rm guarantees no test container is left behind.
 docker-test:

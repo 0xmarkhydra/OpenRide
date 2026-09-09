@@ -37,12 +37,5 @@ func (Car) ValidateRequest(_ context.Context, request marketplace.Request) error
 }
 
 func (Car) RideLifecycle() extension.RideLifecycle {
-	return passengerLifecycle{}
-}
-
-type passengerLifecycle struct{}
-
-func (passengerLifecycle) Initial() marketplace.RideStatus { return marketplace.RideAssigned }
-func (passengerLifecycle) CanTransition(from, to marketplace.RideStatus) bool {
-	return marketplace.ValidPassengerRideTransition(from, to)
+	return marketplace.PassengerLifecycle{}
 }

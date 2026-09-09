@@ -150,7 +150,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{"status": "ok", "service": "flashx-api"}})
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{"status": "ok", "service": "openride-compatibility-api"}})
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +166,12 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiInfo(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{"name": "FlashX API", "version": "v1"}})
+	writeJSON(w, http.StatusOK, dataEnvelope{Data: map[string]any{
+		"name":       "OpenRide Compatibility API",
+		"version":    "v1",
+		"lifecycle":  "compatibility",
+		"replacement": "Marketplace V2 services",
+	}})
 }
 
 type estimateTripRequest struct {

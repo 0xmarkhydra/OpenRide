@@ -1,29 +1,22 @@
 FROM golang:1.25-alpine AS deps
-WORKDIR /src/services/api
-COPY services/api/go.mod services/api/go.sum ./
-RUN GOWORK=off go mod download
-
-FROM deps AS source
 WORKDIR /src
-COPY services/api ./services/api
-COPY packages/core-go ./packages/core-go
-COPY packages/modules-go ./packages/modules-go
-RUN go work init ./services/api ./packages/core-go ./packages/modules-go
+COPY go.mod go.sum ./
+RUN go mod download
 
-FROM source AS test
-WORKDIR /src/services/api
+FROM deps AS test
+COPY . .
 CMD ["go", "test", "./..."]
 
-FROM source AS build
-WORKDIR /src/services/api
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/openride-api ./cmd/api
+FROM deps AS build
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/openride-compat-api ./cmd/api
 
 FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates \
     && addgroup -S openride \
     && adduser -S -G openride -u 10001 openride
 WORKDIR /app
-COPY --from=build /out/openride-api /app/openride-api
+COPY --from=build /out/openride-compat-api /app/openride-compat-api
 USER openride
 EXPOSE 8080
-ENTRYPOINT ["/app/openride-api"]
+ENTRYPOINT ["/app/openride-compat-api"]

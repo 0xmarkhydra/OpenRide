@@ -5,10 +5,10 @@ RUN GOWORK=off go mod download
 
 FROM deps AS source
 WORKDIR /src
-COPY go.work ./
 COPY services/api ./services/api
 COPY packages/core-go ./packages/core-go
 COPY packages/modules-go ./packages/modules-go
+RUN go work init ./services/api ./packages/core-go ./packages/modules-go
 
 FROM source AS test
 WORKDIR /src/services/api

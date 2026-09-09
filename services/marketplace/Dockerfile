@@ -9,7 +9,7 @@ RUN go work init ./packages/core-go ./packages/modules-go ./services/marketplace
 WORKDIR /src/services/marketplace
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/marketplace-service ./cmd/marketplace
 
-FROM alpine:3.22 AS runtime
+FROM alpine:3.24 AS runtime
 RUN apk add --no-cache ca-certificates \
     && addgroup -S openride \
     && adduser -S -G openride -u 10001 openride

@@ -12,6 +12,27 @@ function joinURL(baseURL, path) {
   return `${String(baseURL).replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+function assertSafeMinor(name, value) {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative safe integer`);
+  }
+}
+
+function validateTariffMoney(input) {
+  for (const name of [
+    'base_fare_minor',
+    'minimum_fare_minor',
+    'per_km_minor',
+    'per_minute_minor',
+    'pickup_fee_minor',
+    'auto_quote_min_minor',
+    'auto_quote_max_minor',
+  ]) {
+    assertSafeMinor(name, input?.[name]);
+  }
+}
+
 export class OpenRideClient {
   constructor({ baseURL, token, fetch: fetchImpl } = {}) {
     if (!baseURL) throw new TypeError('baseURL is required');
@@ -93,6 +114,7 @@ export class OpenRideClient {
   }
 
   createDriverTariff(input, { idempotencyKey } = {}) {
+    validateTariffMoney(input);
     return this.request('/v2/drivers/me/tariffs', { method: 'POST', body: input, idempotencyKey });
   }
 
@@ -101,6 +123,7 @@ export class OpenRideClient {
   }
 
   submitQuote(requestID, input, { idempotencyKey } = {}) {
+    assertSafeMinor('fare_total_minor', input?.fare_total_minor);
     return this.request(`/v2/requests/${encodeURIComponent(requestID)}/quotes`, {
       method: 'POST', body: input, idempotencyKey,
     });

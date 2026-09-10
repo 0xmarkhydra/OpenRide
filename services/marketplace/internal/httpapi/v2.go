@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xmarkhydra/OpenRide/packages/core-go/engine"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/money"
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
@@ -53,7 +54,9 @@ type offerOutput struct {
 	PickupETAS      int64    `json:"pickup_eta_s"`
 	PickupDistanceM int64    `json:"pickup_distance_m"`
 	ExpiresAt       string   `json:"expires_at"`
+	Rank            int      `json:"rank,omitempty"`
 	Reasons         []string `json:"reasons,omitempty"`
+	Recommended     bool     `json:"recommended,omitempty"`
 }
 
 type agreementOutput struct {
@@ -224,13 +227,19 @@ func (s *Server) listOffers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "REQUEST_NOT_FOUND", "request not found")
 		return
 	}
-	offers, err := s.v2.ListOffers(r.Context(), req.ID)
+	quotes, err := s.v2.ListOffers(r.Context(), req.ID)
 	if err != nil {
 		writeError(w, 500, "OFFERS_READ_FAILED", err.Error())
 		return
 	}
-	out := make([]offerOutput, 0, len(offers))
-	for _, q := range offers {
+	ranked, err := engine.RankQuotes(r.Context(), req, quotes, s.ranker)
+	if err != nil {
+		writeError(w, 500, "OFFERS_RANK_FAILED", err.Error())
+		return
+	}
+	out := make([]offerOutput, 0, len(ranked))
+	for i, item := range ranked {
+		q := item.Quote
 		out = append(out, offerOutput{
 			QuoteID:         q.ID,
 			FareTotalMinor:  q.Fare.Minor,
@@ -238,7 +247,9 @@ func (s *Server) listOffers(w http.ResponseWriter, r *http.Request) {
 			PickupETAS:      q.PickupETAS,
 			PickupDistanceM: q.PickupDistanceM,
 			ExpiresAt:       q.ExpiresAt.UTC().Format(time.RFC3339Nano),
-			Reasons:         q.Explanation,
+			Rank:            i + 1,
+			Reasons:         item.Reasons,
+			Recommended:     item.Recommended,
 		})
 	}
 	writeJSON(w, 200, envelope{Data: out})

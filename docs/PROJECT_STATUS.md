@@ -27,7 +27,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | Ranking engine | ✅ | Core ranking is deterministic/explainable and isolates plugins from canonical quote data. The V2 offers HTTP path is not yet wired to this engine and currently uses store ordering. |
 | Transactional outbox relay | 🟡 | PostgreSQL `SKIP LOCKED` relay publishes to JetStream with deterministic `Nats-Msg-Id`. Retry backoff/dead-letter handling and consumer inbox dedupe are still incomplete. |
 | JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔service E2E verification is still required. |
-| Generic command idempotency | 🟡 | Create request, create tariff, submit quote, cancel request and withdraw quote now persist payload hash + resource identity in the same PostgreSQL transaction as the mutation. Same-key/same-payload retries replay the original resource/result; same-key/different-payload returns `409 IDEMPOTENCY_CONFLICT`. Real PostgreSQL integration proof is still required. Acceptance retains its specialized durable Agreement replay path. |
+| Generic command idempotency | 🟡 | Create request, create tariff, submit quote, cancel request and withdraw quote now persist payload hash, resource identity, response status and response snapshot in the same PostgreSQL transaction as the mutation. Same-key/same-payload retries replay the original response; same-key/different-payload returns `409 IDEMPOTENCY_CONFLICT`. Real PostgreSQL integration proof is still required. Acceptance retains its specialized durable Agreement replay path. |
 
 ## Services
 
@@ -107,3 +107,18 @@ Marketplace Service ✅/🟡
       ├── Payment Service ⏳
       └── Trust / Realtime / Notification / Operator ⏳
 ```
+
+A capability moves out of the compatibility runtime only after the owning service has a tested data/API/event path and a rollback strategy.
+
+## Definition of public credibility
+
+Before marking a capability ✅, OpenRide expects at least:
+
+1. an owning package/service;
+2. explicit data ownership;
+3. tests for core invariants;
+4. a runnable local path;
+5. documented API/event contracts when crossing a process boundary;
+6. failure/idempotency behavior for critical commands.
+
+If one of those is missing, this document should say so.

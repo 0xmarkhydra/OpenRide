@@ -21,7 +21,6 @@ export type MobilityRequestInput = {
   pickup: Point;
   destination?: Point;
   attributes?: Record<string, unknown>;
-  preferences?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
 };
 
@@ -47,6 +46,19 @@ export type Offer = {
   vehicle?: Record<string, unknown>;
 };
 
+export type Agreement = {
+  id: string;
+  request_id: string;
+  quote_id: string;
+  driver_id: string;
+  rider_id: string;
+  service_type: ServiceType;
+  fare_total_minor: number;
+  currency: string;
+  terms_snapshot: Record<string, unknown>;
+  created_at: string;
+};
+
 export type DriverTariffInput = {
   service_type: ServiceType;
   quote_mode: 'manual' | 'auto' | 'hybrid';
@@ -63,6 +75,11 @@ export type DriverTariffInput = {
 export type QuoteInput = {
   fare_total_minor: number;
   currency: string;
+  expires_at?: string;
+};
+
+export type CommandStatus = {
+  status: string;
 };
 
 export type RequestOptions = {
@@ -90,12 +107,12 @@ export declare class OpenRideClient {
   previewRoute(input: { pickup: Point; destination: Point }): Promise<unknown>;
   createRequest(input: MobilityRequestInput, options?: { idempotencyKey?: string }): Promise<MobilityRequest>;
   getRequest(requestID: string): Promise<MobilityRequest>;
-  cancelRequest(requestID: string, options?: { idempotencyKey?: string; reason?: string }): Promise<MobilityRequest>;
+  cancelRequest(requestID: string, options?: { idempotencyKey?: string; reason?: string }): Promise<CommandStatus>;
   listOffers(requestID: string): Promise<Offer[]>;
-  acceptQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<unknown>;
+  acceptQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<{ agreement: Agreement }>;
   listDriverTariffs(): Promise<unknown[]>;
   createDriverTariff(input: DriverTariffInput, options?: { idempotencyKey?: string }): Promise<unknown>;
   listEligibleRequests(): Promise<MobilityRequest[]>;
-  submitQuote(requestID: string, input: QuoteInput, options?: { idempotencyKey?: string }): Promise<unknown>;
-  withdrawQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<unknown>;
+  submitQuote(requestID: string, input: QuoteInput, options?: { idempotencyKey?: string }): Promise<Offer>;
+  withdrawQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<CommandStatus>;
 }

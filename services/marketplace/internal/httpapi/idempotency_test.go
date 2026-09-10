@@ -3,6 +3,7 @@ package httpapi
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,9 @@ func TestCanonicalRequestHashIncludesPath(t *testing.T) {
 	if h1 == h2 { t.Fatal("expected different paths to produce different hashes") }
 }
 
-func mustURL(t *testing.T, path string) *http.URL {
+func mustURL(t *testing.T, path string) *url.URL {
 	t.Helper()
-	panic("replaced by net/url helper")
+	u, err := url.Parse(path)
+	if err != nil { t.Fatal(err) }
+	return u
 }

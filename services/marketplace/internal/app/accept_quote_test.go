@@ -18,6 +18,7 @@ type memoryAcceptanceStore struct {
 	outbox       []OutboxEvent
 	acceptCount  int
 	requestCount int
+	lockTrace    []string
 }
 
 func (s *memoryAcceptanceStore) WithinTx(_ context.Context, fn func(AcceptanceTx) error) error {
@@ -30,11 +31,17 @@ func (s *memoryAcceptanceStore) FindIdempotentAgreement(_ context.Context, rider
 	}
 	return marketplace.Agreement{}, false, nil
 }
-func (s *memoryAcceptanceStore) GetQuoteForUpdate(context.Context, string) (marketplace.Quote, error) {
-	return s.quote, nil
+func (s *memoryAcceptanceStore) GetQuoteRequestID(context.Context, string) (string, error) {
+	s.lockTrace = append(s.lockTrace, "quote-request-id")
+	return s.quote.RequestID, nil
 }
 func (s *memoryAcceptanceStore) GetRequestForUpdate(context.Context, string) (marketplace.Request, error) {
+	s.lockTrace = append(s.lockTrace, "request-lock")
 	return s.request, nil
+}
+func (s *memoryAcceptanceStore) GetQuoteForUpdate(context.Context, string) (marketplace.Quote, error) {
+	s.lockTrace = append(s.lockTrace, "quote-lock")
+	return s.quote, nil
 }
 func (s *memoryAcceptanceStore) InsertAgreement(_ context.Context, a marketplace.Agreement) error {
 	s.agreement = a
@@ -87,6 +94,15 @@ func TestAcceptQuoteCommitsAgreementAndOutboxOnce(t *testing.T) {
 	}
 	if store.outbox[0].Name != "openride.marketplace.agreement.created.v1" {
 		t.Fatalf("unexpected outbox event: %+v", store.outbox[0])
+	}
+	wantTrace := []string{"quote-request-id", "request-lock", "quote-lock"}
+	if len(store.lockTrace) != len(wantTrace) {
+		t.Fatalf("unexpected lock trace: %v", store.lockTrace)
+	}
+	for i := range wantTrace {
+		if store.lockTrace[i] != wantTrace[i] {
+			t.Fatalf("request must be locked before quote, trace=%v", store.lockTrace)
+		}
 	}
 }
 

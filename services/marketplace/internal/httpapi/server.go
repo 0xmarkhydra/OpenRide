@@ -94,6 +94,7 @@ func canonicalRequestHash(r *http.Request) (string, error) {
 				if normalized, err := json.Marshal(value); err == nil { canonical = normalized }
 			}
 		}
+	}
 	sum := sha256.Sum256(append([]byte(r.Method+"\n"+r.URL.Path+"\n"), canonical...))
 	return hex.EncodeToString(sum[:]), nil
 }

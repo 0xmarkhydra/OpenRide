@@ -4,21 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
-	"github.com/0xmarkhydra/OpenRide/packages/core-go/money"
 )
 
 var ErrIdempotencyConflict = errors.New("marketplace store: idempotency key reused with different payload")
 
 type idempotencyRecord struct {
-	RequestHash  string
-	ResourceType string
-	ResourceID   string
+	RequestHash   string
+	ResourceType  string
+	ResourceID    string
+	ResponseStatus int
+	ResponseBody  []byte
 }
 
 func lockCommandIdempotency(ctx context.Context, tx pgx.Tx, actorID, key, command string) error {
@@ -28,26 +28,37 @@ func lockCommandIdempotency(ctx context.Context, tx pgx.Tx, actorID, key, comman
 
 func findCommandIdempotency(ctx context.Context, tx pgx.Tx, actorID, key, command string) (idempotencyRecord, bool, error) {
 	var rec idempotencyRecord
-	err := tx.QueryRow(ctx, `SELECT COALESCE(request_hash,''),COALESCE(resource_type,''),COALESCE(resource_id,'')
+	err := tx.QueryRow(ctx, `SELECT COALESCE(request_hash,''),COALESCE(resource_type,''),COALESCE(resource_id,''),COALESCE(response_status,0),COALESCE(response_body,'null'::jsonb)
 		FROM marketplace_idempotency WHERE actor_id=$1 AND idempotency_key=$2 AND command_name=$3`, actorID, key, command).
-		Scan(&rec.RequestHash, &rec.ResourceType, &rec.ResourceID)
+		Scan(&rec.RequestHash, &rec.ResourceType, &rec.ResourceID, &rec.ResponseStatus, &rec.ResponseBody)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return idempotencyRecord{}, false, nil
 	}
 	return rec, err == nil, err
 }
 
-func saveCommandIdempotency(ctx context.Context, tx pgx.Tx, actorID, key, command, requestHash, resourceType, resourceID string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO marketplace_idempotency(actor_id,idempotency_key,command_name,request_hash,resource_type,resource_id)
-		VALUES($1,$2,$3,$4,$5,$6)`, actorID, key, command, requestHash, resourceType, resourceID)
+func saveCommandIdempotency(ctx context.Context, tx pgx.Tx, actorID, key, command, requestHash, resourceType, resourceID string, responseStatus int, response any) error {
+	body, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO marketplace_idempotency(actor_id,idempotency_key,command_name,request_hash,resource_type,resource_id,response_status,response_body)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, actorID, key, command, requestHash, resourceType, resourceID, responseStatus, body)
 	return err
 }
 
 func verifyReplay(rec idempotencyRecord, requestHash, resourceType string) error {
-	if rec.RequestHash != requestHash || rec.ResourceType != resourceType || rec.ResourceID == "" {
+	if rec.RequestHash != requestHash || rec.ResourceType != resourceType || rec.ResourceID == "" || rec.ResponseStatus == 0 || len(rec.ResponseBody) == 0 {
 		return ErrIdempotencyConflict
 	}
 	return nil
+}
+
+func decodeReplay(rec idempotencyRecord, requestHash, resourceType string, dst any) error {
+	if err := verifyReplay(rec, requestHash, resourceType); err != nil {
+		return err
+	}
+	return json.Unmarshal(rec.ResponseBody, dst)
 }
 
 func (s *Store) withinSerializable(ctx context.Context, fn func(pgx.Tx) error) error {
@@ -93,14 +104,12 @@ func (s *Store) CreateRequestIdempotent(ctx context.Context, actorID, key, reque
 			return err
 		}
 		if found {
-			if err := verifyReplay(rec, requestHash, "request"); err != nil {
+			if err := decodeReplay(rec, requestHash, "request", &result); err != nil {
 				return err
 			}
-			result, err = scanRequest(tx.QueryRow(ctx, requestSelect+` WHERE id=$1`, rec.ResourceID))
 			replay = true
-			return err
+			return nil
 		}
-
 		attrs, err := json.Marshal(r.Attributes)
 		if err != nil {
 			return err
@@ -120,7 +129,7 @@ func (s *Store) CreateRequestIdempotent(ctx context.Context, actorID, key, reque
 		if err != nil {
 			return err
 		}
-		if err := saveCommandIdempotency(ctx, tx, actorID, key, "create_request", requestHash, "request", r.ID); err != nil {
+		if err := saveCommandIdempotency(ctx, tx, actorID, key, "create_request", requestHash, "request", r.ID, 201, r); err != nil {
 			return err
 		}
 		result = r
@@ -129,37 +138,6 @@ func (s *Store) CreateRequestIdempotent(ctx context.Context, actorID, key, reque
 	})
 	return result, replay, err
 }
-
-func scanTariff(row rowScanner) (marketplace.DriverTariff, error) {
-	var t marketplace.DriverTariff
-	var service, mode, currency string
-	var base, minimum, perKM, perMinute, pickup, autoMin, autoMax int64
-	var rules []byte
-	err := row.Scan(&t.ID, &t.InstanceID, &t.DriverID, &service, &mode, &currency, &base, &minimum, &perKM, &perMinute, &pickup, &autoMin, &autoMax, &rules, &t.Version)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return t, ErrNotFound
-	}
-	if err != nil {
-		return t, err
-	}
-	t.ServiceType = marketplace.ServiceType(service)
-	t.QuoteMode = marketplace.QuoteMode(mode)
-	t.BaseFare = money.Must(currency, base)
-	t.MinimumFare = money.Must(currency, minimum)
-	t.PerKM = money.Must(currency, perKM)
-	t.PerMinute = money.Must(currency, perMinute)
-	t.PickupFee = money.Must(currency, pickup)
-	t.AutoQuoteMinimum = money.Must(currency, autoMin)
-	t.AutoQuoteMaximum = money.Must(currency, autoMax)
-	if len(rules) > 0 {
-		if err := json.Unmarshal(rules, &t.Rules); err != nil {
-			return t, err
-		}
-	}
-	return t, nil
-}
-
-const tariffSelect = `SELECT id,instance_id,driver_id,service_type,quote_mode,currency,base_fare_minor,minimum_fare_minor,per_km_minor,per_minute_minor,pickup_fee_minor,auto_quote_min_minor,auto_quote_max_minor,rules,version FROM driver_tariffs`
 
 func (s *Store) CreateTariffIdempotent(ctx context.Context, actorID, key, requestHash string, t marketplace.DriverTariff) (marketplace.DriverTariff, bool, error) {
 	if err := t.Validate(); err != nil {
@@ -176,12 +154,11 @@ func (s *Store) CreateTariffIdempotent(ctx context.Context, actorID, key, reques
 			return err
 		}
 		if found {
-			if err := verifyReplay(rec, requestHash, "tariff"); err != nil {
+			if err := decodeReplay(rec, requestHash, "tariff", &result); err != nil {
 				return err
 			}
-			result, err = scanTariff(tx.QueryRow(ctx, tariffSelect+` WHERE id=$1`, rec.ResourceID))
 			replay = true
-			return err
+			return nil
 		}
 		rules, err := json.Marshal(t.Rules)
 		if err != nil {
@@ -194,7 +171,7 @@ func (s *Store) CreateTariffIdempotent(ctx context.Context, actorID, key, reques
 		if err != nil {
 			return err
 		}
-		if err := saveCommandIdempotency(ctx, tx, actorID, key, "create_tariff", requestHash, "tariff", t.ID); err != nil {
+		if err := saveCommandIdempotency(ctx, tx, actorID, key, "create_tariff", requestHash, "tariff", t.ID, 201, t); err != nil {
 			return err
 		}
 		result = t
@@ -219,12 +196,11 @@ func (s *Store) SubmitQuoteIdempotent(ctx context.Context, actorID, key, request
 			return err
 		}
 		if found {
-			if err := verifyReplay(rec, requestHash, "quote"); err != nil {
+			if err := decodeReplay(rec, requestHash, "quote", &result); err != nil {
 				return err
 			}
-			result, err = scanQuote(tx.QueryRow(ctx, `SELECT id,request_id,driver_id,COALESCE(driver_vehicle_id,''),COALESCE(tariff_id,''),COALESCE(tariff_version,0),status,currency,fare_minor,pickup_distance_m,pickup_eta_s,explanation,metadata,created_at,expires_at,accepted_at FROM marketplace_quotes WHERE id=$1`, rec.ResourceID))
 			replay = true
-			return err
+			return nil
 		}
 		explanation, err := json.Marshal(q.Explanation)
 		if err != nil {
@@ -241,7 +217,7 @@ func (s *Store) SubmitQuoteIdempotent(ctx context.Context, actorID, key, request
 		if err != nil {
 			return err
 		}
-		if err := saveCommandIdempotency(ctx, tx, actorID, key, "submit_quote", requestHash, "quote", q.ID); err != nil {
+		if err := saveCommandIdempotency(ctx, tx, actorID, key, "submit_quote", requestHash, "quote", q.ID, 201, q); err != nil {
 			return err
 		}
 		result = q
@@ -287,7 +263,7 @@ func (s *Store) CancelRequestIdempotent(ctx context.Context, actorID, key, reque
 		if _, err := tx.Exec(ctx, `UPDATE marketplace_quotes SET status='invalidated' WHERE request_id=$1 AND status='pending'`, requestID); err != nil {
 			return err
 		}
-		if err := saveCommandIdempotency(ctx, tx, actorID, key, "cancel_request", requestHash, "request", requestID); err != nil {
+		if err := saveCommandIdempotency(ctx, tx, actorID, key, "cancel_request", requestHash, "request", requestID, 200, map[string]any{"status": "cancelled"}); err != nil {
 			return err
 		}
 		replay = false
@@ -323,15 +299,11 @@ func (s *Store) WithdrawQuoteIdempotent(ctx context.Context, actorID, key, reque
 		if tag.RowsAffected() != 1 {
 			return ErrNotFound
 		}
-		if err := saveCommandIdempotency(ctx, tx, actorID, key, "withdraw_quote", requestHash, "quote", quoteID); err != nil {
+		if err := saveCommandIdempotency(ctx, tx, actorID, key, "withdraw_quote", requestHash, "quote", quoteID, 200, map[string]any{"status": "withdrawn"}); err != nil {
 			return err
 		}
 		replay = false
 		return nil
 	})
 	return replay, err
-}
-
-func idempotencyDebug(rec idempotencyRecord) string {
-	return fmt.Sprintf("%s:%s", rec.ResourceType, rec.ResourceID)
 }

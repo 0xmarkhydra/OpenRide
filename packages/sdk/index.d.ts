@@ -46,6 +46,19 @@ export type Offer = {
   vehicle?: Record<string, unknown>;
 };
 
+export type Agreement = {
+  id: string;
+  request_id: string;
+  quote_id: string;
+  driver_id: string;
+  rider_id: string;
+  service_type: ServiceType;
+  fare_total_minor: number;
+  currency: string;
+  terms_snapshot: Record<string, unknown>;
+  created_at: string;
+};
+
 export type DriverTariffInput = {
   service_type: ServiceType;
   quote_mode: 'manual' | 'auto' | 'hybrid';
@@ -96,7 +109,7 @@ export declare class OpenRideClient {
   getRequest(requestID: string): Promise<MobilityRequest>;
   cancelRequest(requestID: string, options?: { idempotencyKey?: string; reason?: string }): Promise<CommandStatus>;
   listOffers(requestID: string): Promise<Offer[]>;
-  acceptQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<unknown>;
+  acceptQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<{ agreement: Agreement }>;
   listDriverTariffs(): Promise<unknown[]>;
   createDriverTariff(input: DriverTariffInput, options?: { idempotencyKey?: string }): Promise<unknown>;
   listEligibleRequests(): Promise<MobilityRequest[]>;

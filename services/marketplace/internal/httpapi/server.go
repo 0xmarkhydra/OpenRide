@@ -42,7 +42,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" { cfg.Addr = ":8090" }
 	if cfg.V2Store != nil && cfg.Acceptance.Store == nil { return nil, errors.New("marketplace http: acceptance service is required when V2 store is enabled") }
 
-	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: cfg.V2Store, accept: cfg.Acceptance}
+	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: adaptV2Store(cfg.V2Store), accept: cfg.Acceptance}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.readiness)
@@ -107,5 +107,5 @@ func middleware(next http.Handler) http.Handler {
 	})
 }
 func decodeJSON(w http.ResponseWriter,r *http.Request,dst any) bool { r.Body=http.MaxBytesReader(w,r.Body,1<<20);decoder:=json.NewDecoder(r.Body);decoder.DisallowUnknownFields();if err:=decoder.Decode(dst);err!=nil{writeError(w,http.StatusBadRequest,"INVALID_JSON",err.Error());return false};if err:=decoder.Decode(&struct{}{});err!=io.EOF{writeError(w,http.StatusBadRequest,"INVALID_JSON","request body must contain exactly one JSON value");return false};return true }
-func writeError(w http.ResponseWriter,status int,code,message string){writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
+func writeError(w http.ResponseWriter,status int,code,message string){if strings.Contains(message,"idempotency key reused with different payload"){status=http.StatusConflict;code="IDEMPOTENCY_CONFLICT";message="Idempotency-Key was already used with a different request"};writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
 func writeJSON(w http.ResponseWriter,status int,payload any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(status);_=json.NewEncoder(w).Encode(payload)}

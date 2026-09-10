@@ -10,6 +10,8 @@ import (
 	"flashx/services/api/internal/auth"
 )
 
+const marketplaceMaxResponseBytes = 2 << 20
+
 // NewV2 wraps the existing V1 server with additive V2 gateway routes.
 // Marketplace business logic is owned by marketplace-service; this compatibility
 // API authenticates public traffic and reconstructs trusted internal actor
@@ -18,7 +20,13 @@ func NewV2(addr string, deps Dependencies, marketplaceServiceURL string) *Server
 	s := New(addr, deps)
 	legacy := s.server.Handler
 	marketplaceServiceURL = strings.TrimRight(strings.TrimSpace(marketplaceServiceURL), "/")
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Never carry trusted internal actor headers across an upstream redirect.
+			return http.ErrUseLastResponse
+		},
+	}
 
 	v2Mux := http.NewServeMux()
 	v2Mux.HandleFunc("GET /v2", func(w http.ResponseWriter, _ *http.Request) {
@@ -112,6 +120,16 @@ func (s *Server) proxyMarketplace(w http.ResponseWriter, r *http.Request, client
 	}
 	defer response.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(response.Body, marketplaceMaxResponseBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "MARKETPLACE_RESPONSE_INVALID", "Marketplace response could not be read", nil)
+		return
+	}
+	if len(body) > marketplaceMaxResponseBytes {
+		writeError(w, http.StatusBadGateway, "MARKETPLACE_RESPONSE_TOO_LARGE", "Marketplace response exceeded the edge limit", nil)
+		return
+	}
+
 	if contentType := response.Header.Get("Content-Type"); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	} else {
@@ -121,5 +139,5 @@ func (s *Server) proxyMarketplace(w http.ResponseWriter, r *http.Request, client
 		w.Header().Set("X-Correlation-ID", correlationID)
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(response.Body, 2<<20))
+	_, _ = w.Write(body)
 }

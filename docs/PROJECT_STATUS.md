@@ -1,6 +1,6 @@
 # OpenRide Project Status
 
-> Last reviewed: 2026-09-10
+> Last reviewed: 2026-09-11
 
 OpenRide is a **pre-1.0 open-source mobility marketplace** under active architectural migration. This document is intentionally conservative: it separates code that exists from capabilities that still lack end-to-end production proof.
 
@@ -22,12 +22,12 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | Driver tariff persistence | ✅ | V2 create/list path persists driver-owned tariffs. Public wire DTO uses flat minor-unit fields. |
 | Mobility request persistence | ✅ | V2 request creation/read/cancel path is persisted. Cancel is transactionally coupled with pending-quote invalidation. |
 | Quote persistence | ✅ | Driver quote submission and withdrawal are persisted. Database guards reject pending quotes for requests that are no longer open. |
-| Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Acceptance now locks Request before Quote and retries PostgreSQL serialization/deadlock failures up to three attempts. Real high-contention PostgreSQL integration tests are still required. |
+| Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Acceptance locks Request before Quote and retries PostgreSQL serialization/deadlock failures up to three attempts. Real high-contention PostgreSQL integration tests are still required. |
 | Agreement commercial snapshot | 🟡 | Accepted quote metadata is detached into a typed snapshot and the Agreement table is append-only at the database layer. Canonical content hashing/signing is not implemented. |
 | Ranking engine | ✅ | Core ranking is deterministic/explainable and isolates plugins from canonical quote data. The V2 offers HTTP path is not yet wired to this engine and currently uses store ordering. |
 | Transactional outbox relay | 🟡 | PostgreSQL `SKIP LOCKED` relay publishes to JetStream with deterministic `Nats-Msg-Id`. Retry backoff/dead-letter handling and consumer inbox dedupe are still incomplete. |
 | JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔service E2E verification is still required. |
-| Generic command idempotency | 🟡 | Quote acceptance has durable replay semantics. Other commands currently require an `Idempotency-Key` header but do not yet durably replay the original result. |
+| Generic command idempotency | 🟡 | Create request, create tariff, submit quote, cancel request and withdraw quote now persist payload hash + resource identity in the same PostgreSQL transaction as the mutation. Same-key/same-payload retries replay the original resource/result; same-key/different-payload returns `409 IDEMPOTENCY_CONFLICT`. Real PostgreSQL integration proof is still required. Acceptance retains its specialized durable Agreement replay path. |
 
 ## Services
 
@@ -68,12 +68,11 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 
 ## Known P0/P1 gaps
 
-1. Implement durable generic idempotency for create request, create tariff, submit quote, cancel and withdraw commands, including payload-hash conflict detection.
-2. Add real PostgreSQL high-contention tests for competing quote acceptance; request-first lock ordering and bounded retry are implemented but not yet proven under 100-way concurrency.
-3. Wire the hardened Core ranking engine into `/v2/requests/{id}/offers`; the current store query is only price/ETA ordering.
-4. Put Marketplace behind an authenticated Edge/BFF that strips client-supplied internal actor headers and reconstructs trusted actor context.
-5. Add outbox retry backoff, dead-letter/operator visibility and consumer-side inbox dedupe.
-6. Run SDK↔Marketplace E2E tests and enforce one documented money range/serialization rule across all public clients.
+1. Add real PostgreSQL integration tests for generic idempotency replay/conflict and competing quote acceptance under high contention.
+2. Wire the hardened Core ranking engine into `/v2/requests/{id}/offers`; the current store query is only price/ETA ordering.
+3. Put Marketplace behind an authenticated Edge/BFF that strips client-supplied internal actor headers and reconstructs trusted actor context.
+4. Add outbox retry backoff, dead-letter/operator visibility and consumer-side inbox dedupe.
+5. Run SDK↔Marketplace E2E tests and enforce one documented money range/serialization rule across all public clients.
 
 ## What OpenRide does **not** claim today
 
@@ -82,7 +81,7 @@ OpenRide does not currently claim:
 - production readiness for carrying real passengers;
 - completed multi-service ride booking from request through settlement;
 - fully extracted microservices for every bounded context;
-- generic idempotency for every V2 command;
+- production-proven generic idempotency under real PostgreSQL concurrency;
 - full explainable ranking on the V2 HTTP offers path;
 - cryptographically signed or hashed Agreements;
 - proven correctness under high-contention PostgreSQL acceptance races;
@@ -108,18 +107,3 @@ Marketplace Service ✅/🟡
       ├── Payment Service ⏳
       └── Trust / Realtime / Notification / Operator ⏳
 ```
-
-A capability moves out of the compatibility runtime only after the owning service has a tested data/API/event path and a rollback strategy.
-
-## Definition of public credibility
-
-Before marking a capability ✅, OpenRide expects at least:
-
-1. an owning package/service;
-2. explicit data ownership;
-3. tests for core invariants;
-4. a runnable local path;
-5. documented API/event contracts when crossing a process boundary;
-6. failure/idempotency behavior for critical commands.
-
-If one of those is missing, this document should say so.

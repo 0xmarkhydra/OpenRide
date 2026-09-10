@@ -1,13 +1,13 @@
 # OpenRide Project Status
 
-> Last reviewed: 2026-09-09
+> Last reviewed: 2026-09-10
 
-OpenRide is a **pre-1.0 open-source mobility marketplace** under active architectural migration. This document is intentionally conservative: it separates code that exists and is testable today from target architecture that is not implemented yet.
+OpenRide is a **pre-1.0 open-source mobility marketplace** under active architectural migration. This document is intentionally conservative: it separates code that exists from capabilities that still lack end-to-end production proof.
 
 ## Status legend
 
-- ✅ **Implemented** — code exists in the repository and has an executable/testable path.
-- 🟡 **Foundation** — contracts, schema, package, or service boundary exists but the end-to-end production path is incomplete.
+- ✅ **Implemented** — code exists with an executable/testable path for the stated scope.
+- 🟡 **Foundation** — meaningful implementation exists, but production integration, failure proof, or migration is incomplete.
 - 🔁 **Compatibility** — legacy runtime still serves this capability while traffic is migrated.
 - ⏳ **Planned** — architectural target only; do not assume it exists.
 
@@ -15,26 +15,26 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 
 | Capability | Status | Notes |
 |---|---|---|
-| OpenRide Core domain package | ✅ | Independent `packages/core-go` module with marketplace value objects, pricing/ranking ports and engine tests. |
+| OpenRide Core domain package | ✅ | Independent `packages/core-go` module with marketplace value objects, integer-minor-unit money, pricing/ranking ports and invariant tests. |
 | Service module registry | ✅ | `passenger.car` and `carpool.intercity` first-party modules. |
-| Versioned JSON contracts | ✅ | Service manifest, marketplace event and request schemas. |
-| JavaScript / TypeScript SDK | ✅ | Zero-runtime-dependency Fetch-based client package. |
-| Marketplace Service process | ✅ | Independent Go service with health/readiness, catalog and request validation APIs. |
-| Marketplace-owned PostgreSQL schema | 🟡 | Initial migration exists; full repositories/use cases are not yet wired. |
-| Driver tariffs persisted through Marketplace Service | 🟡 | Domain/schema exists; complete public command/query API is not yet implemented. |
-| Mobility request persistence | 🟡 | Domain/schema exists; end-to-end V2 request flow is not yet complete. |
-| Quote persistence/acceptance | 🟡 | Domain/schema exists; full durable quote workflow is not yet complete. |
-| Agreement persistence | 🟡 | Domain/schema exists; atomic cross-service production workflow is not yet complete. |
-| Ranking engine | ✅ | Portable deterministic/explainable Core policy exists. Production data adapters are still being extracted. |
-| Outbox / Inbox tables | 🟡 | Schema exists. Production relay/consumer implementation is not complete yet. |
-| NATS JetStream topology | 🟡 | Development topology exists. Domain-event publisher/consumer coverage is incomplete. |
+| Marketplace Service process | ✅ | Independent Go process with real PostgreSQL and NATS clients, health/readiness and V2 routes. |
+| Marketplace-owned PostgreSQL schema | ✅ | Dedicated migrations and runtime store own tariffs, requests, quotes, agreements, outbox and idempotency state. |
+| Driver tariff persistence | ✅ | V2 create/list path persists driver-owned tariffs. Public wire DTO uses flat minor-unit fields. |
+| Mobility request persistence | ✅ | V2 request creation/read/cancel path is persisted. Cancel is transactionally coupled with pending-quote invalidation. |
+| Quote persistence | ✅ | Driver quote submission and withdrawal are persisted. Database guards reject pending quotes for requests that are no longer open. |
+| Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Real high-contention PostgreSQL integration tests are still required. |
+| Agreement commercial snapshot | 🟡 | Accepted quote metadata is detached into a typed snapshot and the Agreement table is append-only at the database layer. Canonical content hashing/signing is not implemented. |
+| Ranking engine | ✅ | Core ranking is deterministic/explainable and isolates plugins from canonical quote data. The V2 offers HTTP path is not yet wired to this engine and currently uses store ordering. |
+| Transactional outbox relay | 🟡 | PostgreSQL `SKIP LOCKED` relay publishes to JetStream with deterministic `Nats-Msg-Id`. Retry backoff/dead-letter handling and consumer inbox dedupe are still incomplete. |
+| JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔service E2E verification is still required. |
+| Generic command idempotency | 🟡 | Quote acceptance has durable replay semantics. Other commands currently require an `Idempotency-Key` header but do not yet durably replay the original result. |
 
 ## Services
 
 | Service | Status | Data ownership |
 |---|---|---|
 | Compatibility API / edge | 🔁 | Owns legacy V1 runtime data during migration. |
-| Marketplace Service | 🟡 | Dedicated `marketplace` database/migrations in the microservices development topology. |
+| Marketplace Service | 🟡 | Owns Marketplace V2 state in its dedicated database. It must remain behind a trusted gateway because actor identity is currently supplied through an internal header. |
 | Location Service | ⏳ | Will own online presence, current driver coordinates and candidate discovery. |
 | Ride Service | ⏳ | Will own post-agreement execution state. |
 | Identity Service | ⏳ | Auth/identity currently remains in compatibility runtime. |
@@ -48,7 +48,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 
 | Application | Status | Notes |
 |---|---|---|
-| Rider Flutter app | 🔁 | Existing app foundation is tied primarily to V1 compatibility flow. |
+| Rider Flutter app | 🔁 | Existing app foundation is tied primarily to V1 compatibility flow. Do not migrate until Marketplace V2 E2E and concurrency tests are green. |
 | Driver Flutter app | 🔁 | Existing app foundation is tied primarily to V1 compatibility flow. |
 | Operator/Admin Next.js app | 🔁 | Existing operations console uses compatibility API. |
 | Landing page | ✅ | Public OpenRide positioning/branding exists. |
@@ -59,12 +59,21 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 |---|---|---|
 | PostgreSQL/PostGIS compatibility stack | ✅ | Existing runtime persistence. |
 | Redis compatibility stack | ✅ | Existing geo/hot-state implementation. |
-| Marketplace PostgreSQL | ✅ | Dedicated development database in microservices compose topology. |
-| NATS JetStream | ✅ | Development broker topology is defined. |
-| Marketplace Docker image | ✅ | Independently buildable service image. |
-| Service-level readiness | 🟡 | Marketplace currently checks dependency reachability; protocol-level DB/NATS health will mature with real clients. |
+| Marketplace PostgreSQL | ✅ | Dedicated database and append-only migrations in the microservices topology. |
+| NATS JetStream | ✅ | Marketplace stream bootstrap exists for `marketplace.>` subjects. |
+| Marketplace Docker image | ✅ | Independently buildable service image path exists. A fresh networked build/test run is still required after recent dependency and Marketplace changes. |
+| Service-level readiness | ✅ | Marketplace readiness performs PostgreSQL ping and verifies NATS connection state. |
 | OpenTelemetry | ⏳ | Architectural requirement, not yet wired across services. |
 | Kubernetes / service mesh | ⏳ | Deliberately not required for the current pre-1.0 phase. |
+
+## Known P0/P1 gaps
+
+1. Implement durable generic idempotency for create request, create tariff, submit quote, cancel and withdraw commands, including payload-hash conflict detection.
+2. Add real PostgreSQL concurrency tests for competing quote acceptance and normalize lock ordering/retry behavior for serialization/deadlock errors.
+3. Wire the hardened Core ranking engine into `/v2/requests/{id}/offers`; the current store query is only price/ETA ordering.
+4. Put Marketplace behind an authenticated Edge/BFF that strips client-supplied internal actor headers and reconstructs trusted actor context.
+5. Add outbox retry backoff, dead-letter/operator visibility and consumer-side inbox dedupe.
+6. Run SDK↔Marketplace E2E tests and enforce one documented money range/serialization rule across all public clients.
 
 ## What OpenRide does **not** claim today
 
@@ -73,8 +82,12 @@ OpenRide does not currently claim:
 - production readiness for carrying real passengers;
 - completed multi-service ride booking from request through settlement;
 - fully extracted microservices for every bounded context;
+- generic idempotency for every V2 command;
+- full explainable ranking on the V2 HTTP offers path;
+- cryptographically signed or hashed Agreements;
+- proven correctness under high-contention PostgreSQL acceptance races;
 - production-grade fraud, insurance, KYC, incident response or local regulatory compliance;
-- complete NATS outbox relay / saga implementation;
+- complete saga/consumer coverage across NATS;
 - multi-region/high-availability deployment;
 - federation between independent OpenRide operators.
 
@@ -85,7 +98,7 @@ Those are explicit work items, not hidden gaps.
 ```text
 Legacy V1 runtime
       │
-      │ compatibility edge
+      │ compatibility edge / future authenticated BFF
       ▼
 Marketplace Service ✅/🟡
       │

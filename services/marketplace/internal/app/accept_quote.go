@@ -33,8 +33,9 @@ type AcceptanceStore interface {
 type AcceptanceTx interface {
 	LockIdempotency(context.Context, string, string) error
 	FindIdempotentAgreement(context.Context, string, string) (marketplace.Agreement, bool, error)
-	GetQuoteForUpdate(context.Context, string) (marketplace.Quote, error)
+	GetQuoteRequestID(context.Context, string) (string, error)
 	GetRequestForUpdate(context.Context, string) (marketplace.Request, error)
+	GetQuoteForUpdate(context.Context, string) (marketplace.Quote, error)
 	InsertAgreement(context.Context, marketplace.Agreement) error
 	MarkQuoteAccepted(context.Context, string, time.Time) error
 	MarkRequestAgreed(context.Context, string) error
@@ -60,14 +61,12 @@ func (s AcceptanceService) AcceptQuote(ctx context.Context, cmd AcceptQuoteComma
 			result = existing
 			return nil
 		}
-		quote, err := tx.GetQuoteForUpdate(ctx, cmd.QuoteID)
+
+		requestID, err := tx.GetQuoteRequestID(ctx, cmd.QuoteID)
 		if err != nil {
 			return err
 		}
-		if !quote.IsSelectable(cmd.Now) {
-			return ErrQuoteUnavailable
-		}
-		request, err := tx.GetRequestForUpdate(ctx, quote.RequestID)
+		request, err := tx.GetRequestForUpdate(ctx, requestID)
 		if err != nil {
 			return err
 		}
@@ -77,6 +76,15 @@ func (s AcceptanceService) AcceptQuote(ctx context.Context, cmd AcceptQuoteComma
 		if request.Status != marketplace.RequestOpen && request.Status != marketplace.RequestReceivingQuotes {
 			return ErrRequestUnavailable
 		}
+
+		quote, err := tx.GetQuoteForUpdate(ctx, cmd.QuoteID)
+		if err != nil {
+			return err
+		}
+		if quote.RequestID != request.ID || !quote.IsSelectable(cmd.Now) {
+			return ErrQuoteUnavailable
+		}
+
 		agreement, err := marketplace.NewAgreement(cmd.AgreementID, request, quote, cmd.Now)
 		if err != nil {
 			return err

@@ -11,15 +11,15 @@ import (
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/geo"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
-	modulecatalog "github.com/0xmarkhydra/OpenRide/packages/modules-go/catalog"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/money"
+	modulecatalog "github.com/0xmarkhydra/OpenRide/packages/modules-go/catalog"
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
 )
 
 type v2FakeStore struct {
-	tariff marketplace.DriverTariff
+	tariff  marketplace.DriverTariff
 	request marketplace.Request
-	offers []marketplace.Quote
+	offers  []marketplace.Quote
 }
 
 func (f *v2FakeStore) CreateTariff(_ context.Context, t marketplace.DriverTariff) error { f.tariff = t; return nil }
@@ -73,11 +73,11 @@ func TestCreateDriverTariffRejectsInvalidCurrencyWithoutPanic(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
 }
 
-func TestListOffersUsesFlatSDKContract(t *testing.T) {
+func TestListOffersUsesRankedFlatSDKContract(t *testing.T) {
 	now := time.Now().UTC()
 	store := &v2FakeStore{
 		request: marketplace.Request{ID:"req_1", InstanceID:"default", RiderID:"rider_1", ServiceType:"passenger.car", Status:marketplace.RequestOpen, Pickup:geo.Point{Lat:19.8,Lng:105.7}, RequestedAt:now, Version:1},
-		offers: []marketplace.Quote{{ID:"quote_1", RequestID:"req_1", DriverID:"driver_1", Status:marketplace.QuotePending, Fare:money.Must("VND",50000), PickupDistanceM:1200, PickupETAS:300, CreatedAt:now, ExpiresAt:now.Add(time.Minute), Explanation:[]string{"nearby"}}},
+		offers: []marketplace.Quote{{ID:"quote_1", RequestID:"req_1", DriverID:"driver_1", Status:marketplace.QuotePending, Fare:money.Must("VND",50000), PickupDistanceM:1200, PickupETAS:300, CreatedAt:now, ExpiresAt:now.Add(time.Minute), Explanation:[]string{"stored-explanation"}}},
 	}
 	server := newV2TestServer(t, store)
 	req := httptest.NewRequest(http.MethodGet, "/v2/requests/req_1/offers", nil)
@@ -89,6 +89,13 @@ func TestListOffersUsesFlatSDKContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil { t.Fatal(err) }
 	if len(payload.Data) != 1 || payload.Data[0]["quote_id"] != "quote_1" || payload.Data[0]["fare_total_minor"] != float64(50000) {
 		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	if payload.Data[0]["rank"] != float64(1) || payload.Data[0]["recommended"] != true {
+		t.Fatalf("missing ranking fields: %s", rec.Body.String())
+	}
+	reasons, ok := payload.Data[0]["reasons"].([]any)
+	if !ok || len(reasons) == 0 || reasons[0] == "stored-explanation" {
+		t.Fatalf("expected ranker reasons, got: %s", rec.Body.String())
 	}
 	if _, exists := payload.Data[0]["fare"]; exists { t.Fatalf("domain money object leaked into V2 response: %s", rec.Body.String()) }
 }

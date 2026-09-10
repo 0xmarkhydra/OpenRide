@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xmarkhydra/OpenRide/packages/core-go/engine"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/marketplace"
+	"github.com/0xmarkhydra/OpenRide/packages/core-go/ranking"
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
 )
 
@@ -23,6 +25,7 @@ type Server struct {
 	ready    func(context.Context) error
 	v2       V2Store
 	accept   app.AcceptanceService
+	ranker   engine.Ranker
 }
 
 type Config struct {
@@ -31,6 +34,7 @@ type Config struct {
 	Ready      func(context.Context) error
 	V2Store    V2Store
 	Acceptance app.AcceptanceService
+	Ranker     engine.Ranker
 }
 
 type envelope struct { Data any `json:"data"` }
@@ -41,8 +45,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Services == nil { return nil, errors.New("marketplace http: service registry is required") }
 	if cfg.Addr == "" { cfg.Addr = ":8090" }
 	if cfg.V2Store != nil && cfg.Acceptance.Store == nil { return nil, errors.New("marketplace http: acceptance service is required when V2 store is enabled") }
+	if cfg.Ranker == nil { cfg.Ranker = ranking.Default() }
 
-	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: adaptV2Store(cfg.V2Store), accept: cfg.Acceptance}
+	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: adaptV2Store(cfg.V2Store), accept: cfg.Acceptance, ranker: cfg.Ranker}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.readiness)
@@ -89,6 +94,7 @@ func canonicalRequestHash(r *http.Request) (string, error) {
 				if normalized, err := json.Marshal(value); err == nil { canonical = normalized }
 			}
 		}
+	}
 	sum := sha256.Sum256(append([]byte(r.Method+"\n"+r.URL.Path+"\n"), canonical...))
 	return hex.EncodeToString(sum[:]), nil
 }

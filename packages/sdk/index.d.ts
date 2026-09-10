@@ -21,7 +21,6 @@ export type MobilityRequestInput = {
   pickup: Point;
   destination?: Point;
   attributes?: Record<string, unknown>;
-  preferences?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
 };
 

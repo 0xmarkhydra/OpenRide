@@ -56,6 +56,10 @@ type offerOutput struct {
 	Reasons         []string `json:"reasons,omitempty"`
 }
 
+func amount(currency string, minor int64) (money.Amount, error) {
+	return money.New(currency, minor)
+}
+
 func (s *Server) registerV2(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v2/services", s.listServices)
 	if s.v2 == nil {
@@ -233,19 +237,54 @@ func (s *Server) createDriverTariff(w http.ResponseWriter, r *http.Request) {
 	if instanceID == "" {
 		instanceID = "default"
 	}
+	baseFare, err := amount(input.Currency, input.BaseFareMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	minimumFare, err := amount(input.Currency, input.MinimumFareMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	perKM, err := amount(input.Currency, input.PerKMMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	perMinute, err := amount(input.Currency, input.PerMinuteMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	pickupFee, err := amount(input.Currency, input.PickupFeeMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	autoMin, err := amount(input.Currency, input.AutoQuoteMinMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
+	autoMax, err := amount(input.Currency, input.AutoQuoteMaxMinor)
+	if err != nil {
+		writeError(w, 422, "TARIFF_INVALID", err.Error())
+		return
+	}
 	t := marketplace.DriverTariff{
 		ID:               id,
 		InstanceID:       instanceID,
 		DriverID:         driver,
 		ServiceType:      input.ServiceType,
 		QuoteMode:        input.QuoteMode,
-		BaseFare:         money.Must(input.Currency, input.BaseFareMinor),
-		MinimumFare:      money.Must(input.Currency, input.MinimumFareMinor),
-		PerKM:            money.Must(input.Currency, input.PerKMMinor),
-		PerMinute:        money.Must(input.Currency, input.PerMinuteMinor),
-		PickupFee:        money.Must(input.Currency, input.PickupFeeMinor),
-		AutoQuoteMinimum: money.Must(input.Currency, input.AutoQuoteMinMinor),
-		AutoQuoteMaximum: money.Must(input.Currency, input.AutoQuoteMaxMinor),
+		BaseFare:         baseFare,
+		MinimumFare:      minimumFare,
+		PerKM:            perKM,
+		PerMinute:        perMinute,
+		PickupFee:        pickupFee,
+		AutoQuoteMinimum: autoMin,
+		AutoQuoteMaximum: autoMax,
 		Version:          1,
 	}
 	if err := t.Validate(); err != nil {
@@ -325,12 +364,17 @@ func (s *Server) submitQuote(w http.ResponseWriter, r *http.Request) {
 		}
 		expiresAt = parsed.UTC()
 	}
+	fare, err := amount(input.Currency, input.FareTotalMinor)
+	if err != nil {
+		writeError(w, 422, "QUOTE_INVALID", err.Error())
+		return
+	}
 	q := marketplace.Quote{
 		ID:        id,
 		RequestID: requestID,
 		DriverID:  driver,
 		Status:    marketplace.QuotePending,
-		Fare:      money.Must(input.Currency, input.FareTotalMinor),
+		Fare:      fare,
 		CreatedAt: now,
 		ExpiresAt: expiresAt,
 	}

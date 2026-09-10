@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
@@ -66,7 +67,16 @@ func (s *Server) validateRequest(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,envelope{Data:map[string]any{"valid":true,"service_type":request.ServiceType,"module":module.Manifest()}})
 }
 
-func middleware(next http.Handler) http.Handler { return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","no-store");next.ServeHTTP(w,r)}) }
+func middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+		w.Header().Set("X-Content-Type-Options","nosniff")
+		w.Header().Set("Cache-Control","no-store")
+		if key:=strings.TrimSpace(r.Header.Get("Idempotency-Key"));key!="" {
+			r=r.WithContext(app.WithIdempotencyKey(r.Context(),key))
+		}
+		next.ServeHTTP(w,r)
+	})
+}
 func decodeJSON(w http.ResponseWriter,r *http.Request,dst any) bool { r.Body=http.MaxBytesReader(w,r.Body,1<<20);decoder:=json.NewDecoder(r.Body);decoder.DisallowUnknownFields();if err:=decoder.Decode(dst);err!=nil{writeError(w,http.StatusBadRequest,"INVALID_JSON",err.Error());return false};if err:=decoder.Decode(&struct{}{});err!=io.EOF{writeError(w,http.StatusBadRequest,"INVALID_JSON","request body must contain exactly one JSON value");return false};return true }
 func writeError(w http.ResponseWriter,status int,code,message string){writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
 func writeJSON(w http.ResponseWriter,status int,payload any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(status);_=json.NewEncoder(w).Encode(payload)}

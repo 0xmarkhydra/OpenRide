@@ -22,7 +22,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | Driver tariff persistence | ✅ | V2 create/list path persists driver-owned tariffs. Public wire DTO uses flat minor-unit fields. |
 | Mobility request persistence | ✅ | V2 request creation/read/cancel path is persisted. Cancel is transactionally coupled with pending-quote invalidation. |
 | Quote persistence | ✅ | Driver quote submission and withdrawal are persisted. Database guards reject pending quotes for requests that are no longer open. |
-| Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Real high-contention PostgreSQL integration tests are still required. |
+| Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Acceptance now locks Request before Quote and retries PostgreSQL serialization/deadlock failures up to three attempts. Real high-contention PostgreSQL integration tests are still required. |
 | Agreement commercial snapshot | 🟡 | Accepted quote metadata is detached into a typed snapshot and the Agreement table is append-only at the database layer. Canonical content hashing/signing is not implemented. |
 | Ranking engine | ✅ | Core ranking is deterministic/explainable and isolates plugins from canonical quote data. The V2 offers HTTP path is not yet wired to this engine and currently uses store ordering. |
 | Transactional outbox relay | 🟡 | PostgreSQL `SKIP LOCKED` relay publishes to JetStream with deterministic `Nats-Msg-Id`. Retry backoff/dead-letter handling and consumer inbox dedupe are still incomplete. |
@@ -60,7 +60,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | PostgreSQL/PostGIS compatibility stack | ✅ | Existing runtime persistence. |
 | Redis compatibility stack | ✅ | Existing geo/hot-state implementation. |
 | Marketplace PostgreSQL | ✅ | Dedicated database and append-only migrations in the microservices topology. |
-| NATS JetStream | ✅ | Marketplace stream bootstrap exists for `marketplace.>` subjects. |
+| NATS JetStream | ✅ | Marketplace stream bootstrap exists for `openride.marketplace.>` subjects. |
 | Marketplace Docker image | ✅ | Independently buildable service image path exists. A fresh networked build/test run is still required after recent dependency and Marketplace changes. |
 | Service-level readiness | ✅ | Marketplace readiness performs PostgreSQL ping and verifies NATS connection state. |
 | OpenTelemetry | ⏳ | Architectural requirement, not yet wired across services. |
@@ -69,7 +69,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 ## Known P0/P1 gaps
 
 1. Implement durable generic idempotency for create request, create tariff, submit quote, cancel and withdraw commands, including payload-hash conflict detection.
-2. Add real PostgreSQL concurrency tests for competing quote acceptance and normalize lock ordering/retry behavior for serialization/deadlock errors.
+2. Add real PostgreSQL high-contention tests for competing quote acceptance; request-first lock ordering and bounded retry are implemented but not yet proven under 100-way concurrency.
 3. Wire the hardened Core ranking engine into `/v2/requests/{id}/offers`; the current store query is only price/ETA ordering.
 4. Put Marketplace behind an authenticated Edge/BFF that strips client-supplied internal actor headers and reconstructs trusted actor context.
 5. Add outbox retry backoff, dead-letter/operator visibility and consumer-side inbox dedupe.

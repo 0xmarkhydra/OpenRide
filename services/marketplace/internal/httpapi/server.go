@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -67,12 +70,38 @@ func (s *Server) validateRequest(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,envelope{Data:map[string]any{"valid":true,"service_type":request.ServiceType,"module":module.Manifest()}})
 }
 
+func canonicalRequestHash(r *http.Request) (string, error) {
+	var body []byte
+	if r.Body != nil {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+		if err != nil { return "", err }
+		r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	canonical := body
+	if len(bytes.TrimSpace(body)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		var value any
+		if err := dec.Decode(&value); err == nil {
+			if err := dec.Decode(&struct{}{}); err == io.EOF {
+				if normalized, err := json.Marshal(value); err == nil { canonical = normalized }
+			}
+		}
+	}
+	sum := sha256.Sum256(append([]byte(r.Method+"\n"+r.URL.Path+"\n"), canonical...))
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		w.Header().Set("X-Content-Type-Options","nosniff")
 		w.Header().Set("Cache-Control","no-store")
 		if key:=strings.TrimSpace(r.Header.Get("Idempotency-Key"));key!="" {
-			r=r.WithContext(app.WithIdempotencyKey(r.Context(),key))
+			hash,err:=canonicalRequestHash(r)
+			if err!=nil { writeError(w,http.StatusBadRequest,"IDEMPOTENCY_HASH_FAILED","could not read request body");return }
+			r=r.WithContext(app.WithIdempotency(r.Context(),key,hash))
 		}
 		next.ServeHTTP(w,r)
 	})

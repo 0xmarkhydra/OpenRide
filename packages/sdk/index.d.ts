@@ -63,6 +63,11 @@ export type DriverTariffInput = {
 export type QuoteInput = {
   fare_total_minor: number;
   currency: string;
+  expires_at?: string;
+};
+
+export type CommandStatus = {
+  status: string;
 };
 
 export type RequestOptions = {
@@ -90,12 +95,12 @@ export declare class OpenRideClient {
   previewRoute(input: { pickup: Point; destination: Point }): Promise<unknown>;
   createRequest(input: MobilityRequestInput, options?: { idempotencyKey?: string }): Promise<MobilityRequest>;
   getRequest(requestID: string): Promise<MobilityRequest>;
-  cancelRequest(requestID: string, options?: { idempotencyKey?: string; reason?: string }): Promise<MobilityRequest>;
+  cancelRequest(requestID: string, options?: { idempotencyKey?: string; reason?: string }): Promise<CommandStatus>;
   listOffers(requestID: string): Promise<Offer[]>;
   acceptQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<unknown>;
   listDriverTariffs(): Promise<unknown[]>;
   createDriverTariff(input: DriverTariffInput, options?: { idempotencyKey?: string }): Promise<unknown>;
   listEligibleRequests(): Promise<MobilityRequest[]>;
-  submitQuote(requestID: string, input: QuoteInput, options?: { idempotencyKey?: string }): Promise<unknown>;
-  withdrawQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<unknown>;
+  submitQuote(requestID: string, input: QuoteInput, options?: { idempotencyKey?: string }): Promise<Offer>;
+  withdrawQuote(quoteID: string, options?: { idempotencyKey?: string }): Promise<CommandStatus>;
 }

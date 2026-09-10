@@ -90,15 +90,23 @@ func main() {
 }
 
 func ensureMarketplaceStream(js nats.JetStreamContext) error {
-	if _, err := js.StreamInfo("MARKETPLACE"); err == nil {
-		return nil
-	}
-	_, err := js.AddStream(&nats.StreamConfig{
+	config := &nats.StreamConfig{
 		Name:       "MARKETPLACE",
 		Subjects:   []string{"openride.marketplace.>"},
 		Storage:    nats.FileStorage,
 		Retention:  nats.LimitsPolicy,
 		Duplicates: 10 * time.Minute,
-	})
+	}
+	info, err := js.StreamInfo(config.Name)
+	if err != nil {
+		_, addErr := js.AddStream(config)
+		return addErr
+	}
+	if len(info.Config.Subjects) == 1 && info.Config.Subjects[0] == config.Subjects[0] && info.Config.Duplicates == config.Duplicates {
+		return nil
+	}
+	info.Config.Subjects = config.Subjects
+	info.Config.Duplicates = config.Duplicates
+	_, err = js.UpdateStream(&info.Config)
 	return err
 }

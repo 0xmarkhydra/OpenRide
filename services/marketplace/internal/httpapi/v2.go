@@ -56,8 +56,36 @@ type offerOutput struct {
 	Reasons         []string `json:"reasons,omitempty"`
 }
 
+type agreementOutput struct {
+	ID             string                     `json:"id"`
+	RequestID      string                     `json:"request_id"`
+	QuoteID        string                     `json:"quote_id"`
+	DriverID       string                     `json:"driver_id"`
+	RiderID        string                     `json:"rider_id"`
+	ServiceType    marketplace.ServiceType    `json:"service_type"`
+	FareTotalMinor int64                      `json:"fare_total_minor"`
+	Currency       string                     `json:"currency"`
+	TermsSnapshot  marketplace.AgreementTerms `json:"terms_snapshot"`
+	CreatedAt      string                     `json:"created_at"`
+}
+
 func amount(currency string, minor int64) (money.Amount, error) {
 	return money.New(currency, minor)
+}
+
+func toAgreementOutput(a marketplace.Agreement) agreementOutput {
+	return agreementOutput{
+		ID:             a.ID,
+		RequestID:      a.RequestID,
+		QuoteID:        a.QuoteID,
+		DriverID:       a.DriverID,
+		RiderID:        a.RiderID,
+		ServiceType:    a.ServiceType,
+		FareTotalMinor: a.Fare.Minor,
+		Currency:       a.Fare.Currency,
+		TermsSnapshot:  a.TermsSnapshot,
+		CreatedAt:      a.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
 }
 
 func (s *Server) registerV2(mux *http.ServeMux) {
@@ -449,5 +477,5 @@ func (s *Server) acceptQuote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, code, err.Error())
 		return
 	}
-	writeJSON(w, 200, envelope{Data: agreement})
+	writeJSON(w, 200, envelope{Data: map[string]any{"agreement": toAgreementOutput(agreement)}})
 }

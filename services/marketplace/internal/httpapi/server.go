@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/extension"
@@ -38,7 +42,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" { cfg.Addr = ":8090" }
 	if cfg.V2Store != nil && cfg.Acceptance.Store == nil { return nil, errors.New("marketplace http: acceptance service is required when V2 store is enabled") }
 
-	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: cfg.V2Store, accept: cfg.Acceptance}
+	s := &Server{services: cfg.Services, ready: cfg.Ready, v2: adaptV2Store(cfg.V2Store), accept: cfg.Acceptance}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.readiness)
@@ -66,7 +70,70 @@ func (s *Server) validateRequest(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,envelope{Data:map[string]any{"valid":true,"service_type":request.ServiceType,"module":module.Manifest()}})
 }
 
-func middleware(next http.Handler) http.Handler { return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","no-store");next.ServeHTTP(w,r)}) }
+func canonicalRequestHash(r *http.Request) (string, error) {
+	var body []byte
+	if r.Body != nil {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+		if err != nil { return "", err }
+		r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	canonical := body
+	if len(bytes.TrimSpace(body)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		var value any
+		if err := dec.Decode(&value); err == nil {
+			if err := dec.Decode(&struct{}{}); err == io.EOF {
+				if normalized, err := json.Marshal(value); err == nil { canonical = normalized }
+			}
+		}
+	sum := sha256.Sum256(append([]byte(r.Method+"\n"+r.URL.Path+"\n"), canonical...))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+type bufferedResponseWriter struct {
+	header http.Header
+	status int
+	body bytes.Buffer
+}
+func newBufferedResponseWriter() *bufferedResponseWriter { return &bufferedResponseWriter{header: make(http.Header)} }
+func (w *bufferedResponseWriter) Header() http.Header { return w.header }
+func (w *bufferedResponseWriter) WriteHeader(status int) { if w.status==0 { w.status=status } }
+func (w *bufferedResponseWriter) Write(p []byte) (int,error) { if w.status==0 { w.status=http.StatusOK }; return w.body.Write(p) }
+func (w *bufferedResponseWriter) flush(dst http.ResponseWriter) {
+	for key, values := range w.header { for _, value := range values { dst.Header().Add(key,value) } }
+	status:=w.status;if status==0 { status=http.StatusOK }
+	dst.WriteHeader(status)
+	_,_=dst.Write(w.body.Bytes())
+}
+
+func middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+		key:=strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if key=="" {
+			w.Header().Set("X-Content-Type-Options","nosniff")
+			w.Header().Set("Cache-Control","no-store")
+			next.ServeHTTP(w,r)
+			return
+		}
+		hash,err:=canonicalRequestHash(r)
+		if err!=nil { writeError(w,http.StatusBadRequest,"IDEMPOTENCY_HASH_FAILED","could not read request body");return }
+		state:=&idempotencyReplayState{}
+		ctx:=app.WithIdempotency(r.Context(),key,hash)
+		r=r.WithContext(withReplayState(ctx,state))
+		bw:=newBufferedResponseWriter()
+		bw.Header().Set("X-Content-Type-Options","nosniff")
+		bw.Header().Set("Cache-Control","no-store")
+		next.ServeHTTP(bw,r)
+		if state.Replay!=nil {
+			bw.body.Reset();bw.status=0
+			writeJSON(bw,state.Replay.Status,envelope{Data:state.Replay.Data})
+		}
+		bw.flush(w)
+	})
+}
 func decodeJSON(w http.ResponseWriter,r *http.Request,dst any) bool { r.Body=http.MaxBytesReader(w,r.Body,1<<20);decoder:=json.NewDecoder(r.Body);decoder.DisallowUnknownFields();if err:=decoder.Decode(dst);err!=nil{writeError(w,http.StatusBadRequest,"INVALID_JSON",err.Error());return false};if err:=decoder.Decode(&struct{}{});err!=io.EOF{writeError(w,http.StatusBadRequest,"INVALID_JSON","request body must contain exactly one JSON value");return false};return true }
-func writeError(w http.ResponseWriter,status int,code,message string){writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
+func writeError(w http.ResponseWriter,status int,code,message string){if strings.Contains(message,"idempotency key reused with different payload"){status=http.StatusConflict;code="IDEMPOTENCY_CONFLICT";message="Idempotency-Key was already used with a different request"};writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
 func writeJSON(w http.ResponseWriter,status int,payload any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(status);_=json.NewEncoder(w).Encode(payload)}

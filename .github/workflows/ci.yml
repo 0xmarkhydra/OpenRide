@@ -82,6 +82,35 @@ jobs:
       - run: GOWORK=off go test ./...
       - run: GOWORK=off go vet ./...
 
+  marketplace-postgres-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - name: Start Marketplace PostgreSQL
+        run: docker compose -f docker-compose.microservices.yml up -d --wait marketplace-db
+      - name: Create isolated test database
+        run: docker compose -f docker-compose.microservices.yml exec -T marketplace-db createdb -U marketplace marketplace_test
+      - name: Apply Marketplace migrations to test database
+        run: |
+          for file in services/marketplace/migrations/*.sql; do
+            echo "Applying $file"
+            docker compose -f docker-compose.microservices.yml exec -T marketplace-db psql -U marketplace -d marketplace_test -v ON_ERROR_STOP=1 < "$file"
+          done
+      - name: Run high-contention acceptance test
+        working-directory: services/marketplace
+        env:
+          MARKETPLACE_TEST_DATABASE_URL: postgres://marketplace:marketplace-dev@127.0.0.1:55433/marketplace_test?sslmode=disable
+        run: GOWORK=off go test ./internal/store -run TestAcceptQuoteHighContentionPostgres -count=1 -v
+      - name: Dump Marketplace PostgreSQL logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.microservices.yml logs --no-color marketplace-db
+      - if: always()
+        run: docker compose -f docker-compose.microservices.yml down -v --remove-orphans
+
   microservices-topology:
     runs-on: ubuntu-latest
     steps:

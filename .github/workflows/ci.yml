@@ -66,6 +66,27 @@ jobs:
       - name: Verify package contents
         run: npm pack --dry-run
 
+  sdk-edge-marketplace-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate E2E compose
+        run: docker compose -f docker-compose.e2e.yml config --quiet
+      - name: Boot authenticated Edge and Marketplace topology
+        run: docker compose -f docker-compose.e2e.yml up -d --build --wait
+      - name: Run SDK through Edge into Marketplace
+        env:
+          OPENRIDE_E2E_BASE_URL: http://127.0.0.1:18080
+        run: node packages/sdk/test/e2e-marketplace.mjs
+      - name: Dump E2E service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.e2e.yml logs --no-color
+      - if: always()
+        run: docker compose -f docker-compose.e2e.yml down -v --remove-orphans
+
   marketplace-service:
     runs-on: ubuntu-latest
     defaults:
@@ -119,6 +140,8 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml config --quiet
       - name: Validate compatibility compose
         run: docker compose config --quiet
+      - name: Validate E2E compose
+        run: docker compose -f docker-compose.e2e.yml config --quiet
       - name: Build Marketplace image from repository root
         run: docker build -f services/marketplace/Dockerfile -t openride/marketplace:ci .
       - name: Build compatibility API image from isolated service context

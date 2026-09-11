@@ -1,0 +1,123 @@
+name: openride-e2e
+
+services:
+  edge-postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: openride_edge_test
+      POSTGRES_USER: openride
+      POSTGRES_PASSWORD: openride-test
+    volumes:
+      - ./infrastructure/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openride -d openride_edge_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  edge-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-m", "8222", "--store_dir", "/data"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  marketplace-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: marketplace_test
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace-test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  marketplace-migrate:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: marketplace-test
+    volumes:
+      - ./services/marketplace/migrations:/migrations:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for file in /migrations/*.sql; do
+          echo "Applying $$file"
+          psql -h marketplace-db -U marketplace -d marketplace_test -v ON_ERROR_STOP=1 -f "$$file"
+        done
+    depends_on:
+      marketplace-db:
+        condition: service_healthy
+    restart: "no"
+
+  marketplace:
+    build:
+      context: .
+      dockerfile: services/marketplace/Dockerfile
+    environment:
+      HTTP_ADDR: :8090
+      DATABASE_URL: postgres://marketplace:marketplace-test@marketplace-db:5432/marketplace_test?sslmode=disable
+      NATS_URL: nats://nats:4222
+      SERVICE_NAME: marketplace-service
+    depends_on:
+      marketplace-migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8090/readyz >/dev/null || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+
+  edge:
+    build:
+      context: ./services/api
+    environment:
+      APP_ENV: development
+      HTTP_ADDR: :8080
+      PERSISTENCE: postgres
+      DATABASE_URL: postgres://openride:openride-test@edge-postgres:5432/openride_edge_test?sslmode=disable
+      REDIS_ADDR: edge-redis:6379
+      REDIS_PASSWORD: ""
+      JWT_SECRET: e2e-secret-change-me-123456789
+      ALLOW_DEV_IDENTITY: "false"
+      MAPS_PROVIDER: mock
+      SMS_PROVIDER: development
+      OBJECT_STORAGE_PROVIDER: disabled
+      MARKETPLACE_SERVICE_URL: http://marketplace:8090
+      ADMIN_PHONE: +84900000000
+      ADMIN_EMAIL: admin@openride.local
+      ADMIN_DISPLAY_NAME: OpenRide Operator
+    ports:
+      - "18080:8080"
+    depends_on:
+      edge-postgres:
+        condition: service_healthy
+      edge-redis:
+        condition: service_healthy
+      marketplace:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+
+volumes: {}

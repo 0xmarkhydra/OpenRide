@@ -10,7 +10,10 @@ import (
 	"flashx/services/api/internal/auth"
 )
 
-const marketplaceMaxResponseBytes = 2 << 20
+const (
+	marketplaceMaxResponseBytes = 2 << 20
+	marketplaceGatewayTokenHeader = "X-OpenRide-Gateway-Token"
+)
 
 // NewV2 wraps the existing V1 server with additive V2 gateway routes.
 // Marketplace business logic is owned by marketplace-service; this compatibility
@@ -23,7 +26,7 @@ func NewV2(addr string, deps Dependencies, marketplaceServiceURL string) *Server
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			// Never carry trusted internal actor headers across an upstream redirect.
+			// Never carry trusted internal actor or gateway headers across an upstream redirect.
 			return http.ErrUseLastResponse
 		},
 	}
@@ -87,6 +90,11 @@ func (s *Server) proxyMarketplace(w http.ResponseWriter, r *http.Request, client
 		writeError(w, http.StatusServiceUnavailable, "MARKETPLACE_UNAVAILABLE", "Marketplace service is not configured", nil)
 		return
 	}
+	gatewayToken := strings.TrimSpace(s.deps.MarketplaceGatewayToken)
+	if len(gatewayToken) < 24 {
+		writeError(w, http.StatusServiceUnavailable, "MARKETPLACE_GATEWAY_AUTH_UNAVAILABLE", "Marketplace gateway authentication is not configured", nil)
+		return
+	}
 	base, err := url.Parse(marketplaceServiceURL)
 	if err != nil || base.Scheme == "" || base.Host == "" {
 		writeError(w, http.StatusBadGateway, "MARKETPLACE_UPSTREAM_INVALID", "Marketplace upstream URL is invalid", nil)
@@ -109,6 +117,7 @@ func (s *Server) proxyMarketplace(w http.ResponseWriter, r *http.Request, client
 			upstream.Header.Set(header, value)
 		}
 	}
+	upstream.Header.Set(marketplaceGatewayTokenHeader, gatewayToken)
 	if actorID != "" {
 		upstream.Header.Set("X-OpenRide-Actor-ID", actorID)
 	}

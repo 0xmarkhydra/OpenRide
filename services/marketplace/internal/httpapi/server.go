@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	"github.com/0xmarkhydra/OpenRide/packages/core-go/ranking"
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
 )
+
+const maxPublicMoneyMinor int64 = 9_007_199_254_740_991
 
 type Server struct {
 	http     *http.Server
@@ -140,6 +143,71 @@ func middleware(next http.Handler) http.Handler {
 		bw.flush(w)
 	})
 }
-func decodeJSON(w http.ResponseWriter,r *http.Request,dst any) bool { r.Body=http.MaxBytesReader(w,r.Body,1<<20);decoder:=json.NewDecoder(r.Body);decoder.DisallowUnknownFields();if err:=decoder.Decode(dst);err!=nil{writeError(w,http.StatusBadRequest,"INVALID_JSON",err.Error());return false};if err:=decoder.Decode(&struct{}{});err!=io.EOF{writeError(w,http.StatusBadRequest,"INVALID_JSON","request body must contain exactly one JSON value");return false};return true }
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+		return false
+	}
+
+	genericDecoder := json.NewDecoder(bytes.NewReader(body))
+	genericDecoder.UseNumber()
+	var generic any
+	if err := genericDecoder.Decode(&generic); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+		return false
+	}
+	if err := genericDecoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "request body must contain exactly one JSON value")
+		return false
+	}
+	if err := validatePublicMinorFields(generic); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "MONEY_MINOR_INVALID", err.Error())
+		return false
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "request body must contain exactly one JSON value")
+		return false
+	}
+	return true
+}
+
+func validatePublicMinorFields(value any) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if strings.HasSuffix(strings.ToLower(key), "_minor") {
+				number, ok := child.(json.Number)
+				if !ok {
+					return fmt.Errorf("%s must be a non-negative integer no greater than %d", key, maxPublicMoneyMinor)
+				}
+				minor, err := number.Int64()
+				if err != nil || minor < 0 || minor > maxPublicMoneyMinor {
+					return fmt.Errorf("%s must be a non-negative integer no greater than %d", key, maxPublicMoneyMinor)
+				}
+			}
+			if err := validatePublicMinorFields(child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if err := validatePublicMinorFields(child); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func writeError(w http.ResponseWriter,status int,code,message string){if strings.Contains(message,"idempotency key reused with different payload"){status=http.StatusConflict;code="IDEMPOTENCY_CONFLICT";message="Idempotency-Key was already used with a different request"};writeJSON(w,status,errorEnvelope{Error:apiError{Code:code,Message:message}})}
 func writeJSON(w http.ResponseWriter,status int,payload any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(status);_=json.NewEncoder(w).Encode(payload)}

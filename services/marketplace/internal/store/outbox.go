@@ -75,11 +75,11 @@ WITH ready AS (
     LIMIT $1
 )
 UPDATE outbox_events o
-SET locked_until = now() + $2::interval,
+SET locked_until = now() + ($2 * interval '1 second'),
     lease_token = $3
 FROM ready
 WHERE o.id = ready.id
-RETURNING o.id, o.event_name, o.payload, o.attempts`, limit, outboxLeaseDuration.String(), leaseToken)
+RETURNING o.id, o.event_name, o.payload, o.attempts`, limit, int64(outboxLeaseDuration/time.Second), leaseToken)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +130,13 @@ func (s *Store) recordOutboxFailure(ctx context.Context, m OutboxMessage, leaseT
 UPDATE outbox_events
 SET attempts = attempts + 1,
     last_error = $3,
-    next_attempt_at = CASE WHEN $4 THEN next_attempt_at ELSE now() + $5::interval END,
+    next_attempt_at = CASE WHEN $4 THEN next_attempt_at ELSE now() + ($5 * interval '1 second') END,
     dead_lettered_at = CASE WHEN $4 THEN now() ELSE dead_lettered_at END,
     locked_until = NULL,
     lease_token = NULL
 WHERE id = $1
   AND lease_token = $2
-  AND published_at IS NULL`, m.ID, leaseToken, publishErr.Error(), deadLetter, backoff.String())
+  AND published_at IS NULL`, m.ID, leaseToken, publishErr.Error(), deadLetter, int64(backoff/time.Second))
 	if err != nil {
 		return err
 	}

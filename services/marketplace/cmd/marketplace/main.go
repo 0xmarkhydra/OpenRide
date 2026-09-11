@@ -27,8 +27,12 @@ func main() {
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	natsURL := strings.TrimSpace(os.Getenv("NATS_URL"))
+	gatewayToken := strings.TrimSpace(os.Getenv("MARKETPLACE_GATEWAY_TOKEN"))
 	if databaseURL == "" || natsURL == "" {
 		log.Fatal("DATABASE_URL and NATS_URL are required for durable marketplace mode")
+	}
+	if len(gatewayToken) < 24 {
+		log.Fatal("MARKETPLACE_GATEWAY_TOKEN with at least 24 characters is required")
 	}
 
 	bootstrapCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -61,7 +65,14 @@ func main() {
 		return nil
 	}
 	acceptance := app.AcceptanceService{Store: pg}
-	server, err := httpapi.New(httpapi.Config{Addr: addr, Services: modulecatalog.DefaultRegistry(), Ready: ready, V2Store: pg, Acceptance: acceptance})
+	server, err := httpapi.New(httpapi.Config{
+		Addr: addr,
+		Services: modulecatalog.DefaultRegistry(),
+		Ready: ready,
+		V2Store: pg,
+		Acceptance: acceptance,
+		GatewayToken: gatewayToken,
+	})
 	if err != nil {
 		log.Fatalf("configure marketplace service: %v", err)
 	}

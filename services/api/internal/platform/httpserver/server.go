@@ -29,24 +29,25 @@ import (
 )
 
 type Dependencies struct {
-	AppEnv           string
-	Persistence      string
-	Trips            *trips.Service
-	Drivers          *drivers.Service
-	CustomerVehicles *customervehicles.Service
-	DriverDocuments  *driverdocs.Service
-	Dispatch         *dispatch.Engine
-	Ride             *ride.Service
-	Pricing          *pricing.Service
-	Payments         *payments.Service
-	Ratings          *ratings.Service
-	Idempotency      idempotency.Store
-	Auth             *auth.Service
-	Users            *users.Service
-	Admin            *admin.Service
-	Realtime         *realtime.Hub
-	AllowDevIdentity bool
-	ReadyCheck       func(context.Context) error
+	AppEnv                  string
+	Persistence             string
+	Trips                   *trips.Service
+	Drivers                 *drivers.Service
+	CustomerVehicles        *customervehicles.Service
+	DriverDocuments         *driverdocs.Service
+	Dispatch                *dispatch.Engine
+	Ride                    *ride.Service
+	Pricing                 *pricing.Service
+	Payments                *payments.Service
+	Ratings                 *ratings.Service
+	Idempotency             idempotency.Store
+	Auth                    *auth.Service
+	Users                   *users.Service
+	Admin                   *admin.Service
+	Realtime                *realtime.Hub
+	AllowDevIdentity        bool
+	ReadyCheck              func(context.Context) error
+	MarketplaceGatewayToken string
 }
 
 type Server struct {

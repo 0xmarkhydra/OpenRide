@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -177,27 +178,29 @@ func main() {
 	dispatchEngine := dispatch.NewEngineWithStore(driverService, tripService, dispatchOffers, dispatchLocker)
 	rideService := ride.NewService(tripService, driverService)
 	realtimeHub := realtime.NewHub()
-	marketplaceServiceURL := os.Getenv("MARKETPLACE_SERVICE_URL")
+	marketplaceServiceURL := strings.TrimSpace(os.Getenv("MARKETPLACE_SERVICE_URL"))
+	marketplaceGatewayToken := strings.TrimSpace(os.Getenv("MARKETPLACE_GATEWAY_TOKEN"))
 
 	server := httpserver.NewV2(cfg.HTTPAddr, httpserver.Dependencies{
-		AppEnv:           cfg.AppEnv,
-		Persistence:      cfg.Persistence,
-		Trips:            tripService,
-		Drivers:          driverService,
-		CustomerVehicles: vehicleService,
-		DriverDocuments:  driverDocumentService,
-		Users:            userService,
-		Admin:            adminService,
-		Dispatch:         dispatchEngine,
-		Ride:             rideService,
-		Pricing:          pricingService,
-		Payments:         paymentService,
-		Ratings:          ratingService,
-		Idempotency:      idempotencyStore,
-		Auth:             authService,
-		Realtime:         realtimeHub,
-		AllowDevIdentity: cfg.AllowDevIdentity,
-		ReadyCheck:       readyCheck,
+		AppEnv:                  cfg.AppEnv,
+		Persistence:             cfg.Persistence,
+		Trips:                   tripService,
+		Drivers:                 driverService,
+		CustomerVehicles:        vehicleService,
+		DriverDocuments:         driverDocumentService,
+		Users:                   userService,
+		Admin:                   adminService,
+		Dispatch:                dispatchEngine,
+		Ride:                    rideService,
+		Pricing:                 pricingService,
+		Payments:                paymentService,
+		Ratings:                 ratingService,
+		Idempotency:             idempotencyStore,
+		Auth:                    authService,
+		Realtime:                realtimeHub,
+		AllowDevIdentity:        cfg.AllowDevIdentity,
+		ReadyCheck:              readyCheck,
+		MarketplaceGatewayToken: marketplaceGatewayToken,
 	}, marketplaceServiceURL)
 
 	errCh := make(chan error, 1)

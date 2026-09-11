@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,10 @@ import (
 	"github.com/0xmarkhydra/OpenRide/services/marketplace/internal/app"
 )
 
-const maxPublicMoneyMinor int64 = 9_007_199_254_740_991
+const (
+	maxPublicMoneyMinor int64 = 9_007_199_254_740_991
+	gatewayTokenHeader        = "X-OpenRide-Gateway-Token"
+)
 
 type Server struct {
 	http     *http.Server
@@ -32,12 +36,13 @@ type Server struct {
 }
 
 type Config struct {
-	Addr       string
-	Services   *extension.Registry
-	Ready      func(context.Context) error
-	V2Store    V2Store
-	Acceptance app.AcceptanceService
-	Ranker     engine.Ranker
+	Addr         string
+	Services     *extension.Registry
+	Ready        func(context.Context) error
+	V2Store      V2Store
+	Acceptance   app.AcceptanceService
+	Ranker       engine.Ranker
+	GatewayToken string
 }
 
 type envelope struct { Data any `json:"data"` }
@@ -58,7 +63,11 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /internal/v1/requests/validate", s.validateRequest)
 	s.registerV2(mux)
 
-	s.http = &http.Server{Addr: cfg.Addr, Handler: middleware(mux), ReadHeaderTimeout: 5*time.Second, ReadTimeout: 15*time.Second, WriteTimeout: 15*time.Second, IdleTimeout: 60*time.Second}
+	handler := middleware(mux)
+	if token := strings.TrimSpace(cfg.GatewayToken); token != "" {
+		handler = requireGatewayToken(handler, token)
+	}
+	s.http = &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5*time.Second, ReadTimeout: 15*time.Second, WriteTimeout: 15*time.Second, IdleTimeout: 60*time.Second}
 	return s,nil
 }
 
@@ -76,6 +85,19 @@ func (s *Server) validateRequest(w http.ResponseWriter,r *http.Request) {
 	module,err:=s.services.Get(request.ServiceType);if err!=nil{writeError(w,http.StatusUnprocessableEntity,"SERVICE_TYPE_UNSUPPORTED",err.Error());return}
 	if err:=module.ValidateRequest(r.Context(),request);err!=nil{writeError(w,http.StatusUnprocessableEntity,"SERVICE_REQUEST_INVALID",err.Error());return}
 	writeJSON(w,http.StatusOK,envelope{Data:map[string]any{"valid":true,"service_type":request.ServiceType,"module":module.Manifest()}})
+}
+
+func requireGatewayToken(next http.Handler, expected string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2" || strings.HasPrefix(r.URL.Path, "/v2/") {
+			actual := strings.TrimSpace(r.Header.Get(gatewayTokenHeader))
+			if len(actual) != len(expected) || subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+				writeError(w, http.StatusUnauthorized, "GATEWAY_AUTH_REQUIRED", "trusted gateway authentication is required")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func canonicalRequestHash(r *http.Request) (string, error) {

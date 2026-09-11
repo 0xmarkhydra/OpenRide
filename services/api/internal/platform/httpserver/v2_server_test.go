@@ -10,6 +10,8 @@ import (
 	"flashx/services/api/internal/auth"
 )
 
+const testMarketplaceGatewayToken = "test-marketplace-gateway-token-123456"
+
 func testAuthService(t *testing.T) *auth.Service {
 	t.Helper()
 	svc, err := auth.NewService(auth.NewMemoryStore(), auth.DevelopmentOTPSender{}, "test-secret-at-least-16-bytes", "test", "development")
@@ -36,12 +38,15 @@ func TestV2ServiceCatalogIsProxiedToMarketplaceService(t *testing.T) {
 		if r.Header.Get("X-OpenRide-Actor-ID") != "" {
 			t.Fatalf("public catalog must not synthesize an actor")
 		}
+		if got := r.Header.Get(marketplaceGatewayTokenHeader); got != testMarketplaceGatewayToken {
+			t.Fatalf("gateway token = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"id":"passenger.car","version":"1.0.0","display_name":"Passenger Car","category":"passenger"}]}`))
 	}))
 	defer upstream.Close()
 
-	server := NewV2(":0", Dependencies{}, upstream.URL)
+	server := NewV2(":0", Dependencies{MarketplaceGatewayToken: testMarketplaceGatewayToken}, upstream.URL)
 	req := httptest.NewRequest(http.MethodGet, "/v2/services", nil)
 	rec := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(rec, req)
@@ -62,7 +67,7 @@ func TestV2MarketplaceRouteRequiresAuthentication(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	server := NewV2(":0", Dependencies{Auth: testAuthService(t)}, upstream.URL)
+	server := NewV2(":0", Dependencies{Auth: testAuthService(t), MarketplaceGatewayToken: testMarketplaceGatewayToken}, upstream.URL)
 	req := httptest.NewRequest(http.MethodGet, "/v2/requests/req_1", nil)
 	rec := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(rec, req)
@@ -90,6 +95,9 @@ func TestV2MarketplaceProxyRebuildsActorAndStripsClientTrustHeaders(t *testing.T
 		if got := r.Header.Get("Authorization"); got != "" {
 			t.Fatalf("public bearer token leaked upstream")
 		}
+		if got := r.Header.Get(marketplaceGatewayTokenHeader); got != testMarketplaceGatewayToken {
+			t.Fatalf("trusted gateway token = %q", got)
+		}
 		if got := r.Header.Get("Idempotency-Key"); got != "create-request-1" {
 			t.Fatalf("idempotency key = %q", got)
 		}
@@ -102,13 +110,14 @@ func TestV2MarketplaceProxyRebuildsActorAndStripsClientTrustHeaders(t *testing.T
 	}))
 	defer upstream.Close()
 
-	server := NewV2(":0", Dependencies{Auth: authService}, upstream.URL)
+	server := NewV2(":0", Dependencies{Auth: authService, MarketplaceGatewayToken: testMarketplaceGatewayToken}, upstream.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v2/requests", strings.NewReader(`{"service_type":"passenger.car"}`))
 	req.Header.Set("Authorization", bearerFor(t, authService, "rider_real", auth.RoleRider))
 	req.Header.Set("Idempotency-Key", "create-request-1")
 	req.Header.Set("X-Correlation-ID", "corr-1")
 	req.Header.Set("X-OpenRide-Actor-ID", "attacker")
 	req.Header.Set("X-OpenRide-Role", "admin")
+	req.Header.Set(marketplaceGatewayTokenHeader, "attacker-gateway-token-xxxxxxxx")
 	rec := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(rec, req)
 
@@ -126,7 +135,7 @@ func TestV2MarketplaceRouteEnforcesActorRole(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	server := NewV2(":0", Dependencies{Auth: authService}, upstream.URL)
+	server := NewV2(":0", Dependencies{Auth: authService, MarketplaceGatewayToken: testMarketplaceGatewayToken}, upstream.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v2/requests", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", bearerFor(t, authService, "driver_1", auth.RoleDriver))
 	rec := httptest.NewRecorder()
@@ -140,8 +149,27 @@ func TestV2MarketplaceRouteEnforcesActorRole(t *testing.T) {
 	}
 }
 
+func TestV2MarketplaceFailsClosedWithoutGatewaySecret(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	server := NewV2(":0", Dependencies{}, upstream.URL)
+	rec := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v2/services", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstreamCalls.Load() != 0 {
+		t.Fatalf("request reached Marketplace without gateway secret")
+	}
+}
+
 func TestV2MarketplaceRouteFailsClosedWhenServiceIsNotConfigured(t *testing.T) {
-	server := NewV2(":0", Dependencies{}, "")
+	server := NewV2(":0", Dependencies{MarketplaceGatewayToken: testMarketplaceGatewayToken}, "")
 	rec := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v2/services", nil))
 	if rec.Code != http.StatusServiceUnavailable {

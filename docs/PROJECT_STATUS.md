@@ -25,7 +25,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Acceptance locks Request before Quote and retries PostgreSQL serialization/deadlock failures up to three attempts. A 100-way PostgreSQL integration test path exists, but hosted runner infrastructure has not executed it yet. |
 | Agreement commercial snapshot | 🟡 | Accepted quote metadata is detached into a typed snapshot and the Agreement table is append-only at the database layer. Canonical content hashing/signing is not implemented. |
 | Ranking engine | 🟡 | Core ranking is deterministic/explainable, isolates rankers from canonical quote data, and the V2 rider-offers path now ranks persisted selectable quotes through the hardened Core entrypoint. Executable service CI proof is still blocked by hosted runner availability. |
-| Transactional outbox relay | 🟡 | PostgreSQL `SKIP LOCKED` relay publishes to JetStream with deterministic `Nats-Msg-Id`. Retry backoff/dead-letter handling and consumer inbox dedupe are still incomplete. |
+| Transactional outbox relay | 🟡 | Relay now claims work with short DB leases, publishes outside the claim transaction, retries with bounded exponential backoff, dead-letters after 12 failed attempts and keeps deterministic `Nats-Msg-Id`. Consumer inbox processing is still not wired because there is not yet an extracted Marketplace event consumer. |
 | JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔service E2E verification is still required. |
 | Generic command idempotency | 🟡 | Create request, create tariff, submit quote, cancel request and withdraw quote persist payload hash, resource identity, response status and response snapshot in the same PostgreSQL transaction as the mutation. Same-key/same-payload retries replay the original response; same-key/different-payload returns `409 IDEMPOTENCY_CONFLICT`. Real PostgreSQL integration proof is still required. Acceptance retains its specialized durable Agreement replay path. |
 
@@ -33,8 +33,8 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 
 | Service | Status | Data ownership |
 |---|---|---|
-| Compatibility API / edge | 🔁 | Owns legacy V1 runtime data during migration. |
-| Marketplace Service | 🟡 | Owns Marketplace V2 state in its dedicated database. It must remain behind a trusted gateway because actor identity is currently supplied through an internal header. |
+| Compatibility API / edge | 🟡 | Still owns legacy V1 runtime data and now authenticates public Marketplace V2 traffic, enforces rider/driver role, strips client `X-OpenRide-*` trust headers and reconstructs `X-OpenRide-Actor-ID` from authenticated claims. Executable CI proof is still blocked by hosted runners. |
+| Marketplace Service | 🟡 | Owns Marketplace V2 state in its dedicated database. It still trusts its internal actor header and therefore must remain network-private behind the authenticated edge. |
 | Location Service | ⏳ | Will own online presence, current driver coordinates and candidate discovery. |
 | Ride Service | ⏳ | Will own post-agreement execution state. |
 | Identity Service | ⏳ | Auth/identity currently remains in compatibility runtime. |
@@ -69,10 +69,10 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 ## Known P0/P1 gaps
 
 1. Execute the real PostgreSQL integration suites for generic idempotency replay/conflict and 100-way competing quote acceptance once CI runner capacity is restored.
-2. Put Marketplace behind an authenticated Edge/BFF that strips client-supplied internal actor headers and reconstructs trusted actor context.
-3. Add outbox retry backoff, dead-letter/operator visibility and consumer-side inbox dedupe.
-4. Run SDK↔Marketplace E2E tests and enforce one documented money range/serialization rule across all public clients.
-5. Add production observability and operational evidence for ranking/idempotency/concurrency paths before upgrading their status beyond Foundation.
+2. Enforce one documented money range/serialization rule across Marketplace HTTP, PostgreSQL and public clients, then run SDK↔Edge↔Marketplace E2E tests.
+3. Wire inbox dedupe when the first extracted NATS consumer is introduced; the schema exists but there is no consumer lifecycle to protect yet.
+4. Add structured metrics/tracing and operator surfaces for dead-lettered outbox events, ranking/idempotency failures and concurrency retries.
+5. Keep Marketplace network-private in deployment; the compatibility edge is now the intended public V2 auth boundary.
 
 ## What OpenRide does **not** claim today
 
@@ -95,9 +95,11 @@ Those are explicit work items, not hidden gaps.
 ## Current migration path
 
 ```text
-Legacy V1 runtime
+Public clients
       │
-      │ compatibility edge / future authenticated BFF
+      ▼
+Compatibility Edge / Auth boundary 🟡
+      │ trusted actor context
       ▼
 Marketplace Service ✅/🟡
       │

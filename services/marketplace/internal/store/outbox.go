@@ -21,6 +21,58 @@ type OutboxMessage struct {
 	Attempts int
 }
 
+type OutboxStatus struct {
+	Ready           int64      `json:"ready"`
+	Delayed         int64      `json:"delayed"`
+	Leased          int64      `json:"leased"`
+	DeadLettered    int64      `json:"dead_lettered"`
+	Published       int64      `json:"published"`
+	OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
+}
+
+func (s *Store) OutboxStatus(ctx context.Context) (OutboxStatus, error) {
+	var status OutboxStatus
+	var oldest *time.Time
+	err := s.pool.QueryRow(ctx, `
+SELECT
+    count(*) FILTER (
+        WHERE published_at IS NULL
+          AND dead_lettered_at IS NULL
+          AND next_attempt_at <= now()
+          AND (locked_until IS NULL OR locked_until <= now())
+    ) AS ready,
+    count(*) FILTER (
+        WHERE published_at IS NULL
+          AND dead_lettered_at IS NULL
+          AND next_attempt_at > now()
+          AND (locked_until IS NULL OR locked_until <= now())
+    ) AS delayed,
+    count(*) FILTER (
+        WHERE published_at IS NULL
+          AND dead_lettered_at IS NULL
+          AND locked_until > now()
+    ) AS leased,
+    count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_lettered,
+    count(*) FILTER (WHERE published_at IS NOT NULL) AS published,
+    min(created_at) FILTER (WHERE published_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at
+FROM outbox_events`).Scan(
+		&status.Ready,
+		&status.Delayed,
+		&status.Leased,
+		&status.DeadLettered,
+		&status.Published,
+		&oldest,
+	)
+	if err != nil {
+		return OutboxStatus{}, err
+	}
+	if oldest != nil {
+		value := oldest.UTC()
+		status.OldestPendingAt = &value
+	}
+	return status, nil
+}
+
 // RelayOutboxBatch leases ready rows in a short database transaction, publishes
 // outside that transaction, then records success/failure using the lease token.
 // If the process crashes after publish but before acknowledgement, the lease

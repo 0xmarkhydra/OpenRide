@@ -25,8 +25,9 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 | Quote acceptance / Agreement | 🟡 | Atomic PostgreSQL transaction creates one Agreement, changes request/quote state, stores acceptance idempotency and appends an outbox event. Acceptance locks Request before Quote and retries PostgreSQL serialization/deadlock failures up to three attempts. A 100-way PostgreSQL integration test path exists, but hosted runner infrastructure has not executed it yet. |
 | Agreement commercial snapshot | 🟡 | Accepted quote metadata is detached into a typed snapshot and the Agreement table is append-only at the database layer. Canonical content hashing/signing is not implemented. |
 | Ranking engine | 🟡 | Core ranking is deterministic/explainable, isolates rankers from canonical quote data, and the V2 rider-offers path now ranks persisted selectable quotes through the hardened Core entrypoint. Executable service CI proof is still blocked by hosted runner availability. |
-| Transactional outbox relay | 🟡 | Relay now claims work with short DB leases, publishes outside the claim transaction, retries with bounded exponential backoff, dead-letters after 12 failed attempts and keeps deterministic `Nats-Msg-Id`. Consumer inbox processing is still not wired because there is not yet an extracted Marketplace event consumer. |
-| JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔service E2E verification is still required. |
+| Transactional outbox relay | 🟡 | Relay claims work with short DB leases, publishes outside the claim transaction, retries with bounded exponential backoff, dead-letters after 12 failed attempts and keeps deterministic `Nats-Msg-Id`. Consumer inbox processing is still not wired because there is not yet an extracted Marketplace event consumer. |
+| Public money contract | 🟡 | V2 defines every `*_minor` JSON field as an exact non-negative integer in `0..2^53-1`. HTTP validates nested minor fields before float decoding, PostgreSQL enforces the same ceiling for persisted tariff/quote/Agreement money, and the JS SDK rejects unsafe inputs before network I/O. Executable service/SDK CI proof is still blocked by hosted runners. |
+| JavaScript / TypeScript SDK | 🟡 | Fetch-based SDK matches the current flat V2 tariff/quote/offer contract and rejects unsafe money inputs. Full SDK↔Edge↔Marketplace E2E verification is still required. |
 | Generic command idempotency | 🟡 | Create request, create tariff, submit quote, cancel request and withdraw quote persist payload hash, resource identity, response status and response snapshot in the same PostgreSQL transaction as the mutation. Same-key/same-payload retries replay the original response; same-key/different-payload returns `409 IDEMPOTENCY_CONFLICT`. Real PostgreSQL integration proof is still required. Acceptance retains its specialized durable Agreement replay path. |
 
 ## Services
@@ -69,7 +70,7 @@ OpenRide is a **pre-1.0 open-source mobility marketplace** under active architec
 ## Known P0/P1 gaps
 
 1. Execute the real PostgreSQL integration suites for generic idempotency replay/conflict and 100-way competing quote acceptance once CI runner capacity is restored.
-2. Enforce one documented money range/serialization rule across Marketplace HTTP, PostgreSQL and public clients, then run SDK↔Edge↔Marketplace E2E tests.
+2. Run SDK↔Edge↔Marketplace E2E tests against real HTTP boundaries, including money, auth-header stripping, ranking and idempotency replay/conflict.
 3. Wire inbox dedupe when the first extracted NATS consumer is introduced; the schema exists but there is no consumer lifecycle to protect yet.
 4. Add structured metrics/tracing and operator surfaces for dead-lettered outbox events, ranking/idempotency failures and concurrency retries.
 5. Keep Marketplace network-private in deployment; the compatibility edge is now the intended public V2 auth boundary.

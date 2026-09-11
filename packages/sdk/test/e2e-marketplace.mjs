@@ -149,14 +149,14 @@ const withdrawReplay = await driver.withdrawQuote(withdrawQuote.quote_id, { idem
 assert.equal(withdrawReplay.status, 'withdrawn', 'withdraw replay did not return original status');
 
 assert.throws(
-  () => driver.submitQuote(created.id, {
+  () => driver.submitQuote(withdrawRequest.id, {
     fare_total_minor: Number.MAX_SAFE_INTEGER + 1,
     currency: 'VND',
   }, { idempotencyKey: 'e2e-unsafe-sdk-money' }),
   /non-negative safe integer/,
 );
 
-const rawUnsafe = await fetch(`${baseURL}/v2/requests/${encodeURIComponent(created.id)}/quotes`, {
+const rawUnsafe = await fetch(`${baseURL}/v2/requests/${encodeURIComponent(withdrawRequest.id)}/quotes`, {
   method: 'POST',
   headers: {
     authorization: `Bearer ${driverAuth.tokens.access_token}`,

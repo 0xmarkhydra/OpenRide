@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +28,7 @@ func TestCreateRequestRejectsUnsafeNestedMinorBeforeDomainDecode(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Body.String(); !bytes.Contains([]byte(got), []byte(`"code":"MONEY_MINOR_INVALID"`)) {
+	if got := rec.Body.String(); !strings.Contains(got, `"code":"MONEY_MINOR_INVALID"`) {
 		t.Fatalf("expected MONEY_MINOR_INVALID, body=%s", got)
 	}
 }
@@ -59,7 +61,8 @@ func TestValidatePublicMinorFieldsRejectsFractionAndNegativeValues(t *testing.T)
 		`{"nested":{"pickup_fee_minor":9007199254740992}}`,
 	} {
 		var value any
-		decoder := jsonDecoderUseNumber(body)
+		decoder := json.NewDecoder(strings.NewReader(body))
+		decoder.UseNumber()
 		if err := decoder.Decode(&value); err != nil {
 			t.Fatal(err)
 		}

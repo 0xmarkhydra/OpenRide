@@ -43,3 +43,63 @@ test('API errors become OpenRideError', async () => {
     (error) => error instanceof OpenRideError && error.status === 409 && error.code === 'QUOTE_EXPIRED',
   );
 });
+
+test('submitQuote accepts Number.MAX_SAFE_INTEGER exactly', async () => {
+  let body;
+  const client = new OpenRideClient({
+    baseURL: 'https://example.test',
+    fetch: async (_url, init) => {
+      body = JSON.parse(init.body);
+      return response(201, { data: { quote_id: 'q_1', fare_total_minor: Number.MAX_SAFE_INTEGER, currency: 'VND' } });
+    },
+  });
+
+  await client.submitQuote('req_1', {
+    fare_total_minor: Number.MAX_SAFE_INTEGER,
+    currency: 'VND',
+  }, { idempotencyKey: 'quote-safe-max' });
+
+  assert.equal(body.fare_total_minor, Number.MAX_SAFE_INTEGER);
+});
+
+test('submitQuote rejects money above JavaScript safe integer range before network I/O', async () => {
+  let calls = 0;
+  const client = new OpenRideClient({
+    baseURL: 'https://example.test',
+    fetch: async () => {
+      calls += 1;
+      return response(201, { data: {} });
+    },
+  });
+
+  assert.throws(
+    () => client.submitQuote('req_1', {
+      fare_total_minor: Number.MAX_SAFE_INTEGER + 1,
+      currency: 'VND',
+    }, { idempotencyKey: 'quote-too-large' }),
+    /non-negative safe integer/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('createDriverTariff rejects unsafe minor-unit fields before network I/O', async () => {
+  let calls = 0;
+  const client = new OpenRideClient({
+    baseURL: 'https://example.test',
+    fetch: async () => {
+      calls += 1;
+      return response(201, { data: {} });
+    },
+  });
+
+  assert.throws(
+    () => client.createDriverTariff({
+      service_type: 'passenger.car',
+      quote_mode: 'manual',
+      currency: 'VND',
+      per_km_minor: Number.MAX_SAFE_INTEGER + 1,
+    }, { idempotencyKey: 'tariff-too-large' }),
+    /non-negative safe integer/,
+  );
+  assert.equal(calls, 0);
+});

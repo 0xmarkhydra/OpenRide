@@ -1,5 +1,7 @@
 name: openride-e2e
 
+x-marketplace-gateway-token: &marketplace-gateway-token e2e-marketplace-gateway-token-123456789
+
 services:
   edge-postgres:
     image: postgis/postgis:16-3.4
@@ -73,6 +75,7 @@ services:
       DATABASE_URL: postgres://marketplace:marketplace-test@marketplace-db:5432/marketplace_test?sslmode=disable
       NATS_URL: nats://nats:4222
       SERVICE_NAME: marketplace-service
+      MARKETPLACE_GATEWAY_TOKEN: *marketplace-gateway-token
     depends_on:
       marketplace-migrate:
         condition: service_completed_successfully
@@ -101,6 +104,7 @@ services:
       SMS_PROVIDER: development
       OBJECT_STORAGE_PROVIDER: disabled
       MARKETPLACE_SERVICE_URL: http://marketplace:8090
+      MARKETPLACE_GATEWAY_TOKEN: *marketplace-gateway-token
       ADMIN_PHONE: +84900000000
       ADMIN_EMAIL: admin@openride.local
       ADMIN_DISPLAY_NAME: OpenRide Operator

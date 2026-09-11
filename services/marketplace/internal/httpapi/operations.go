@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	marketplacestore "github.com/0xmarkhydra/OpenRide/services/marketplace/internal/store"
 )
@@ -18,7 +19,7 @@ func (s *Server) outboxStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "OUTBOX_STATUS_UNAVAILABLE", "outbox status is unavailable for this store")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2_000_000_000)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	status, err := reader.OutboxStatus(ctx)
 	if err != nil {

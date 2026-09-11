@@ -102,5 +102,8 @@ func (a *idempotentV2Adapter) WithdrawQuote(ctx context.Context, quoteID, driver
 	if err == nil && replay { setReplay(ctx, http.StatusOK, map[string]any{"status":"withdrawn"}) }
 	return err
 }
+func (a *idempotentV2Adapter) OutboxStatus(ctx context.Context) (marketplacestore.OutboxStatus, error) {
+	return outboxStatusFromBase(ctx, a.base)
+}
 
 func isIdempotencyConflict(err error) bool { return errors.Is(err, marketplacestore.ErrIdempotencyConflict) }

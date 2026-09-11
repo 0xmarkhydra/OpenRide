@@ -76,7 +76,7 @@ assert.equal(created.rider_id, riderAuth.actor.id, 'Edge did not reconstruct rid
 assert.equal(created.status, 'open');
 
 const replayed = await rider.createRequest(requestInput, { idempotencyKey: requestKey });
-assert.equal(replayed.id, created.id, 'same-key/same-payload did not replay the original resource');
+assert.equal(replayed.id, created.id, 'create request replay returned a different resource');
 
 await expectOpenRideError(
   () => rider.createRequest({
@@ -87,21 +87,26 @@ await expectOpenRideError(
   'IDEMPOTENCY_CONFLICT',
 );
 
-const tariff = await driver.createDriverTariff({
+const tariffInput = {
   service_type: 'passenger.car',
   quote_mode: 'manual',
   currency: 'VND',
   minimum_fare_minor: 20000,
   per_km_minor: 5000,
-}, { idempotencyKey: 'e2e-driver-tariff-1' });
+};
+const tariffKey = 'e2e-driver-tariff-1';
+const tariff = await driver.createDriverTariff(tariffInput, { idempotencyKey: tariffKey });
 assert.equal(tariff.driver_id, driverAuth.actor.id, 'Edge did not reconstruct driver identity');
+const tariffReplay = await driver.createDriverTariff(tariffInput, { idempotencyKey: tariffKey });
+assert.equal(tariffReplay.id, tariff.id, 'tariff replay returned a different resource');
 
-const quote = await driver.submitQuote(created.id, {
-  fare_total_minor: 52000,
-  currency: 'VND',
-}, { idempotencyKey: 'e2e-quote-1' });
+const quoteInput = { fare_total_minor: 52000, currency: 'VND' };
+const quoteKey = 'e2e-quote-1';
+const quote = await driver.submitQuote(created.id, quoteInput, { idempotencyKey: quoteKey });
 assert.ok(quote.quote_id?.startsWith('quote_'), `unexpected quote id ${quote.quote_id}`);
 assert.equal(quote.fare_total_minor, 52000);
+const quoteReplay = await driver.submitQuote(created.id, quoteInput, { idempotencyKey: quoteKey });
+assert.equal(quoteReplay.quote_id, quote.quote_id, 'quote replay returned a different resource');
 
 const offers = await rider.listOffers(created.id);
 assert.equal(offers.length, 1);
@@ -120,6 +125,28 @@ assert.equal(accepted.agreement.fare_total_minor, 52000);
 
 const acceptedReplay = await rider.acceptQuote(quote.quote_id, { idempotencyKey: 'e2e-accept-1' });
 assert.equal(acceptedReplay.agreement.id, accepted.agreement.id, 'accept replay returned a different Agreement');
+
+const cancelRequest = await rider.createRequest({
+  ...requestInput,
+  pickup: { lat: 19.8100, lng: 105.7800 },
+}, { idempotencyKey: 'e2e-cancel-request-create' });
+const cancelled = await rider.cancelRequest(cancelRequest.id, { idempotencyKey: 'e2e-cancel-1', reason: 'e2e' });
+assert.equal(cancelled.status, 'cancelled');
+const cancelReplay = await rider.cancelRequest(cancelRequest.id, { idempotencyKey: 'e2e-cancel-1', reason: 'e2e' });
+assert.equal(cancelReplay.status, 'cancelled', 'cancel replay did not return original status');
+
+const withdrawRequest = await rider.createRequest({
+  ...requestInput,
+  pickup: { lat: 19.8200, lng: 105.7900 },
+}, { idempotencyKey: 'e2e-withdraw-request-create' });
+const withdrawQuote = await driver.submitQuote(withdrawRequest.id, {
+  fare_total_minor: 53000,
+  currency: 'VND',
+}, { idempotencyKey: 'e2e-withdraw-quote-create' });
+const withdrawn = await driver.withdrawQuote(withdrawQuote.quote_id, { idempotencyKey: 'e2e-withdraw-1' });
+assert.equal(withdrawn.status, 'withdrawn');
+const withdrawReplay = await driver.withdrawQuote(withdrawQuote.quote_id, { idempotencyKey: 'e2e-withdraw-1' });
+assert.equal(withdrawReplay.status, 'withdrawn', 'withdraw replay did not return original status');
 
 assert.throws(
   () => driver.submitQuote(created.id, {
@@ -144,6 +171,26 @@ assert.equal(rawUnsafe.status, 422);
 const rawUnsafePayload = await rawUnsafe.json();
 assert.equal(rawUnsafePayload.error?.code, 'MONEY_MINOR_INVALID');
 
+const spoofRequestResponse = await fetch(`${baseURL}/v2/requests`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${riderAuth.tokens.access_token}`,
+    'content-type': 'application/json',
+    accept: 'application/json',
+    'idempotency-key': 'e2e-spoof-check',
+    'x-openride-actor-id': 'attacker-rider',
+    'x-openride-role': 'admin',
+  },
+  body: JSON.stringify({
+    ...requestInput,
+    pickup: { lat: 19.8300, lng: 105.8000 },
+  }),
+});
+assert.equal(spoofRequestResponse.status, 201);
+const spoofPayload = await spoofRequestResponse.json();
+assert.equal(spoofPayload.data?.rider_id, riderAuth.actor.id, 'client trust header overrode authenticated actor');
+assert.notEqual(spoofPayload.data?.rider_id, 'attacker-rider');
+
 console.log(JSON.stringify({
   status: 'ok',
   rider_id: riderAuth.actor.id,
@@ -151,4 +198,5 @@ console.log(JSON.stringify({
   request_id: created.id,
   quote_id: quote.quote_id,
   agreement_id: accepted.agreement.id,
+  generic_idempotency: ['create_request', 'create_tariff', 'submit_quote', 'cancel_request', 'withdraw_quote'],
 }));

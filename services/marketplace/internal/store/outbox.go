@@ -10,7 +10,7 @@ import (
 
 const (
 	outboxLeaseDuration = 30 * time.Second
-	outboxMaxAttempts   = 12
+	OutboxMaxAttempts   = 12
 	outboxMaxBackoff    = 5 * time.Minute
 )
 
@@ -125,7 +125,7 @@ WHERE id = $1
 func (s *Store) recordOutboxFailure(ctx context.Context, m OutboxMessage, leaseToken string, publishErr error) error {
 	nextAttempt := m.Attempts + 1
 	backoff := outboxBackoff(nextAttempt)
-	deadLetter := nextAttempt >= outboxMaxAttempts
+	deadLetter := nextAttempt >= OutboxMaxAttempts
 	command, err := s.pool.Exec(ctx, `
 UPDATE outbox_events
 SET attempts = attempts + 1,

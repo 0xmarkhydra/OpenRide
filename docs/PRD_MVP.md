@@ -1,9 +1,11 @@
-# PRD — FlashX MVP
+# PRD — FlashX MVP (Historical / Deprecated for OpenRide)
 
-> **Business baseline: 12/08/2026**  
-> Chi tiết yêu cầu khách hàng: [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md)
+> **DO NOT use this file as the OpenRide product source of truth.** Đây là PRD của FlashX trước khi repository được rebaseline thành OpenRide Marketplace. OpenRide hiện theo `PROJECT_STATUS.md`, `PRODUCT_VISION.md`, `DOMAIN_MODEL.md`, `API_CONTRACT_V2.md`, [`UX_UI_SYSTEM.md`](./UX_UI_SYSTEM.md) và [`OPENRIDE_UX_BA_ROADMAP.md`](./OPENRIDE_UX_BA_ROADMAP.md). Nội dung bên dưới chỉ giữ lại để audit lịch sử/migration.
 >
-> Quy tắc vận hành 3 dịch vụ: [`BA_MVP_OPERATING_RULES_2026-08-12.md`](./BA_MVP_OPERATING_RULES_2026-08-12.md)
+> **Historical baseline: 12/08/2026**
+> Chi tiết yêu cầu FlashX cũ: [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md)
+>
+> Quy tắc vận hành FlashX cũ: [`BA_MVP_OPERATING_RULES_2026-08-12.md`](./BA_MVP_OPERATING_RULES_2026-08-12.md)
 
 ## 1. Product objective
 

@@ -1,6 +1,6 @@
-# Rider App
+# Rider App — Legacy Compatibility Notes
 
-> **Current product direction:** đây là Customer App cho **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**, không còn là app gọi xe Grab-like. Flow chi tiết mới nhất nằm ở [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và `PRD_MVP.md`; các từ `trip/booking` trong tài liệu này cần được hiểu/migrate theo service/job mới.
+> **Deprecated product semantics:** phần lớn tài liệu bên dưới mô tả hướng FlashX cũ và không còn là source of truth cho OpenRide Marketplace V2. Không implement UX mới từ các flow Lái hộ/Đăng kiểm hộ này. Thiết kế OpenRide hiện hành nằm ở [`UX_UI_SYSTEM.md`](./UX_UI_SYSTEM.md), [`OPENRIDE_UX_BA_ROADMAP.md`](./OPENRIDE_UX_BA_ROADMAP.md), và trạng thái thật ở [`PROJECT_STATUS.md`](./PROJECT_STATUS.md). File này chỉ còn hữu ích để tham khảo foundation Flutter/realtime/error handling trong giai đoạn migration.
 
 ## 1. Stack
 

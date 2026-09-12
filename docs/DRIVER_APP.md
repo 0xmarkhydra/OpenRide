@@ -1,6 +1,6 @@
-# Driver App
+# Driver App — Legacy Compatibility Notes
 
-> **Current product direction:** Driver App phục vụ tài xế/người thực hiện cho **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**. Không coi xe của tài xế là phương tiện chở khách như Grab. KYC tập trung vào năng lực tài xế; workflow nhận/bàn giao **xe của khách** phải được bổ sung theo [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md).
+> **Deprecated product semantics:** phần lớn tài liệu bên dưới mô tả hướng FlashX cũ và không còn là source of truth cho OpenRide Marketplace V2. Không implement UX mới từ các flow Lái hộ/Đăng kiểm hộ này. Thiết kế driver hiện hành phải theo [`UX_UI_SYSTEM.md`](./UX_UI_SYSTEM.md), [`OPENRIDE_UX_BA_ROADMAP.md`](./OPENRIDE_UX_BA_ROADMAP.md), domain/API V2 và trạng thái thật trong [`PROJECT_STATUS.md`](./PROJECT_STATUS.md). File này chỉ còn dùng để tham khảo foundation Flutter, background location, realtime và reconnect trong migration.
 
 ## 1. Stack
 

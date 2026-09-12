@@ -37,6 +37,8 @@ A translation must preserve API paths, identifiers, event names, JSON fields, co
 8. `API_CONTRACT_V2.md` — V2 public contract target.
 9. `OPENRIDE_MIGRATION_PLAN_V2.md` — staged migration from compatibility runtime.
 10. `ADR_OPENRIDE_V2.md` — V2 architecture decisions.
+11. `UX_UI_SYSTEM.md` — OpenRide production UI/UX contract and design system.
+12. `OPENRIDE_UX_BA_ROADMAP.md` — UX/BA slices, invariants and implementation sequence.
 
 ## Marketplace invariant
 

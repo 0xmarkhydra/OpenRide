@@ -1,9 +1,9 @@
-# Product Backlog — FlashX MVP
+# Product Backlog — FlashX MVP (Historical / Deprecated for OpenRide)
 
-> **Rebaseline 12/08/2026 — business mới đã chốt.**  
-> Source of truth: [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và [`PRD_MVP.md`](./PRD_MVP.md).
+> **DO NOT treat the checklist below as the OpenRide backlog.** Đây là backlog của FlashX trước khi repository được rebaseline thành OpenRide Marketplace. Backlog UX/BA OpenRide hiện nằm ở [`OPENRIDE_UX_BA_ROADMAP.md`](./OPENRIDE_UX_BA_ROADMAP.md); implementation truth nằm ở [`PROJECT_STATUS.md`](./PROJECT_STATUS.md). Nội dung bên dưới chỉ giữ cho audit/migration.
 >
-> FlashX **không còn là Grab/Uber clone**. MVP chỉ gồm **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**. Khách sử dụng phương tiện của chính mình.
+> **Historical baseline: 12/08/2026.**
+> Legacy source: [`CUSTOMER_REQUIREMENTS.md`](./CUSTOMER_REQUIREMENTS.md) và [`PRD_MVP.md`](./PRD_MVP.md).
 
 ## 1. Quy tắc ưu tiên
 

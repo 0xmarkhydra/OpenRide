@@ -1,529 +1,452 @@
-# UX/UI System — FlashX MVP
+# OpenRide UX/UI System
 
-> **UX rebaseline 12/08/2026:** FlashX là nền tảng **tài xế lái hộ / hỗ trợ phương tiện**, không còn là Grab/Uber clone. MVP chỉ gồm **Lái hộ ô tô / Lái hộ xe máy / Đăng kiểm hộ**.
+> **Rebaseline: 12/09/2026**
+> This is the production UX contract for OpenRide. The approved dark concept mock is the visual north star, but domain truth always wins over decoration.
 
-## 1. Product UX principles
+## 1. Product UX promise
 
-1. Mỗi màn hình chỉ có một primary action rõ ràng.
-2. Khách phải luôn hiểu **ai đang giữ/lái xe của mình và công việc đang ở bước nào**.
-3. Trạng thái hiển thị bằng ngôn ngữ nghiệp vụ tiếng Việt, không phơi technical state.
-4. Trust là feature cốt lõi: tài xế/KYC/phương tiện/bàn giao phải được thể hiện rõ.
-5. Không optimistic-update action có race, tài chính hoặc bàn giao tài sản trước khi backend xác nhận.
-6. Mạng yếu/GPS lỗi là trạng thái bình thường cần thiết kế đầy đủ.
-7. Bản đồ hỗ trợ task, không chiếm hết trải nghiệm.
-8. Một service flow không được ép dùng layout/state của taxi nếu bản chất là workflow khác, đặc biệt Đăng kiểm hộ.
-9. Không tạo false affordance: control trông bấm được thì phải có action thật.
-10. Tối ưu thao tác một tay và đọc nhanh trên thiết bị thật.
+OpenRide must make three things obvious on every marketplace screen:
+
+1. **Drivers set their own commercial terms.**
+2. **Riders compare and choose.**
+3. **OpenRide connects, ranks and explains — it does not silently rewrite quotes.**
+
+Once a rider accepts a quote, the product leaves **marketplace mode** and enters **agreement mode**. The accepted agreement must render the commercial snapshot that both sides accepted.
 
 ## 2. Visual direction
 
-### FlashX identity
+The approved mock defines the visual language:
 
-- `navy / primary`: `#0B132B`
-- `yellow / accent`: `#FFD600`
-- `lime / success accent`: `#C7F36B`
-- `mint / support accent`: dùng tiết chế cho trust/safe/secondary highlight
-- `canvas`: `#F4F5F7` / `#F5F6F8`
-- `surface`: `#FFFFFF`
-- `textPrimary`: `#111827`
-- `textSecondary`: `#6B7280`
-- `border`: `#E5E7EB`
-- `success`: `#0E9F6E`
-- `warning`: `#F59E0B`
-- `danger`: `#E5484D`
+- dark navy / near-black canvas;
+- cyan / electric blue for navigation, discovery and platform actions;
+- green for selected, accepted and completed states;
+- white primary text, cool-gray secondary text;
+- dark elevated cards with subtle borders;
+- restrained glow only for active/selected states;
+- dark map style with high-contrast route and driver markers;
+- premium, calm, modern mobility feel;
+- mobile-first, one-hand friendly.
 
-Không quay lại màu brand xanh cũ `#0A7A55`.
+### Avoid
 
-### Reference quality
+- neon everywhere;
+- fake urgency/countdowns unless the domain really has TTL;
+- hiding fare/ETA/rating behind extra taps;
+- UI that implies OpenRide owns or sets the driver's quote;
+- oversized recommendation treatment that visually suppresses alternatives;
+- marketing copy inside task-critical states.
 
-Tham khảo mức polish, hierarchy, spacing và cách gom service card của các mobility app lớn tại Việt Nam như Green SM, nhưng:
-- không sao chép logo;
-- không sao chép asset độc quyền;
-- không copy nguyên visual identity;
-- giữ FlashX Navy + Electric Yellow + Lightning X.
+## 3. Design tokens
 
-## 3. Brand personality
+### Colors
 
-FlashX phải truyền được 4 thuộc tính:
-- **Nhanh** — ít bước, ETA rõ, CTA rõ.
-- **Tin cậy** — KYC, rating, thông tin tài xế, timeline minh bạch.
-- **An toàn** — handover/status/support dễ thấy.
-- **Chuyên nghiệp** — không dùng UI vui nhộn quá mức khi khách giao tài sản có giá trị cao.
+| Token | Role | Starting value |
+| --- | --- | --- |
+| `bg.canvas` | app background | `#030712` |
+| `bg.surface` | cards/sheets | `#0B1220` |
+| `bg.surfaceRaised` | elevated surfaces | `#111827` |
+| `border.subtle` | default border | `rgba(148,163,184,0.18)` |
+| `text.primary` | main text | `#F8FAFC` |
+| `text.secondary` | secondary text | `#94A3B8` |
+| `accent.primary` | cyan | `#22D3EE` |
+| `accent.secondary` | blue | `#38BDF8` |
+| `state.success` | green | `#34D399` |
+| `state.warning` | warning | `#FBBF24` |
+| `state.danger` | destructive | `#FB7185` |
 
-## 4. Typography / spacing / accessibility
+Use semantic tokens in Flutter. Do not scatter literal colors through feature widgets.
 
-- System-friendly sans-serif.
-- Base spacing 4px; thường dùng 8/12/16/24/32.
-- Touch target 44–48px trở lên.
-- Driver CTA cần lớn hơn Customer CTA thông thường.
-- Không dùng màu là tín hiệu duy nhất.
-- Contrast đủ đọc ngoài trời.
-- Icon-only control phải có semantic/screen-reader label.
-- Dynamic text không phá CTA/state quan trọng.
+### Typography
 
-## 5. Shared UI primitives
+- Inter/system sans.
+- Body: 15–16sp.
+- Secondary: 13–14sp.
+- Screen title: 24–32sp.
+- Driver-set price: 24–32sp with tabular numerals where possible.
+- Uppercase only for short status labels/badges.
 
-- PrimaryButton / SecondaryButton / DangerButton.
-- AppTextField / PhoneField / OTPField.
-- AppTopBar.
-- ServiceCard.
-- VehicleCard.
-- DriverCard.
-- LocationRow.
-- MoneyText.
-- StatusChip.
-- JobTimeline.
-- MapBottomSheet.
-- ScheduleSelector.
-- HandoverCard.
-- DocumentStatusCard.
-- EmptyState / ErrorState / OfflineBanner.
-- LoadingSkeleton / BlockingProgress.
-- ConfirmationSheet.
+### Spacing and geometry
 
----
+- 4px base grid.
+- Main spacing: 8 / 12 / 16 / 24 / 32.
+- Screen horizontal padding: 16–20.
+- Card radius: 16–20.
+- Primary CTA height: 52–56.
+- Minimum tap target: 44x44.
+- Bottom-sheet radius: 24–28.
 
-# 6. Customer App information architecture
+## 4. Core navigation
 
-## 6.1 Bottom navigation MVP
+### Rider
 
-- **Trang chủ**
-- **Lịch sử**
-- **Thông báo** nếu push/notification center đưa vào MVP UI
-- **Tài khoản**
+1. Home
+2. Trips
+3. Messages
+4. Account
 
-Không dành tab chính cho vertical ngoài MVP.
+Booking/request steps live in a focused flow, not extra permanent tabs.
 
-## 6.2 Home
+### Driver
 
-Home là **service-first**, map/context là hỗ trợ.
+1. Work
+2. Requests / Quotes
+3. Trips
+4. Earnings
+5. Account
 
-```text
-Header / greeting / notification
-Search/context: “Bạn cần tài xế làm gì?”
+Online/offline state must always be visible on Work.
 
-3 service CTA lớn:
-  1. Lái hộ ô tô
-  2. Lái hộ xe máy
-  3. Đăng kiểm hộ
+## 5. Rider UX flow
 
-Quick context:
-  - Xe của tôi
-  - Hẹn giờ
-  - Hỗ trợ
+### R0 — Entry / permissions
 
-Map / current-location context nếu phù hợp
-Bottom navigation
-```
+- Ask location only when needed.
+- Manual pickup is always available if permission is denied.
+- Explain permission value in plain Vietnamese.
+- Notification permission is not a hard blocker.
 
-Yêu cầu:
-- ba service phải nhìn thấy trong first meaningful viewport;
-- không hiển thị Food/Giao hàng/Taxi/Thuê xe tự lái;
-- service card phải nói rõ “tài xế lái xe của bạn”.
+### R1 — Home / map
 
-## 6.3 “Xe của tôi”
+Primary elements:
 
-### Vehicle list
-Mỗi card tối thiểu:
-- loại xe;
-- biển số;
-- hãng/model;
-- màu;
-- transmission nếu ô tô;
-- trạng thái/ảnh optional.
-
-Primary action:
-- Chọn xe khi booking, hoặc
-- Thêm xe nếu chưa có.
-
-### Add/Edit Vehicle
-Không hỏi trường không cần thiết cho service type.
-
-Ô tô:
-- biển số;
-- hãng/model;
-- màu;
-- số sàn/tự động;
-- số chỗ;
-- ghi chú.
-
-Xe máy:
-- biển số;
-- hãng/model;
-- màu;
-- ghi chú.
-
-## 6.4 Flow — Lái hộ ô tô
-
-```text
-Home
-→ Lái hộ ô tô
-→ Chọn xe của tôi
-→ Điểm nhận xe
-→ Điểm đến
-→ Ngay bây giờ / Hẹn giờ
-→ Estimate
-→ Xác nhận
-→ Đang tìm tài xế
-→ Tài xế nhận job
-→ Tài xế đang tới
-→ Nhận xe / xác nhận bàn giao
-→ Đang thực hiện
-→ Bàn giao xe
-→ Tổng kết / thanh toán
-→ Đánh giá
-```
-
-### Service detail screen
-Hiển thị:
-- vehicle card;
 - pickup;
 - destination;
-- note;
-- ETA tài xế tới khách;
-- route distance/time;
-- estimated price;
-- trust strip: tài xế được xác minh / support.
+- nearby supply/map context;
+- saved/recent places;
+- primary CTA: **Request offers**.
 
-### Booking confirmation
-- service name;
-- xe;
-- địa chỉ;
-- thời gian;
-- payment method;
-- breakdown giá dự kiến;
-- cancellation note ngắn;
-- CTA `Xác nhận đặt`.
+Do not show a platform-owned final fare as if it were the driver's price.
 
-### Matching
-Copy gợi ý:
-- `Đang tìm tài xế phù hợp...`
-- không dùng `Đang gọi xe`.
+### R2 — Request review
 
-Sau assignment:
-- ảnh/tên tài xế;
+Show:
+
+- route;
+- service module/category;
+- now/later if supported;
+- rider notes/constraints;
+- clear `Request offers` CTA.
+
+This creates a **Mobility Request**, not a deal.
+
+### R3 — Waiting for offers
+
+- `Drivers are reviewing your request` state;
+- real offer count;
+- request expiry/cancel/edit rules if supported;
+- honest empty/skeleton state;
+- never render fake sample quotes as live data.
+
+### R4 — Offers marketplace — signature screen
+
+Each OfferCard must expose:
+
+- driver identity/verification where available;
+- driver-set price/terms;
+- ETA to pickup;
+- distance to pickup;
+- rating/reputation;
+- vehicle;
+- quote expiry/conditions when relevant.
+
+Recommended hierarchy:
+
+1. Price.
+2. ETA + distance.
+3. Reputation.
+4. Vehicle.
+5. Conditions.
+
+Sorting:
+
+- Recommended
+- Lowest price
+- Fastest pickup
+- Best rated
+
+If `Recommended` is shown, explain the main reason, e.g. `Balanced for price, pickup time and reputation`.
+
+**Invariant:** ranking may reorder offers; it must not mutate, hide or fabricate quote terms.
+
+### R5 — Offer detail
+
+Show complete terms, cancellation rule, driver/vehicle detail and ranking explanation.
+
+Comparison of 2–3 offers is P1; do not delay MVP for a complex table.
+
+### R6 — Select and confirm
+
+Use a two-step mental model:
+
+1. Select offer.
+2. Confirm acceptance.
+
+The confirmation sheet repeats the exact commercial terms. If the quote changed, force a fresh review.
+
+### R7 — Agreement locked
+
+After acceptance, visually leave marketplace mode.
+
+Use green success treatment:
+
+- `Trip agreed`
+- `Price and terms confirmed`
+
+Agreement screen renders:
+
+- accepted price/terms;
+- driver;
+- route/request snapshot;
+- acceptance timestamp;
+- agreement identifier where useful.
+
+**Invariant:** render from the Agreement snapshot, not a newly recalculated quote.
+
+### R8 — Driver en route / active ride
+
+Prioritize:
+
+- map/route;
+- ETA/status;
+- contact/message;
+- safety actions;
+- agreed terms still accessible.
+
+Do not keep promoting alternative marketplace offers after agreement.
+
+### R9 — Completion
+
+- completed state;
+- receipt / amount explanation;
+- rating/feedback;
+- report/support entry.
+
+### R10 — History
+
+Trip detail must distinguish:
+
+- request;
+- quote;
+- accepted agreement;
+- execution;
+- settlement/receipt.
+
+## 6. Driver UX flow
+
+### D0 — Readiness
+
+Show:
+
+- profile/verification status;
+- capability/vehicle requirements where relevant;
+- online/offline;
+- reasons blocking quote participation.
+
+### D1 — Work / request discovery
+
+Relevant request cards may include:
+
+- pickup area/distance;
+- destination/direction if policy permits;
+- approximate distance/duration when available;
+- service requirements;
+- request age/expiry.
+
+### D2 — Request detail
+
+Driver reviews request before pricing.
+
+Primary CTA: **Send my offer**.
+
+### D3 — Quote composer — signature driver screen
+
+Make ownership explicit: **Your price**.
+
+Depending on module contract, support:
+
+- fixed total;
+- per-km/formula pricing;
+- notes/conditions;
+- quote expiry.
+
+Before submit, show a human-readable summary.
+
+**Invariant:** validation may reject/normalize structure; OpenRide must not silently replace the driver's commercial term.
+
+### D4 — Active quotes
+
+States:
+
+- Sent
+- Accepted
+- Expired
+- Withdrawn
+
+Only show `Viewed` if the backend truly supports it.
+
+### D5 — Accepted agreement
+
+Driver sees the same accepted commercial semantics as rider.
+
+Primary actions switch from marketplace actions to execution actions.
+
+### D6 — Ride execution
+
+Status machine must be explicit and hard to trigger accidentally:
+
+- heading to pickup;
+- arrived;
+- in progress;
+- completed;
+- cancel only where policy allows.
+
+Critical transitions require confirmation and server-confirmed state.
+
+### D7 — Earnings / history
+
+If a deployment charges fees, separate:
+
+- gross agreed amount;
+- network/platform fee;
+- net settlement.
+
+Never collapse them into one opaque number.
+
+## 7. Shared components
+
+### OfferCard
+
+Variants:
+
+- default;
+- recommended;
+- selected;
+- stale;
+- expired;
+- withdrawn.
+
+Required anatomy:
+
+- driver block;
+- price;
+- ETA + distance;
 - rating;
-- số job/kinh nghiệm nếu có;
-- GPLX/KYC badge phù hợp;
-- ETA;
-- gọi/nhắn;
-- map route tài xế → khách.
-
-### Handover
-MVP:
-- `Tài xế đã đến`
-- `Xác nhận bàn giao xe`
-- vehicle summary
-- note hiện trạng cơ bản nếu policy yêu cầu.
-
-P1 có thể thêm ảnh/odometer/fuel/PIN.
-
-## 6.5 Flow — Lái hộ xe máy
-
-Giữ mental model giống ô tô để user dễ học, nhưng:
-- vehicle form đơn giản;
-- capability tài xế/pricing riêng;
-- illustration/icon riêng;
-- không hiển thị thông tin ô tô không liên quan.
-
-## 6.6 Flow — Đăng kiểm hộ
-
-Đây là **service job**, không phải trip chở khách.
-
-```text
-Home
-→ Đăng kiểm hộ
-→ Chọn ô tô
-→ Địa chỉ nhận xe
-→ Thời gian hẹn
-→ Trung tâm đăng kiểm (nếu có)
-→ Checklist giấy tờ
-→ Địa chỉ trả xe
-→ Giá/package
-→ Xác nhận
-→ Đã ghép người thực hiện
-→ Đang tới nhận xe
-→ Đã nhận xe/giấy tờ
-→ Đang tới trung tâm
-→ Đang đăng kiểm
-→ Hoàn tất đăng kiểm
-→ Đang trả xe
-→ Đã bàn giao
-→ Hoàn thành
-```
-
-UI cần có timeline rõ hơn map. Map chỉ xuất hiện khi location thực sự có ích.
-
-## 6.7 Customer state copy
-
-Business copy ưu tiên:
-
-- `SEARCHING` → `Đang tìm tài xế phù hợp`
-- `ACCEPTED/ARRIVING` → `Tài xế đang đến nhận xe`
-- `ARRIVED` → `Tài xế đã đến`
-- `VEHICLE_RECEIVED` → `Tài xế đã nhận xe`
-- `IN_PROGRESS` → `Dịch vụ đang được thực hiện`
-- `HANDOVER` → `Đang bàn giao xe`
-- `COMPLETED` → `Dịch vụ đã hoàn thành`
-- `CANCELLED` → `Yêu cầu đã hủy`
-
-Đăng kiểm dùng subcopy cụ thể hơn như `Đang thực hiện đăng kiểm`.
-
-## 6.8 Customer error/offline
-
-- GPS off → giải thích + mở Settings + manual address fallback nếu có.
-- Location denied → manual search.
-- No internet → snapshot + reconnect indicator.
-- No driver → retry / hẹn giờ / chỉnh khu vực theo policy.
-- Offer/matching lâu → thông báo Operations đang hỗ trợ nếu có manual dispatch.
-- Session expired → refresh/re-auth mà không mất booking draft nếu có thể.
-- Scheduled booking invalid → giải thích lead-time rõ.
-
----
-
-# 7. Driver App information architecture
-
-## 7.1 Bottom navigation
-
-- **Trang chủ**
-- **Thu nhập**
-- **Lịch sử**
-- **Tài khoản**
-
-## 7.2 Driver cockpit
-
-Visual:
-- dark/navy dominant;
-- yellow action/high-attention;
-- Online/Offline rất rõ;
-- GPS/KYC state nhìn một phát hiểu ngay.
-
-Home:
-```text
-Greeting + rating
-Online / Offline
-Today summary
-Earnings summary
-Capability/preferences
-Current zone / GPS state
-```
-
-Không hiển thị demand/earnings giả nếu backend không có dữ liệu thật.
-
-## 7.3 Incoming offer
-
-Offer card phải hiển thị:
-- loại service;
-- countdown lớn;
-- pickup;
-- destination/inspection location;
-- distance/ETA tới khách;
-- vehicle summary;
-- estimated earning/fare theo business policy;
-- relevant note;
-- `Từ chối` secondary;
-- `Chấp nhận` primary.
-
-### Service visual
-- Lái hộ ô tô → car + vehicle summary nổi bật.
-- Lái hộ xe máy → motorbike.
-- Đăng kiểm hộ → document/inspection icon + schedule + center/checklist.
-
-## 7.4 Active designated-driver job
-
-```text
-Accepted
-→ Dẫn đường tới khách
-→ Đã tới
-→ Nhận xe
-→ Bắt đầu
-→ Đang thực hiện
-→ Bàn giao
-→ Hoàn thành
-```
-
-Mỗi state chỉ hiển thị **một CTA chính tiếp theo**.
-
-Thông tin cần luôn truy cập được:
-- khách;
-- gọi khách;
 - vehicle;
-- pickup/destination;
-- support.
+- conditions;
+- status/recommendation reason;
+- selection affordance.
 
-## 7.5 Inspection job
+### AgreementCard
 
-UI stepper riêng:
-- tới nhận xe;
-- nhận xe/giấy tờ;
-- tới trung tâm;
-- đang đăng kiểm;
-- hoàn tất;
-- trả xe;
-- bàn giao.
+- lock icon;
+- agreement status;
+- accepted terms;
+- participants;
+- timestamp;
+- link to full detail.
 
-Không dùng copy `Đón khách` cho Đăng kiểm hộ.
+### MoneyText
 
-## 7.6 Driver KYC/Profile
+- consumes integer/minor-unit domain values;
+- locale-formats for display;
+- never feeds business logic from formatted strings.
 
-Hiển thị:
-- trạng thái hồ sơ;
-- document checklist;
-- capability được duyệt;
-- GPLX expiry;
-- banking state;
-- action bổ sung hồ sơ.
+### StatusChip
 
-Document upload client → storage trực tiếp; UI cần show upload progress/retry/complete state.
+Semantic colors only. Status must also be readable in text.
 
-## 7.7 Driver offline/error states
+### EmptyState / ErrorState / OfflineBanner
 
-- KYC chưa approved → không cho Online, CTA tới hồ sơ.
-- GPS permission thiếu → không cho Online.
-- GPS stale → warning.
-- Network lost → offline banner + preserve active job snapshot.
-- Offer expired → close offer; disable accept.
-- Service capability mismatch → offer không nên xuất hiện; nếu xảy ra show safe error và report.
+Every remote-data screen must cover honest no-data, error and reconnect states.
 
----
+## 8. Required screen states
 
-# 8. Admin / Operations UX
+For all main screens design:
 
-## 8.1 Navigation MVP
-
-- Tổng quan
-- Công việc (Live)
-- Đơn/Yêu cầu
-- Tài xế
-- Khách hàng
-- Cấu hình dịch vụ / Bảng giá
-- Hỗ trợ khách hàng
-- Báo cáo cơ bản
-- Audit/Cài đặt theo quyền
-
-## 8.2 Overview
-
-KPI:
-- tổng job hôm nay;
-- split 3 service;
-- tài xế online;
-- job chờ lâu;
-- completion/cancellation/no-match;
-- doanh thu;
-- KYC warning.
-
-Không dùng vanity chart nếu không hỗ trợ quyết định vận hành.
-
-## 8.3 Live Jobs
-
-Table/filter:
-- service;
-- status;
-- scheduled/immediate;
-- customer;
-- vehicle;
-- driver;
-- pickup/destination;
-- waiting/match time.
-
-Detail drawer:
-- job summary;
-- customer + vehicle;
-- driver;
-- timeline;
-- support notes;
-- map nếu relevant;
-- controlled actions theo RBAC.
-
-## 8.4 Driver/KYC
-
-Master-detail UX:
-- pending/approved/rejected/suspended tabs;
-- document thumbnail/status;
-- signed document view;
-- capability;
-- GPLX expiry;
-- Approve / Reject / Request more information;
-- reason bắt buộc cho reject/sensitive changes.
-
-## 8.5 Pricing configuration
-
-Tách theo 3 service:
-- Lái hộ ô tô;
-- Lái hộ xe máy;
-- Đăng kiểm hộ.
-
-Pricing screen cần:
-- version/effective time;
-- base/minimum;
-- distance/time;
-- waiting;
-- schedule;
-- night/holiday;
-- cancellation;
-- inspection package;
-- preview/validation trước Save.
-
-## 8.6 Admin visual
-
-- dark navy sidebar;
-- white content surfaces;
-- yellow active/accent;
-- semantic chips cho status;
-- dense nhưng dễ scan;
-- desktop-first; tablet responsive hợp lý;
-- destructive action không dùng yellow primary.
-
----
-
-# 9. UI states bắt buộc cho mọi feature
-
-Một screen có network/data chưa Done nếu thiếu:
 - loading;
-- success;
+- loaded;
 - empty;
 - error;
-- retry;
-- offline/reconnect nếu relevant;
-- permission denied nếu relevant;
-- disabled/expired state nếu action có TTL.
+- offline;
+- stale data;
+- permission denied where relevant.
 
-## 10. Micro-interaction guidelines
+Quote-specific race states:
 
-- Haptic nhẹ khi toggle Online, accept offer, confirm handover nếu platform hỗ trợ.
-- Offer countdown animation không gây distraction.
-- Matching/searching có animation nhẹ nhưng phải có text state.
-- Timeline transition animate ngắn, không delay action.
-- Success animation tiết chế cho completion.
-- Skeleton thay spinner dài ở list/dashboard khi phù hợp.
+- quote expired while rider is viewing it;
+- driver updated quote before acceptance;
+- quote withdrawn;
+- request already cancelled/accepted;
+- network dropped immediately after accept tap.
 
-## 11. Mock → implementation rule
+Never resolve a race by silently substituting another quote.
 
-Bộ mock Customer/Driver/Admin đã tạo là **visual target**, không phải source of truth nghiệp vụ.
+## 9. Motion
 
-Nếu mock có:
-- feature chưa trong MVP;
-- số liệu giả;
-- bảo hiểm/SLA chưa được khách chốt;
-- payment method chưa implement;
+- standard transitions: 150–220ms;
+- sheets/dialogs: 250–350ms;
+- selected offer: subtle border/glow;
+- new offer: soft insertion, no flashing;
+- agreement accepted: one clear success transition;
+- respect reduced-motion preferences.
 
-thì code **không được tự thêm business promise chỉ vì mock hiển thị**.
+## 10. Accessibility
 
-Source of truth luôn là:
-1. `CUSTOMER_REQUIREMENTS.md`
-2. `PRD_MVP.md`
-3. API/domain implementation đã được review
+Minimum bar:
 
-## 12. UX Definition of Done
+- WCAG-minded contrast;
+- status not encoded by color alone;
+- 44x44 minimum targets;
+- semantic labels for icon-only controls;
+- dynamic text does not break price/CTA;
+- critical map information has text/list alternatives.
 
-Một flow UX chỉ Done khi:
-1. đúng business của một trong 3 service MVP;
-2. không dùng semantics taxi/Grab sai ngữ cảnh;
-3. customer vehicle được thể hiện đúng;
-4. primary CTA rõ;
-5. state/timeline rõ;
-6. loading/error/offline được xử lý;
-7. trust/KYC/handover information đúng mức cần thiết;
-8. responsive/device layout không overflow;
-9. analyze/test/build gate liên quan xanh;
-10. UAT trên thiết bị thật không có blocker về hiểu nhầm thao tác.
+## 11. Content rules
+
+Prefer plain contractual copy:
+
+- `Tài xế đưa giá`
+- `Bạn chọn tài xế`
+- `Giá đã thỏa thuận`
+- `Thỏa thuận đã được xác nhận`
+
+Avoid misleading copy:
+
+- `Giá của OpenRide`
+- `OpenRide quyết định giá tốt nhất`
+- `Chúng tôi đã tối ưu giá tài xế`
+
+Recommendation copy explains *why*; it never implies OpenRide changed the quote.
+
+## 12. Mock → production rule
+
+The concept mock is a **visual north star**, not business truth.
+
+A screen is only Done when:
+
+1. domain state is identified;
+2. owner package/service is known;
+3. loading/empty/error/race states exist;
+4. money maps to exact integer/minor-unit values;
+5. quote ownership is visually truthful;
+6. accepted terms render from Agreement snapshot data;
+7. accessibility is covered;
+8. real API/event contract or explicit fixture exists;
+9. important commands have safe/idempotent UX behavior;
+10. the screen does not claim backend capability that is still only planned.
+
+## 13. Implementation order
+
+1. Theme/tokens + shared primitives.
+2. Rider Home + Request flow.
+3. Driver Request + Quote Composer.
+4. Rider Offers marketplace + OfferCard.
+5. Sorting + recommendation explanation.
+6. Select/confirm + AgreementCard.
+7. Accepted agreement screens for both roles.
+8. Ride execution states.
+9. History/receipt/reputation.
+10. Messaging/safety refinements.
+11. Advanced comparison and operator theming.
+
+This order proves OpenRide's marketplace contract before polishing peripheral surfaces.

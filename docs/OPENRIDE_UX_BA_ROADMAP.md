@@ -1,6 +1,6 @@
 # OpenRide UX / BA Roadmap
 
-> **Baseline: 12/09/2026**  
+> **Baseline: 12/09/2026**
 > Purpose: turn the approved OpenRide mock direction into implementable product slices without letting visuals outrun domain truth.
 
 ## 1. Product statement
